@@ -1,0 +1,67 @@
+{
+  "name": "personal-workbench",
+  "version": "0.1.3",
+  "description": "本地个人工作台",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "author": "个人工作台",
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.cjs",
+    "build": "vue-tsc --noEmit -p tsconfig.ui.json && tsc -p tsconfig.json && node scripts/copy-runtime.cjs && vite build",
+    "build:tomcat": "node scripts/compile-tomcat.cjs",
+    "start": "node scripts/start.cjs",
+    "dev": "npm run build && npm start",
+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .local/tests/tests/*.test.js",
+    "package": "npm run build && electron-builder --win nsis --x64",
+    "package:dir": "npm run build && electron-builder --win dir --x64",
+    "verify:ui": "node scripts/verify-ui.cjs"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@vitejs/plugin-vue": "6.0.10",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vue": "3.5.44",
+    "vue-tsc": "3.3.13"
+  },
+  "build": {
+    "appId": "local.personal.workbench",
+    "productName": "个人工作台",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/monthly-template.docx",
+      "assets/workbench.ico",
+      "assets/workbench.svg",
+      "package.json"
+    ],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "artifactName": "PersonalWorkbench-${version}-Setup.${ext}",
+      "signExecutable": false,
+      "icon": "assets/workbench.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "个人工作台",
+      "runAfterFinish": false
+    }
+  }
+}

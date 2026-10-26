@@ -1,0 +1,55 @@
+{
+  "source": "C:\\Users\\Master\\Desktop\\2026年9月工作总结-陈嘉庚.docx",
+  "sourceSha256": "5a48db3083e28a8e225ed8c4c2c694850d5d11576059bb4cdf179a952a2118b8",
+  "imageSlot": "one-blank-paragraph",
+  "parts": {
+    "[Content_Types].xml": {
+      "bytes": 1483,
+      "sha256": "1313f52ad6eb20d0e412fbacdc6615b27bc98cebce716d242938754d9cc9ab3d"
+    },
+    "_rels/.rels": {
+      "bytes": 737,
+      "sha256": "514e1846381cb6bcfff105a4b0a17d666cf0ed1f0c120bff73b82226ab7ed977"
+    },
+    "docProps/app.xml": {
+      "bytes": 632,
+      "sha256": "f6d649c4941f425205bc4af9e2a87132feb0b609d744996d9234cf319e68726b"
+    },
+    "docProps/core.xml": {
+      "bytes": 633,
+      "sha256": "9a8b0b59055ff9919b86bd731d0db1e06651b0e1694772864c66ed019da1e59e"
+    },
+    "docProps/custom.xml": {
+      "bytes": 747,
+      "sha256": "07c6ee26e001e852155ab405cb23027c42898b87864f0d1ee4b6972d62a2a416"
+    },
+    "word/_rels/document.xml.rels": {
+      "bytes": 812,
+      "sha256": "2390c5dca76bcc4cbf2ea4c8a537bc4f2d4974d5a314c475b0e9b6f249603505"
+    },
+    "word/document.xml": {
+      "bytes": 7576,
+      "sha256": "dee279ea683ef7945424ad4cb38218f14c1b462eeb571f91b4636f4fbfbe67fd"
+    },
+    "word/fontTable.xml": {
+      "bytes": 2508,
+      "sha256": "aaf8015b549d72e30c585d1858a1e6b404c7a8495f5e1f4f576929c097a35b42"
+    },
+    "word/numbering.xml": {
+      "bytes": 9705,
+      "sha256": "e67610d332d4bd78c6ea0838213c9f7a869d63aeb9757bcbfee3238bee421f48"
+    },
+    "word/settings.xml": {
+      "bytes": 6807,
+      "sha256": "f4d31beba12b6d9417a8f25541e50a21179058b427d91e96939e9e0911788358"
+    },
+    "word/styles.xml": {
+      "bytes": 28217,
+      "sha256": "b4a995ffab430d66e62ad9d1ca9baa806b6670daba19debd5716fbd2b395b0a5"
+    },
+    "word/theme/theme1.xml": {
+      "bytes": 6436,
+      "sha256": "2157ebaa401af49c0c9b80ad88ccbad4dbe486136a0b3f4bddc77de976340c33"
+    }
+  }
+}

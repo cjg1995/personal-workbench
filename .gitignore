@@ -1,0 +1,9 @@
+node_modules/
+.spike/
+dist/
+release/
+coverage/
+test-results/
+playwright-report/
+*.log
+.local/

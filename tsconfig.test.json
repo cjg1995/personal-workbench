@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".local/tests",
+    "sourceMap": false
+  },
+  "include": [
+    "src/core/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/shared/**/*.cjs",
+    "tests/**/*.ts"
+  ]
+}

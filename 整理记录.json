@@ -1,0 +1,279 @@
+{
+  "date": "2026-10-24",
+  "workspace": "D:\\personal-workbench",
+  "status": "complete_recycled",
+  "copied": [
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\PRD-v1.1.md",
+      "destination": "docs\\PRD-v1.1.md",
+      "sha256": "9F0D696D612525197DE8F7999B9E07453B116F2E60A8607E8DB4640D615FA65C"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\交互说明.md",
+      "destination": "docs\\交互说明.md",
+      "sha256": "73824D341674BBF38DB4FE10B1FB801FCE96F752B7D88B7F57C6EA94703E695B"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\设计说明.md",
+      "destination": "design\\设计说明.md",
+      "sha256": "A85262E22C83598BBA5A7AAB5FB79C365FAF0F73BE5A965FC4DB0B1888FD01F6"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\index.html",
+      "destination": "design\\index.html",
+      "sha256": "59FBA62B84CFB57A57D0A68E61728873E6708CD115F5F9D6FB0736E039BDF288"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\prompts.json",
+      "destination": "design\\prompts.json",
+      "sha256": "72603BFFFE18AC34EA7F8E7A6D293E2EDC102E89ED0C88ED64691625039D8786"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\generation-manifest.json",
+      "destination": "design\\generation-manifest.json",
+      "sha256": "AC93ADB2B820328EC7F7FEC154952BE2C58055C3E77C819EFEE7A5BD04BE00C6"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\01-home.png",
+      "destination": "design\\images\\01-home.png",
+      "sha256": "0D523CBD4D550E0D82DBDC49939CA44ECCEE7305219B55DE481DFD75B37D9E9F"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\02-erp-submit-v2.png",
+      "destination": "design\\images\\02-erp-submit.png",
+      "sha256": "9769AAB194EF0A006E1D8310AFA24E16EE71603038D919F9486F39DEC00EF0E5"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\03-app-submit.png",
+      "destination": "design\\images\\03-app-submit.png",
+      "sha256": "2C8CEA6F1339E5546FCAB6CC580E8A8055B5E38D2087663393C0C3BD86B6D2DA"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\04-apk-running-v2.png",
+      "destination": "design\\images\\04-apk-running.png",
+      "sha256": "C9D09B5BC873D43E94EDD5FE023888E700C7B91CC37BCA66D2D09AC8666DC06F"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\05-projects-v2.png",
+      "destination": "design\\images\\05-projects.png",
+      "sha256": "67CF13F1D71829C95B5EC96D7BB67F1C1C24A72E0DBE705096DC6F6A5405E890"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\06-review.png",
+      "destination": "design\\images\\06-review.png",
+      "sha256": "C0E3BA4D59D81109CE5F6A6F1DEE08A05D3AC4D5D7BEC009D5D6DD49F7439E32"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\07-ideas.png",
+      "destination": "design\\images\\07-ideas.png",
+      "sha256": "0B00E44F252F6DC1D43072C595113E4166CA3F4FFD975DA9820EE8C06C4AC667"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\08-worklog.png",
+      "destination": "design\\images\\08-worklog.png",
+      "sha256": "73AC6B5BCE2183483CA6977BBBA15B5AE96A1CE33B3DA98BCCDA6BC8A8D20F75"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\09-monthly.png",
+      "destination": "design\\images\\09-monthly.png",
+      "sha256": "0A719D1D1F1075A07B4B010F1204682A953520D6822796324BD6D078B7576582"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\10-tapd.png",
+      "destination": "design\\images\\10-tapd.png",
+      "sha256": "5285A8F4788F1F629C534D99BCF16949B3787002262F9F5954555DFCFED82FB2"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\11-import-v2.png",
+      "destination": "design\\images\\11-import.png",
+      "sha256": "0D5FD7408A9232B82F8084536A5DA393222021304B930D2BE23D801AF608BBE0"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\12-settings.png",
+      "destination": "design\\images\\12-settings.png",
+      "sha256": "EC5299756BA3C6337365F723746D26FDDBB21FD92E7140C1FB317BE8A5C458EC"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\13-failure-v2.png",
+      "destination": "design\\images\\13-failure.png",
+      "sha256": "C1754A97388521A24D394A46060880D131B51C205B21B4510C51D201B988F946"
+    },
+    {
+      "source": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024\\14-result-v2.png",
+      "destination": "design\\images\\14-result.png",
+      "sha256": "17C1EA349B8361BEBBB0077110B5F89735AB2E4B663E4EA7C3E5283A72E5ACAD"
+    }
+  ],
+  "cleanup": [
+    {
+      "path": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-design-20261015",
+      "state": "recycled",
+      "files": 21,
+      "bytes": 15581679,
+      "error": null
+    },
+    {
+      "path": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-v1.1-20261020",
+      "state": "recycled",
+      "files": 15,
+      "bytes": 9744267,
+      "error": null
+    },
+    {
+      "path": "D:\\IdeaProjects\\homeproject\\output\\personal-workbench-ui-redesign-20261024",
+      "state": "recycled",
+      "files": 27,
+      "bytes": 45605288,
+      "error": null
+    },
+    {
+      "path": "C:\\Users\\Master\\.codex\\visualizations\\2026\\10\\15\\01a13e3e-9f6a-7623-b093-d86ef7fdfe84",
+      "state": "recycled",
+      "files": 190,
+      "bytes": 26805267,
+      "error": null
+    },
+    {
+      "path": "C:\\Users\\Master\\.codex\\visualizations\\2026\\10\\15\\01a13fb0-79a5-7283-b727-4d2226a14719",
+      "state": "recycled",
+      "files": 0,
+      "bytes": 0,
+      "error": null
+    },
+    {
+      "path": "C:\\Users\\Master\\.codex\\generated_images\\01a13e3e-9f6a-7623-b093-d86ef7fdfe84",
+      "state": "recycled",
+      "files": 14,
+      "bytes": 19454040,
+      "error": null
+    },
+    {
+      "path": "C:\\Users\\Master\\.codex\\generated_images\\01a13fb0-79a5-7283-b727-4d2226a14719",
+      "state": "recycled",
+      "files": 29,
+      "bytes": 40614813,
+      "error": null
+    }
+  ],
+  "verification": {
+    "files": 23,
+    "selectedImages": 14,
+    "imageHashes": "matched originals",
+    "localDocumentLinks": 73,
+    "generationPromptText": "preserved",
+    "PRD": "only provenance and links updated"
+  },
+  "cleanupMethod": "Windows Recycle Bin; permanent deletion was blocked by automatic policy review.",
+  "finalFiles": [
+    {
+      "path": "README.md",
+      "sha256": "235B079C32E513C86A9E9098E9DA5B03C7C391A99C4C06CFF825F7F5DF4A08EA",
+      "bytes": 2268
+    },
+    {
+      "path": "design/设计说明.md",
+      "sha256": "9C073D8C43FB0A25183847352D80DF6C8D29FDA71920F821F6C45C1E5180D251",
+      "bytes": 1905
+    },
+    {
+      "path": "design/generation-manifest.json",
+      "sha256": "83AA0F77878589A6EBCD47F2C73F12ED97EF067172C44AB238E64B418BEC1073",
+      "bytes": 5385
+    },
+    {
+      "path": "design/index.html",
+      "sha256": "37894A91DB458D9E88056F135F4F5819D202D2C465A54E527C7AEBAD70EA8734",
+      "bytes": 11966
+    },
+    {
+      "path": "design/prompts.json",
+      "sha256": "54749CA7D962EEE44F8F3FC0DDB48495E4C2092D4C1CCE3263866C526858BC15",
+      "bytes": 32713
+    },
+    {
+      "path": "design/images/01-home.png",
+      "sha256": "0D523CBD4D550E0D82DBDC49939CA44ECCEE7305219B55DE481DFD75B37D9E9F",
+      "bytes": 1205691
+    },
+    {
+      "path": "design/images/02-erp-submit.png",
+      "sha256": "9769AAB194EF0A006E1D8310AFA24E16EE71603038D919F9486F39DEC00EF0E5",
+      "bytes": 1575181
+    },
+    {
+      "path": "design/images/03-app-submit.png",
+      "sha256": "2C8CEA6F1339E5546FCAB6CC580E8A8055B5E38D2087663393C0C3BD86B6D2DA",
+      "bytes": 1423896
+    },
+    {
+      "path": "design/images/04-apk-running.png",
+      "sha256": "C9D09B5BC873D43E94EDD5FE023888E700C7B91CC37BCA66D2D09AC8666DC06F",
+      "bytes": 1493422
+    },
+    {
+      "path": "design/images/05-projects.png",
+      "sha256": "67CF13F1D71829C95B5EC96D7BB67F1C1C24A72E0DBE705096DC6F6A5405E890",
+      "bytes": 1575475
+    },
+    {
+      "path": "design/images/06-review.png",
+      "sha256": "C0E3BA4D59D81109CE5F6A6F1DEE08A05D3AC4D5D7BEC009D5D6DD49F7439E32",
+      "bytes": 1300104
+    },
+    {
+      "path": "design/images/07-ideas.png",
+      "sha256": "0B00E44F252F6DC1D43072C595113E4166CA3F4FFD975DA9820EE8C06C4AC667",
+      "bytes": 1444752
+    },
+    {
+      "path": "design/images/08-worklog.png",
+      "sha256": "73AC6B5BCE2183483CA6977BBBA15B5AE96A1CE33B3DA98BCCDA6BC8A8D20F75",
+      "bytes": 1469292
+    },
+    {
+      "path": "design/images/09-monthly.png",
+      "sha256": "0A719D1D1F1075A07B4B010F1204682A953520D6822796324BD6D078B7576582",
+      "bytes": 1454830
+    },
+    {
+      "path": "design/images/10-tapd.png",
+      "sha256": "5285A8F4788F1F629C534D99BCF16949B3787002262F9F5954555DFCFED82FB2",
+      "bytes": 1516319
+    },
+    {
+      "path": "design/images/11-import.png",
+      "sha256": "0D5FD7408A9232B82F8084536A5DA393222021304B930D2BE23D801AF608BBE0",
+      "bytes": 1625458
+    },
+    {
+      "path": "design/images/12-settings.png",
+      "sha256": "EC5299756BA3C6337365F723746D26FDDBB21FD92E7140C1FB317BE8A5C458EC",
+      "bytes": 1191874
+    },
+    {
+      "path": "design/images/13-failure.png",
+      "sha256": "C1754A97388521A24D394A46060880D131B51C205B21B4510C51D201B988F946",
+      "bytes": 1574336
+    },
+    {
+      "path": "design/images/14-result.png",
+      "sha256": "17C1EA349B8361BEBBB0077110B5F89735AB2E4B663E4EA7C3E5283A72E5ACAD",
+      "bytes": 1595302
+    },
+    {
+      "path": "docs/交互说明.md",
+      "sha256": "73824D341674BBF38DB4FE10B1FB801FCE96F752B7D88B7F57C6EA94703E695B",
+      "bytes": 7185
+    },
+    {
+      "path": "docs/开发交接.md",
+      "sha256": "EA5A47C0C7795C0FA30CF39523CA08154A3C2D9EE0B12C2F0ECB92F013772018",
+      "bytes": 5146
+    },
+    {
+      "path": "docs/PRD-v1.1.md",
+      "sha256": "569DF174FAA8E33A97C43AF055AEE1761BBE0A48122D244AFEA98D3A0EA8026F",
+      "bytes": 47575
+    }
+  ]
+}

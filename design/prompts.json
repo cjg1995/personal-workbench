@@ -1,0 +1,299 @@
+{
+  "date": "2026-10-24",
+  "mode": "built-in image_gen",
+  "initialImageReferences": [],
+  "base": "Use case: ui-mockup.\nCreate a high-fidelity, convincingly usable Chinese Windows desktop interface for a personal workbench. Generate an original design solely from this brief. No earlier conversation image or prior project design is a visual reference.\nVisual direction: quiet, typographic, flat and spacious. White main canvas, a very pale cool-gray navigation area, charcoal text, one restrained indigo-blue accent. Functional success/error/warning may use small green/red/amber symbols with words. No green branding. Use open sections separated by spacing and delicate horizontal rules instead of an admin dashboard of outlined cards. Avoid heavy boxes, rounded tile grids, gradients, ornamental illustrations and shadows. System-like Chinese sans serif with crisp regular body, restrained semibold headings and good contrast. 28px equivalent page title, 14–16px equivalent body, consistent 8px rhythm. Fine 1.5px line icons. Borders and 4px corners only where real controls need them.\nComposition: one entire straight-on application screen, landscape 16:10, around 1920x1200, edge to edge. No monitor, browser, perspective, presentation slide or multi-screen collage.\nNew shared shell: understated 32px Windows title bar with small geometric two-line mark and \"个人工作台\". Approximately 210px pale-gray left navigation, compact 16px application name, generous text navigation spacing. Groups 日常: 今日概览 / 灵感待办 / 工作记录 / 月度总结. 交付: 代码提交 / APK 打包 / TAPD 入口. 开发: 项目运行 / 代码审查. Bottom 设置 and a quiet local-data indicator. Selected item uses a slim indigo vertical rule, pale blue-gray highlight, restrained icon. Main content has a slim top utility row, page title on the left and \"快速记录\" / \"任务中心\" on the right. Avoid repeating giant branding and redundant breadcrumb stacks.\nUX: make actual content the focus. One clear primary action per state, secondary actions quiet. Native form and list operations; no arbitrary command entry. Long-task logs are collapsed or a small light panel, never a dominant dark terminal. Use explicit status text, distinguish external processes and unverified outcomes. Demo data is illustrative. Paths, code, times and counts are not assertions about real systems.\nTypography: render quoted Chinese labels verbatim with legible spacing. No invented required fields, arbitrary 0/500 character limits, priorities or deadlines. Do not add AI, cloud account, global command palette, marketplace, native TAPD parser or phone-install controls. No advertising copy.\n",
+  "pages": [
+    {
+      "id": "01-home",
+      "title": "今日概览",
+      "fr": [
+        "FR-01",
+        "FR-03"
+      ],
+      "state": "快速记录与今日事项",
+      "detail": "Selected navigation 今日概览. Heading \"今日\", small date \"2026.10.24\". A single compact horizontal action strip, with four simple icon-and-text actions separated by whitespace, not large tiles: \"ERP 提交\", \"APP 提交\", \"APK 打包\", \"TAPD 导入\". Small TAPD helper \"打开现有客户端\".\nThe central wide open composer is the main focus: tabs \"记个想法\" / \"记一条工作\", idea selected, a comfortable two-line writing field \"先记下来…\", optional project control \"项目（可选）\", clear blue \"保存\" action at its bottom right.\nBelow, a broad left section \"最近工作\" with three dated manual example records as plain aligned rows with subtle separators, each one short sentence. A narrower right section \"未完成待办\" has three simple check-circle rows \"整理 CAD 模板\", \"企微数据智能专区\", \"完善个人工作台\", no dates, priorities or coloured project-chip clutter. A small link \"整理本月工作\" below the work list.\nA slim bottom activity strip across main content shows \"易居通 · Release\" / \"Gradle 构建中\" / \"查看任务\"; small stage indicators show 编译资源 and 同步宿主资源 complete, Gradle 构建 active, 校验 APK waiting, no fake percentage. Do not reproduce a multi-card dashboard. Strong breathing room, hierarchy from typography, very few visible container borders."
+    },
+    {
+      "id": "02-erp-submit",
+      "title": "ERP 原生提交",
+      "fr": [
+        "FR-02"
+      ],
+      "state": "检查与执行前确认",
+      "detail": "Selected 代码提交. Title \"代码提交\". Small tabs ERP 提交 active / APP 提交. Four-stage progress line \"选择仓库 / 检查与预览 / 执行 / 结果\", second active.\nTop compact repository dropdown \"homeproject\", muted path \"D:/IdeaProjects/homeproject\", readable route \"feature-需求示例 → origin/test\".\nMain area is a flat two-column working surface. Left 65%: tabs \"将提交 3\" / \"未跟踪 1\", a read-only three-row file list with M/A/D symbols, no selection checkboxes, one highlighted row selects its diff. Illustrative filenames clearly abbreviated \"src/…/ExampleService.java\", \"src/…/ExampleController.java\", \"WebRoot/…/example.jsp\". Small plain diff preview below, label \"差异示例\".\nRight 35%: a compact checklist with 开发分支有效 / 上游已配置 / test 工作树可用, then an editable 提交说明 field containing \"需求示例\". No character limit. Quiet execution summary \"推送开发分支 → 更新 test → 合并 → 推送 test\".\nBottom persistent action bar primary \"确认提交并合并\", secondary \"返回\", and the actual target \"origin/test\". No BAT-path configuration or console-input UI. Native operation, calm open layout."
+    },
+    {
+      "id": "03-app-submit",
+      "title": "APP 原生提交",
+      "fr": [
+        "FR-02"
+      ],
+      "state": "更新后核对与配置保护",
+      "detail": "Selected 代码提交. Title \"代码提交\". ERP 提交 / APP 提交 active. Compact one-app selector with exactly 易居通 / 项目经理 / 工人 / 司机, 易居通 selected. Branch \"dev → origin/dev\".\nA small pale-blue information line, not a large banner, reads \"远程更新完成，本地改动已恢复\".\nMain left area tabs \"将提交 3\" and \"已排除 2\". Read-only included-file list with M/A/D markers, no file-selection checkbox. Short Vue 2 diff preview uses <template>, <button>提交</button> replaced by <button>确认提交</button>. An explicit protected-file row beneath has lock icon \"store/index.js\" and text \"本地测试配置，不参与提交\", no override toggle.\nRight section 提交说明, normal text input, plain summary \"目标：origin/dev\", checks \"本地配置已备份\" / \"本地改动已恢复\". Primary \"提交并推送\". Quiet \"取消本次提交\", with exact helper \"取消不会撤销已完成的远程更新\". Do not imply partial file selection, automatic config upload or bulk repositories. Preserve the fresh indigo/charcoal visual system."
+    },
+    {
+      "id": "04-apk-running",
+      "title": "APK 打包进行中",
+      "fr": [
+        "FR-02",
+        "FR-03"
+      ],
+      "state": "四阶段构建与防重",
+      "detail": "Selected APK 打包. Title \"APK 打包\". Left 280px compact configuration column with exactly four apps \"易居通\", \"项目经理\", \"工人\", \"司机\"; 易居通 selected. Release / Debug with Release selected. All configuration controls visibly disabled while running. Read-only version \"9.2.6 · 902060\", package \"com.house.employeeapp\", a collapsed 工程与工具路径 row. Bottom disabled button \"打包进行中…\" with readable gray text.\nBroad right workspace title \"易居通 · Release\", status \"构建中\", elapsed \"03:18\". Four exact phases in a clean vertical step list: 编译资源 completed, 同步宿主资源 completed, Gradle 构建 active, 校验 APK waiting. Brief current activity under the active phase, no percentage. A small light collapsed \"查看日志\" and a few previous runs as quiet rows below. Secondary danger-text \"停止构建\". A small message \"离开页面后任务继续\". Do not add other apps, editable versions, signing setup or installation controls. Avoid enclosing every section in a card."
+    },
+    {
+      "id": "05-projects",
+      "title": "项目运行",
+      "fr": [
+        "FR-10"
+      ],
+      "state": "11 个工作目录与运行归属",
+      "detail": "Selected 项目运行. Title \"项目运行\", compact project/status filters and local search. Flat table columns 项目 / 类型 / 状态 / 操作. Group \"HomeProject · 8 个工作目录\": homeproject, homeproject-ai, 易居通 APP, 项目经理 APP, 工人 APP, 司机 APP, 客户小程序, 企微侧边栏. Group \"推荐官 · 3 个工作目录\": refsys, refsys-ui, 推荐官小程序. Fit all 11 readable rows.\nTypes: first two and refsys are Java 后端; four APP and 企微侧边栏 exactly \"UniApp H5\"; 客户小程序 \"微信小程序\"; refsys-ui \"Vue 前端\"; 推荐官小程序 \"UniApp 小程序\".\nDemo states: homeproject 外部运行中, action 在 IDE 中管理 and no Stop. homeproject-ai 运行中 with 打开页面 and 停止; 易居通 启动中; 客户小程序 开发者工具已打开; 推荐官小程序 监听中. Other rows 未启动 / 启动. Use state text, no oversized status badges.\nhomeproject-ai selected; narrow bottom details show D:/IdeaProjects/homeproject-ai, branch feature-需求示例, Tomcat, http://localhost:8081/homeProject and 查看日志. Do not label apps Java or equate a developer-tool window to a running web service."
+    },
+    {
+      "id": "06-review",
+      "title": "Git 差异与人工审查",
+      "fr": [
+        "FR-11"
+      ],
+      "state": "差异阅读、手动标记与复查",
+      "detail": "Selected 代码审查. Heading \"代码审查\", small \"人工审查\". Scope toolbar repository 易居通 APP, 全部本地变更, \"HEAD → 工作区\", \"刷新差异\".\nThree panes using fine separators: file list 22%, side-by-side diff 50%, review notes 28%. Exactly 3 example files pages/demo/index.vue, api/demo.js, static/demo.png, explicit types. First file selected and amber status \"需复查\", not a green viewed check. Others unviewed.\nCenter toggle 并排 active / 统一. A short Vue template diff changes button text 提交 to 确认提交, readable code and line numbers. A compact amber notice \"代码已变化，需要复查\". Old and new headers HEAD / 工作区.\nRight one manually entered note \"核对取消后是否保留输入\", status 待处理, file and line. Secondary 标记已处理 and 转为待办, a normal free-form 添加审查意见 field, 添加问题.\nFooter \"已看 0 / 3 · 待复查 1\", primary 保存审查记录, secondary 结束审查. No character counter, AI, automatic verdict, auto-fix or mandatory submission gate. Spacious professional diff-reading surface."
+    },
+    {
+      "id": "07-ideas",
+      "title": "灵感待办",
+      "fr": [
+        "FR-05"
+      ],
+      "state": "一句话收集与完成",
+      "detail": "Selected 灵感待办. Title \"灵感待办\". Open quick-entry row \"想到的事，先记下来…\" and 添加. Tabs 未完成 3 / 已完成 1, local search. Left list 55% has exactly three tidy rows with a completion circle, title and optional creation time: 整理 CAD 模板 / 企微数据智能专区 / 完善个人工作台. No deadlines, priority dots, tags, boards or subtasks.\nRight 45% simple detail editor titled 整理 CAD 模板, text \"完成初版，继续整理可复用的 CAD 模板\", optional 项目 selector, small 创建时间. Clear 保存修改, quieter 标记完成. Separate explicit 记一条工作 link and helper \"完成待办不会自动生成工作记录\". No invented character limit or rich form. Prefer plain text rows, large writing space, fine division, quiet indigo active state."
+    },
+    {
+      "id": "08-worklog",
+      "title": "工作记录",
+      "fr": [
+        "FR-06"
+      ],
+      "state": "日期录入与无日期历史",
+      "detail": "Selected 工作记录. Title \"工作记录\". A calm two-line composer \"今天处理了什么…\" with date 2026-10-24, optional 项目, blue 保存记录. Below compact filters month 2026 年 10 月 / project / keyword. Tabs \"按日期\" active / \"日期待补充 3\".\nMain area is a timeline/list of three concise manually dated demo records with date headings, no achievement metrics. Right detail editor for a selected record has original 内容, 发生日期, optional 项目, optional 实际结果 and 保存修改. Neutral inline hint \"3 条导入记录没有发生日期\" with 去补充.\nLink 整理本月工作 below list. No automatic result claims or dates assigned to undated TXT imports. Content is the only required input; no time tracking or obligatory tags."
+    },
+    {
+      "id": "09-monthly",
+      "title": "月度总结",
+      "fr": [
+        "FR-07"
+      ],
+      "state": "人工整理、来源核对与导出",
+      "detail": "Selected 月度总结. Title \"月度总结\", month 2026 年 10 月, small 草稿已保存. Primary 导出 Word, quieter 复制正文 and TXT option.\nThree open work columns with delicate vertical rules: 25% 本月素材, 50% editable white document, 25% 来源核对. Left three dated demo record checkboxes and a separate unselected 日期待补充 3 link.\nCenter document title 2026年10月工作总结-陈嘉庚. Compact plain formatting toolbar. Exact section hierarchy: 工作成果 with 主要工作 / 其他, then 个人学习和成长, 个人工作计划、学习目标, 部门工作中存在问题及改进建议. A few short editable example entries, other sections empty. Selected paragraph has tiny source marker 来源 2 条.\nRight original source snippets, 查看原记录, 放入章节 dropdown and 加入正文. Show hand editing, no AI, no invented impact numbers, no automatic 无, no old September body. Clear professional writing surface, not many floating cards."
+    },
+    {
+      "id": "10-tapd",
+      "title": "TAPD 入口",
+      "fr": [
+        "FR-04"
+      ],
+      "state": "现有客户端启动",
+      "detail": "Selected TAPD 入口. Title \"TAPD Word 导入\". Simple centered-left utility section in open whitespace, heading \"打开现有导入客户端\", one line \"文档解析、核对与导入在客户端中完成\". Program path D:/TapdImport/TapdImport.App.exe, small 路径有效. Primary 打开 TAPD 客户端, secondary 打开文档目录, tiny 修改路径.\nBelow a compact text sequence 选择项目 → 选择 Word → 核对需求 → 提交导入. A last launch row 客户端已打开 and helper \"导入结果请在客户端核对\". Optional small manual form 记下导入结果 with 保存工作记录, not auto-filled.\nNo embedded parser, file drop zone, API token, import-success count or inferred success from launch. Keep this page especially minimal and candid about its boundary."
+    },
+    {
+      "id": "11-import",
+      "title": "TXT 导入预览",
+      "fr": [
+        "FR-08"
+      ],
+      "state": "原文、日期与重复核对",
+      "detail": "Selected 设置, title \"导入历史记录\", small step line 选择文件 / 预览与确认 / 导入结果 with middle active.\nFile temp.txt, type 工作记录, encoding UTF-8. Preview table exactly 3 original source rows with source line numbers:\n\"会话存档支持维护内部群信息\"\n\"客户选材管理打印异常问题查找修改（材料批次明细的备注存在特殊字符）\"\n\"开关批量下单重复材料问题查找修改（未过滤过期的套餐材料）\".\nFirst two selected 新增, third unchecked 原文重复，默认跳过. Every date says 日期待补充, never today's date. Summary 新增 2 条 · 跳过 1 条. Small checked note 保留原文件及导入快照. Another line 后续记录保存在工作台，不回写原 TXT.\nPrimary 确认导入 2 条, secondary 上一步. Wrap long content cleanly; readable uncluttered table, no destructive overwrite."
+    },
+    {
+      "id": "12-settings",
+      "title": "设置与本地数据",
+      "fr": [
+        "FR-09"
+      ],
+      "state": "数据位置、备份与恢复",
+      "detail": "Selected 设置. Title \"设置\". Small secondary settings tabs 项目与工具 / 本地数据 active / 月报模板.\nOpen form sections with generous spacing and thin horizontal dividers. 本地数据 section shows current-user data directory, 打开目录, quiet 数据保存在本机. 备份与恢复 section describes 记录、配置、月报草稿和审查记录. Primary 创建备份 and secondary 选择备份恢复, two history rows. Small note APK、源码和日志仅保留路径引用.\n历史 TXT section two simple rows todo.txt → 灵感待办 / temp.txt → 工作记录, each 导入… action. 月报模板 small source line \"来自现有月报的空白模板\", 查看模板.\nNo BAT business-script path needed, no cloud sync, API key, autostart or invented backup schedule. Recovery is not the primary high-frequency action. Clean typographic settings layout with only necessary controls."
+    },
+    {
+      "id": "13-failure",
+      "title": "部分失败与恢复",
+      "fr": [
+        "FR-03",
+        "FR-02"
+      ],
+      "state": "已完成、冲突和未执行",
+      "detail": "Title \"任务中心\", global utility button selected; sidebar remains in shell. Left narrow task history with selected ERP 提交 · 部分完成 and two other compact task rows.\nBroad detail: ERP 提交, homeproject, feature-需求示例 → test. Compact amber statement \"开发分支已推送，合并 test 时发生冲突\".\nA calm vertical timeline: 本地提交 complete; 推送开发分支 complete; 更新 test complete; 合并到 test 冲突，待处理; 推送 test 未执行. Show a short demo commit id only on completed steps.\nRecovery area 冲突文件 2, example file rows, 在 IDE 中打开 / 查看差异. Primary \"重新检查仓库\". Helper \"已完成的提交和推送保留\". Collapsed 详细日志.\nNo giant error graphic, blanket success, automatic rollback, force push or 一键重试全部. Make the safe next action and preserved progress immediately understandable."
+    },
+    {
+      "id": "14-result",
+      "title": "打包结果与产物",
+      "fr": [
+        "FR-02",
+        "FR-03"
+      ],
+      "state": "校验完成与可选工作记录",
+      "detail": "Selected APK 打包. Title \"打包结果\". Small checked statement \"易居通 · Release 打包完成\", duration 04:26. Four phases 编译资源 / 同步宿主资源 / Gradle 构建 / 校验 APK all complete.\nOpen artifact section filename 易居通-9.2.6-Release.apk, version 9.2.6 · 902060, package com.house.employeeapp, an illustrative task-specific output directory. SHA256 short visible prefix with 复制完整值. Three restrained verification rows 资源一致性 通过 / 签名校验 通过 / 包名与版本 通过.\nPrimary 打开产物目录, secondary 复制 APK 路径, quiet 查看完整日志. Optional lower-right form 记一条工作记录, normal editable body and date, distinct 保存记录; do not imply automatic saving. Quiet 再次打包.\nNo install-to-phone, confetti, huge success card or changed signing/version controls. Useful sparse handoff page."
+    }
+  ],
+  "siblingReference": "Input Image 1 is the homepage generated from text in THIS 2026-10-24 redesign, and is the only visual reference/edit target. Keep its indigo/charcoal palette, flat typography-led treatment, compact navigation, utility controls and window geometry. Replace the main working area with the specified sibling screen and change the active navigation. Do not reproduce homepage content on the new page. Do not use any older project or conversation imagery.",
+  "siblingBase": "Use case: ui-mockup.\nCreate a high-fidelity, convincingly usable Chinese Windows desktop interface for a personal workbench. Use this brief and the explicitly supplied homepage created in this current redesign as the only visual sources.\nVisual direction: quiet, typographic, flat and spacious. White main canvas, a very pale cool-gray navigation area, charcoal text, one restrained indigo-blue accent. Functional success/error/warning may use small green/red/amber symbols with words. No green branding. Use open sections separated by spacing and delicate horizontal rules instead of an admin dashboard of outlined cards. Avoid heavy boxes, rounded tile grids, gradients, ornamental illustrations and shadows. System-like Chinese sans serif with crisp regular body, restrained semibold headings and good contrast. 28px equivalent page title, 14–16px equivalent body, consistent 8px rhythm. Fine 1.5px line icons. Borders and 4px corners only where real controls need them.\nComposition: one entire straight-on application screen, landscape 16:10, around 1920x1200, edge to edge. No monitor, browser, perspective, presentation slide or multi-screen collage.\nNew shared shell: understated 32px Windows title bar with small geometric two-line mark and \"个人工作台\". Approximately 210px pale-gray left navigation, compact 16px application name, generous text navigation spacing. Groups 日常: 今日概览 / 灵感待办 / 工作记录 / 月度总结. 交付: 代码提交 / APK 打包 / TAPD 入口. 开发: 项目运行 / 代码审查. Bottom 设置 and a quiet local-data indicator. Selected item uses a slim indigo vertical rule, pale blue-gray highlight, restrained icon. Main content has a slim top utility row, page title on the left and \"快速记录\" / \"任务中心\" on the right. Avoid repeating giant branding and redundant breadcrumb stacks.\nUX: make actual content the focus. One clear primary action per state, secondary actions quiet. Native form and list operations; no arbitrary command entry. Long-task logs are collapsed or a small light panel, never a dominant dark terminal. Use explicit status text, distinguish external processes and unverified outcomes. Demo data is illustrative. Paths, code, times and counts are not assertions about real systems.\nTypography: render quoted Chinese labels verbatim with legible spacing. No invented required fields, arbitrary 0/500 character limits, priorities or deadlines. Do not add AI, cloud account, global command palette, marketplace, native TAPD parser or phone-install controls. No advertising copy.\n",
+  "promptAssembly": {
+    "firstPage": "base + '\\n\\n' + pages[0].detail; no image input",
+    "otherPages": "siblingReference + '\\n\\n' + siblingBase + '\\n\\n' + pages[i].detail; only 01-home.png as input"
+  },
+  "executions": [
+    {
+      "id": "01-home",
+      "referenced_image_paths": [],
+      "transparent_background": false
+    },
+    {
+      "id": "02-erp-submit",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "03-app-submit",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "04-apk-running",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "05-projects",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "06-review",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "07-ideas",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "08-worklog",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "09-monthly",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "10-tapd",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "11-import",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "12-settings",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "13-failure",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    },
+    {
+      "id": "14-result",
+      "referenced_image_paths": [
+        "images/01-home.png"
+      ],
+      "transparent_background": false
+    }
+  ],
+  "refinements": [
+    {
+      "idx": 1,
+      "id": "02-erp-submit-v2",
+      "reason": "区分开发分支上游与交付目标",
+      "prompt": "Use case: ui-mockup precise text correction. Image 1 is the ERP submit screen created in THIS October 24 redesign and is the edit target. Preserve all layout, typography, indigo and charcoal styling, file list, diff, buttons and other text. Correct only ONE value: in the right-hand 检查项 section, the row 上游已配置 currently wrongly says origin/test. Replace that row's value with origin/feature-需求示例, legibly fitted without collision. Keep origin/test in the top route, execution summary and bottom 目标分支 unchanged, because test is the delivery target. No other changes.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/02-erp-submit.png"
+    },
+    {
+      "idx": 3,
+      "id": "04-apk-running-v2",
+      "reason": "构建期间禁用配置选择，防止重复启动",
+      "prompt": "Use case: ui-mockup interaction-state correction. Image 1 is the APK running screen created in THIS October 24 redesign and is the edit target. Preserve its layout, all four apps, text, right-hand four-phase progress and history. Change only the LEFT configuration controls to unmistakably disabled state while the build runs: all four app radio labels and radio controls should be gray muted, selected 易居通 remains recognizable with a gray filled radio and a pale neutral-gray row (no bright blue selection). Release/Debug radios and labels similarly disabled gray; selected Release remains recognizable. Version and package stay read-only. Primary 打包进行中… remains disabled but readable. The 工程与工具路径 expand control can remain readable for inspection, it is not editable. Keep right side active phase blue and 停止构建 red. Do not change contents or add features.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/04-apk-running.png"
+    },
+    {
+      "idx": 4,
+      "id": "05-projects-v2",
+      "reason": "按项目类型及就绪状态展示操作",
+      "prompt": "Use case: ui-mockup interaction-state correction. Image 1 is the project runtime screen created in THIS October 24 redesign and is the edit target. Preserve exact shared shell, all 11 rows, types, groups, statuses, paths and selected homeproject-ai bottom details. Change only the 操作 column for THREE rows. (1) 易居通 APP is 启动中: replace 打开页面 | 停止 with quiet gray 等待就绪 and blue 停止; no available 打开页面 before ready. (2) 客户小程序 is 开发者工具已打开: replace 打开页面 | 停止 with only the blue text 打开开发者工具; there is no browser page and no stop control for that external tool window. (3) 推荐官小程序 is 监听中: replace 打开页面 | 停止 with blue 打开开发者工具 | 停止监听; this stops only the compiler watcher owned by the workbench, not the tool window. Fit these three action texts in the action column without overlap, widen it slightly only if necessary. Everything else remains unchanged. No other new features.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/05-projects.png"
+    },
+    {
+      "idx": 10,
+      "id": "11-import-v2",
+      "reason": "原 TXT 与导入快照必须保留，不可由复选框关闭",
+      "prompt": "Use case: ui-mockup precise interaction correction. Image 1 is the TXT import preview created in THIS October 24 redesign, the edit target. Preserve every other word, layout, style, three table rows, two selected import records, unselected duplicate and footer import action. In the lower 导入设置 section ONLY, replace the blue checkbox immediately beside 保留原文件及导入快照 with a small noninteractive gray lock icon, and show the fixed sentence 原文件与导入快照将保留. Keep the helper 后续记录保存在工作台，不回写原 TXT. This protection is mandatory, not an option the user can uncheck. Do not alter the selection checkboxes inside the preview table.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/11-import.png"
+    },
+    {
+      "idx": 12,
+      "id": "13-failure-v2",
+      "reason": "提交与推送展示一致的提交身份，不使用非法示例哈希",
+      "prompt": "Use case: ui-mockup precise data correction. Image 1 is the partially completed ERP task screen created in THIS October 24 redesign, the edit target. Preserve visual style, all stages, conflict files, controls, wording and layout except these exact data corrections. Keep 本地提交 secondary text 已完成 · a1b2c3d. For 推送开发分支 replace the invalid and inconsistent d4e5f6g hash with a1b2c3d, so the same commit is pushed. For 更新 test replace 已完成 · h7i8j9k with 已完成 · origin/test 已同步; this is the fast-forward update before the failed merge. In the left task history APK 打包 row replace app-android / v1.2.0 with 易居通 / Release · 9.2.6 to align with this design set. Do not change conflict state or imply push test was executed. Keep changes strictly limited to these short data strings.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/13-failure.png"
+    },
+    {
+      "idx": 13,
+      "id": "14-result-v2",
+      "reason": "结果链接指向任务专属产物副本，避免指向会覆盖的构建输出",
+      "prompt": "Use case: ui-mockup precise artifact-location correction. Image 1 is the APK result screen created in THIS October 24 redesign, the edit target. Preserve all layout, app, version, filename, package, elapsed times, SHA256, three successful validation rows and right-hand actions/form. Change ONLY the current 输出目录 row: label it 任务产物目录, replace the generic fixed Gradle release directory with the readable unique task directory D:/WorkbenchData/artifacts/build-1024-1530/ . Directly under that path, if space permits without moving sections significantly, add small muted helper 本次任务独立副本. This path identifies a task-specific retained APK copy, not a build output that a later build will overwrite. The 复制 APK 路径 and 打开产物目录 controls refer to this retained copy. Do not add phone install or new actions.",
+      "transparent_background": false,
+      "inputDescription": "本轮该页面的修订前过程稿；已按整理要求删除。此处保留原始修订提示词供设计复核，不冒充可直接重放的输入集。",
+      "finalOutput": "images/14-result.png"
+    }
+  ],
+  "workspaceNote": "生成与修订提示词原文保留；现存图像路径已改为相对路径。过程稿与旧目录已清理。"
+}

@@ -1,0 +1,172 @@
+{
+  "date": "2026-10-24",
+  "mode": "built-in image_gen",
+  "referencePolicy": "Only images created in this redesign; no previous conversation images",
+  "records": [
+    {
+      "id": "01-home",
+      "title": "今日概览",
+      "fr": [
+        "FR-01",
+        "FR-03"
+      ],
+      "state": "快速记录与今日事项",
+      "file": "images/01-home.png",
+      "status": "generated",
+      "sha256": "0D523CBD4D550E0D82DBDC49939CA44ECCEE7305219B55DE481DFD75B37D9E9F"
+    },
+    {
+      "id": "02-erp-submit",
+      "title": "ERP 原生提交",
+      "fr": [
+        "FR-02"
+      ],
+      "state": "检查与执行前确认",
+      "file": "images/02-erp-submit.png",
+      "status": "refined",
+      "revisionReason": "区分开发分支上游与交付目标",
+      "sha256": "9769AAB194EF0A006E1D8310AFA24E16EE71603038D919F9486F39DEC00EF0E5"
+    },
+    {
+      "id": "03-app-submit",
+      "title": "APP 原生提交",
+      "fr": [
+        "FR-02"
+      ],
+      "state": "更新后核对与配置保护",
+      "file": "images/03-app-submit.png",
+      "status": "generated",
+      "sha256": "2C8CEA6F1339E5546FCAB6CC580E8A8055B5E38D2087663393C0C3BD86B6D2DA"
+    },
+    {
+      "id": "04-apk-running",
+      "title": "APK 打包进行中",
+      "fr": [
+        "FR-02",
+        "FR-03"
+      ],
+      "state": "四阶段构建与防重",
+      "file": "images/04-apk-running.png",
+      "status": "refined",
+      "revisionReason": "构建期间禁用配置选择，防止重复启动",
+      "sha256": "C9D09B5BC873D43E94EDD5FE023888E700C7B91CC37BCA66D2D09AC8666DC06F"
+    },
+    {
+      "id": "05-projects",
+      "title": "项目运行",
+      "fr": [
+        "FR-10"
+      ],
+      "state": "11 个工作目录与运行归属",
+      "file": "images/05-projects.png",
+      "status": "refined",
+      "revisionReason": "按项目类型及就绪状态展示操作",
+      "sha256": "67CF13F1D71829C95B5EC96D7BB67F1C1C24A72E0DBE705096DC6F6A5405E890"
+    },
+    {
+      "id": "06-review",
+      "title": "Git 差异与人工审查",
+      "fr": [
+        "FR-11"
+      ],
+      "state": "差异阅读、手动标记与复查",
+      "file": "images/06-review.png",
+      "status": "generated",
+      "sha256": "C0E3BA4D59D81109CE5F6A6F1DEE08A05D3AC4D5D7BEC009D5D6DD49F7439E32"
+    },
+    {
+      "id": "07-ideas",
+      "title": "灵感待办",
+      "fr": [
+        "FR-05"
+      ],
+      "state": "一句话收集与完成",
+      "file": "images/07-ideas.png",
+      "status": "generated",
+      "sha256": "0B00E44F252F6DC1D43072C595113E4166CA3F4FFD975DA9820EE8C06C4AC667"
+    },
+    {
+      "id": "08-worklog",
+      "title": "工作记录",
+      "fr": [
+        "FR-06"
+      ],
+      "state": "日期录入与无日期历史",
+      "file": "images/08-worklog.png",
+      "status": "generated",
+      "sha256": "73AC6B5BCE2183483CA6977BBBA15B5AE96A1CE33B3DA98BCCDA6BC8A8D20F75"
+    },
+    {
+      "id": "09-monthly",
+      "title": "月度总结",
+      "fr": [
+        "FR-07"
+      ],
+      "state": "人工整理、来源核对与导出",
+      "file": "images/09-monthly.png",
+      "status": "generated",
+      "sha256": "0A719D1D1F1075A07B4B010F1204682A953520D6822796324BD6D078B7576582"
+    },
+    {
+      "id": "10-tapd",
+      "title": "TAPD 入口",
+      "fr": [
+        "FR-04"
+      ],
+      "state": "现有客户端启动",
+      "file": "images/10-tapd.png",
+      "status": "generated",
+      "sha256": "5285A8F4788F1F629C534D99BCF16949B3787002262F9F5954555DFCFED82FB2"
+    },
+    {
+      "id": "11-import",
+      "title": "TXT 导入预览",
+      "fr": [
+        "FR-08"
+      ],
+      "state": "原文、日期与重复核对",
+      "file": "images/11-import.png",
+      "status": "refined",
+      "revisionReason": "原 TXT 与导入快照必须保留，不可由复选框关闭",
+      "sha256": "0D5FD7408A9232B82F8084536A5DA393222021304B930D2BE23D801AF608BBE0"
+    },
+    {
+      "id": "12-settings",
+      "title": "设置与本地数据",
+      "fr": [
+        "FR-09"
+      ],
+      "state": "数据位置、备份与恢复",
+      "file": "images/12-settings.png",
+      "status": "generated",
+      "sha256": "EC5299756BA3C6337365F723746D26FDDBB21FD92E7140C1FB317BE8A5C458EC"
+    },
+    {
+      "id": "13-failure",
+      "title": "部分失败与恢复",
+      "fr": [
+        "FR-03",
+        "FR-02"
+      ],
+      "state": "已完成、冲突和未执行",
+      "file": "images/13-failure.png",
+      "status": "refined",
+      "revisionReason": "提交与推送展示一致的提交身份，不使用非法示例哈希",
+      "sha256": "C1754A97388521A24D394A46060880D131B51C205B21B4510C51D201B988F946"
+    },
+    {
+      "id": "14-result",
+      "title": "打包结果与产物",
+      "fr": [
+        "FR-02",
+        "FR-03"
+      ],
+      "state": "校验完成与可选工作记录",
+      "file": "images/14-result.png",
+      "status": "refined",
+      "revisionReason": "结果链接指向任务专属产物副本，避免指向会覆盖的构建输出",
+      "sha256": "17C1EA349B8361BEBBB0077110B5F89735AB2E4B663E4EA7C3E5283A72E5ACAD"
+    }
+  ],
+  "workspaceLayout": "Image paths are relative to design/; only selected final images retained."
+}
