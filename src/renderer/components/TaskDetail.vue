@@ -234,7 +234,7 @@ function openOperation() {
       >
         <span
           ><strong>{{ c.file }}</strong
-          ><small class="path" style="display: block">{{ c.repo }}</small></span
+          ><small class="path sub-line">{{ c.repo }}</small></span
         ><button
           class="link"
           @click="

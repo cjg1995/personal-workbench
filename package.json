@@ -1,6 +1,6 @@
 {
   "name": "personal-workbench",
-  "version": "0.1.3",
+  "version": "0.1.15",
   "description": "本地个人工作台",
   "private": true,
   "type": "module",
@@ -13,8 +13,10 @@
     "start": "node scripts/start.cjs",
     "dev": "npm run build && npm start",
     "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .local/tests/tests/*.test.js",
+    "prepackage": "node scripts/prepare-package.cjs",
     "package": "npm run build && electron-builder --win nsis --x64",
     "package:dir": "npm run build && electron-builder --win dir --x64",
+    "reinstall": "npm run package && node scripts/reinstall.cjs",
     "verify:ui": "node scripts/verify-ui.cjs"
   },
   "dependencies": {
@@ -40,7 +42,8 @@
     "files": [
       "dist/**/*",
       "assets/monthly-template.docx",
-      "assets/workbench.ico",
+      "assets/workbench-v2.ico",
+      "assets/workbench-v2-64.png",
       "assets/workbench.svg",
       "package.json"
     ],
@@ -51,7 +54,7 @@
       "target": "nsis",
       "artifactName": "PersonalWorkbench-${version}-Setup.${ext}",
       "signExecutable": false,
-      "icon": "assets/workbench.ico"
+      "icon": "assets/workbench-v2.ico"
     },
     "nsis": {
       "oneClick": false,

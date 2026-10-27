@@ -1,6 +1,6 @@
 import type { Task } from "../shared/types.js";
 
-export const notificationAppId = "local.personal.workbench";
+export const notificationAppId = "local.personal.workbench.v2";
 export const notificationClsid = "{D9AE913B-30E9-472E-A050-937E5D41C0F8}";
 const escapeXml = (value: string) =>
   value.replace(

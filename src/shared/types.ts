@@ -209,24 +209,6 @@ export interface MonthlyDraft {
   entries: MonthlyEntry[];
   updatedAt: string;
 }
-export interface ImportLine {
-  line: number;
-  text: string;
-  duplicate: boolean;
-  selected: boolean;
-  happenedOn: string | null;
-}
-export interface ImportPreview {
-  id: string;
-  kind: RecordKind;
-  path: string;
-  encoding: string;
-  hash: string;
-  bytes: number;
-  raw: string;
-  lines: ImportLine[];
-  warning: string | null;
-}
 export interface BuildConfig {
   projectId: string;
   name: string;

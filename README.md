@@ -6,7 +6,7 @@ Windows 本地桌面应用，使用 Electron、Vue 3、TypeScript、Vite 和 Ele
 
 ## 启动与安装
 
-当前源码与安装包版本为 0.1.3。安装包为 `release/PersonalWorkbench-0.1.3-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机也可直接打开 `.local/installed-app-0.1.3/个人工作台.exe`；切换版本前先保存并退出已运行的工作台。旧运行目录暂保留，以继续管理其已经启动的后台服务。
+当前源码与安装包版本为 0.1.15。安装包为 `release/PersonalWorkbench-0.1.15-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机已安装到 `%LOCALAPPDATA%\Programs\PersonalWorkbench\个人工作台.exe`；切换版本前先保存并退出已运行的工作台，旧运行目录暂留以继续管理其已经启动的后台服务。
 
 从源码运行，在本目录执行以下命令。开发使用 Node 22.20.0；首次安装依赖需要联网，Electron 下载按锁定版本和官方 SHA256 核验。
 
@@ -21,11 +21,14 @@ npm start
 ```powershell
 npm test
 npm run verify:ui
+npm run reinstall
 node scripts/verify-workflows.cjs
 node scripts/verify-review-fixes.cjs
 node scripts/verify-feedback.cjs
 npm run package
 ```
+
+`npm run reinstall` 会重新构建、打包，并静默覆盖安装到当前用户目录，改动后可直接打开已安装版本验证。
 
 界面验收脚本使用本机已有的 Playwright，不是应用运行依赖；其他开发机需自行提供该测试工具。真实项目验收脚本会操作原工具链，先阅读下方验证边界。
 

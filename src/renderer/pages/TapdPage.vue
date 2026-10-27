@@ -7,11 +7,11 @@ import {
   model,
   navigate,
   notify,
-  reload,
+  openRecord,
   taskLabels,
 } from "../state";
-const text = ref(""),
-  busy = ref(false),
+import Icon from "../components/Icon.vue";
+const busy = ref(false),
   exists = ref<boolean | null>(null);
 const latest = computed(() => model.tasks.find((t) => t.type === "tapd"));
 void attempt(async () => {
@@ -26,88 +26,86 @@ async function open() {
   });
   busy.value = false;
 }
-async function save() {
-  busy.value = true;
-  await attempt(async () => {
-    await call("record.save", {
-      kind: "work",
-      text: text.value,
-      happenedOn: model.today,
-      result: "",
-      sourceId: latest.value ? "task:" + latest.value.id : null,
-    });
-    text.value = "";
-    await reload();
-    notify("工作记录已保存");
+function recordResult() {
+  openRecord({
+    kind: "work",
+    text: "",
+    projectId: null,
+    happenedOn: model.today,
+    result: "",
+    sourceId: latest.value ? "task:" + latest.value.id : null,
   });
-  busy.value = false;
 }
 </script>
 <template>
-  <section>
-    <h2 style="font-size: 25px; margin-top: 28px">打开现有导入客户端</h2>
-    <p class="muted">文档解析、核对与导入在现有客户端中完成。</p>
-    <label>客户端程序路径</label>
-    <div class="row spaced">
-      <input
-        :value="model.config?.tools.tapd"
-        readonly
-        style="flex: 1"
-        aria-label="TAPD 程序路径"
-      /><span :class="exists ? 'blue' : 'error'">{{
-        exists === null ? "检测中…" : exists ? "路径存在" : "路径需要配置"
-      }}</span
-      ><button class="link" @click="navigate('settings', { tab: 'tools' })">
-        修改路径
-      </button>
-    </div>
-    <div class="actions">
-      <button class="primary" :disabled="busy || !exists" @click="open">
-        打开 TAPD 客户端</button
-      ><button @click="attempt(() => call('tapd.documents'))">
-        打开文档目录</button
-      ><button class="link" @click="attempt(() => call('tapd.help'))">
-        原客户端使用说明
-      </button>
-    </div>
-  </section>
-  <section class="section-rule" style="margin-top: 32px">
-    <h2>导入流程 <small>在客户端中完成</small></h2>
-    <div class="step-strip" style="justify-content: space-between">
-      <span
-        v-for="(t, i) in ['选择项目', '选择 Word', '核对需求', '提交导入']"
-        :key="t"
-        ><b>{{ i + 1 }}</b
-        >{{ t }}</span
-      >
-    </div>
-    <p class="small muted">
-      令牌由原客户端管理。工作台只记录打开结果，不通过进程退出码推断导入数量或导入成功。
-    </p>
-  </section>
-  <section class="section-rule">
-    <h2>最近一次启动</h2>
-    <div v-if="latest" class="row">
-      <span class="status" :class="latest.state">{{
-        latest.result.clientOpened ? "客户端已打开" : taskLabels[latest.state]
-      }}</span
-      ><time class="muted small">{{ dateLabel(latest.startedAt) }}</time
-      ><span class="small muted">导入结果请在客户端核对。</span>
-    </div>
-    <p v-else class="empty compact">还没有通过工作台打开过客户端。</p>
-    <p v-if="latest?.error" class="error">{{ latest.error }}</p>
-  </section>
-  <section class="section-rule">
-    <h2>记下导入结果 <small>可选</small></h2>
-    <form class="row" @submit.prevent="save">
-      <textarea
-        v-model="text"
-        rows="3"
-        placeholder="本次导入的项目、文档和人工核对结果…"
-        aria-label="TAPD 手动结果"
-      /><button class="primary" :disabled="busy || !text.trim()">
-        保存工作记录
-      </button>
-    </form>
-  </section>
+  <div class="module-columns">
+    <section>
+      <h2>启动客户端</h2>
+      <p class="small muted">
+        文档解析、需求核对与导入都在现有客户端中完成，工作台只负责启动与留痕。
+      </p>
+      <label for="tapd-path">客户端程序路径</label>
+      <div class="row wrap">
+        <input
+          id="tapd-path"
+          :value="model.config?.tools.tapd"
+          readonly
+          class="path-input"
+          aria-label="TAPD 程序路径"
+        /><span :class="exists ? 'pill success' : 'pill warn'">{{
+          exists === null ? "检测中" : exists ? "路径存在" : "待配置"
+        }}</span
+        ><button class="link" @click="navigate('settings', { tab: 'tools' })">
+          修改路径
+        </button>
+      </div>
+      <div class="actions">
+        <button class="primary" :disabled="busy || !exists" @click="open">
+          打开 TAPD 客户端</button
+        ><button @click="attempt(() => call('tapd.documents'))">
+          打开文档目录
+        </button>
+      </div>
+      <p v-if="exists === false" class="inline-note warn">
+        路径尚未配置或不存在，请先在设置中指定客户端程序。
+      </p>
+      <p class="inline-note section-rule">
+        客户端内流程：选择项目 → 选择 Word → 核对需求 → 提交导入。令牌由原客户端管理，工作台不读取导入结果。
+        <button class="link" @click="attempt(() => call('tapd.help'))">
+          查看使用说明
+        </button>
+      </p>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>最近一次启动</h2>
+        <button
+          v-if="latest"
+          class="link small"
+          @click="navigate('tasks', { taskId: latest.id })"
+        >
+          查看任务
+        </button>
+      </div>
+      <div v-if="latest" class="row wrap">
+        <span class="status" :class="latest.state">{{
+          latest.result.clientOpened ? "客户端已打开" : taskLabels[latest.state]
+        }}</span
+        ><time class="muted small">{{ dateLabel(latest.startedAt) }}</time>
+      </div>
+      <p v-else class="empty compact">还没有通过工作台打开过客户端。</p>
+      <p v-if="latest?.error" class="error small">{{ latest.error }}</p>
+      <section class="section-rule">
+        <h2>记录导入结果</h2>
+        <p class="small muted">
+          导入数量与成功状态请在客户端核对。需要留痕时，记一条工作记录。
+        </p>
+        <div class="actions">
+          <button @click="recordResult">
+            <Icon name="pencil" :size="15" />记录本次导入结果
+          </button>
+        </div>
+      </section>
+    </section>
+  </div>
 </template>

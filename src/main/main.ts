@@ -7,6 +7,7 @@ import {
   shell,
   screen,
   Notification,
+  nativeImage,
 } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,6 +63,15 @@ const dataDir = ensureDir(
 );
 app.setPath("userData", dataDir);
 app.setName("个人工作台");
+const sourceIcon = path.resolve(here, "../../assets/workbench-v2-64.png");
+let windowIcon = sourceIcon;
+try {
+  const iconFile = path.join(dataDir, "app-icon.png");
+  fs.copyFileSync(sourceIcon, iconFile);
+  windowIcon = iconFile;
+} catch {
+  windowIcon = sourceIcon;
+}
 if (process.platform === "win32") {
   app.setAppUserModelId(notificationAppId);
   app.setToastActivatorCLSID(notificationClsid);
@@ -161,7 +171,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     const notification = new Notification({
       ...options,
-      icon: path.resolve(here, "../../assets/workbench.ico"),
+      icon: windowIcon,
       id: task.id,
       groupId: "project-startup",
     });
@@ -291,32 +301,6 @@ if (!app.requestSingleInstanceLock()) {
         const n = records.restore(p.id);
         changed();
         return n;
-      }
-      case "import.preview": {
-        const selected = await dialog.showOpenDialog(win, {
-          defaultPath:
-            p.kind === "idea"
-              ? path.join(config.get().tools.documents, "todo.txt")
-              : path.join(config.get().tools.documents, "temp.txt"),
-          properties: ["openFile"],
-          filters: [{ name: "文本", extensions: ["txt"] }],
-        });
-        if (selected.canceled) return null;
-        return records.previewImport(
-          selected.filePaths[0],
-          p.kind,
-          p.encoding || "auto",
-        );
-      }
-      case "import.encoding": {
-        const existing = records.previews.get(p.id);
-        if (!existing) throw new Error("请先选择文件");
-        return records.previewImport(existing.path, existing.kind, p.encoding);
-      }
-      case "import.commit": {
-        const result = await records.import(p.id, p.selected, p.dates);
-        changed();
-        return result;
       }
       case "monthly.get": {
         const draft = records.draft(p.month, config.get().name);
@@ -801,11 +785,7 @@ if (!app.requestSingleInstanceLock()) {
       ];
       for (const shortcut of shortcuts) {
         try {
-          if (
-            fs.existsSync(shortcut) &&
-            shell.readShortcutLink(shortcut).appUserModelId ===
-              notificationAppId
-          )
+          if (fs.existsSync(shortcut))
             shell.writeShortcutLink(shortcut, "update", {
               target: shell.readShortcutLink(shortcut).target,
               appUserModelId: notificationAppId,
@@ -832,12 +812,12 @@ if (!app.requestSingleInstanceLock()) {
     win = new BrowserWindow({
       width: Math.min(saved?.width || 1440, workArea.width),
       height: Math.min(saved?.height || 900, workArea.height),
-      minWidth: Math.min(1050, workArea.width),
+      minWidth: Math.min(960, workArea.width),
       minHeight: Math.min(680, workArea.height),
       frame: false,
       title: "个人工作台",
-      backgroundColor: "#ffffff",
-      icon: path.resolve(here, "../../assets/workbench.ico"),
+      backgroundColor: "#f5f7fa",
+      icon: windowIcon,
       show: false,
       webPreferences: {
         preload: path.join(here, "../preload.cjs"),
@@ -847,6 +827,7 @@ if (!app.requestSingleInstanceLock()) {
         webSecurity: true,
       },
     });
+    win.setIcon(windowIcon);
     const entry = path.resolve(here, "../renderer/index.html");
     const allowed = pathToFileURL(entry).href;
     ipcMain.handle("workbench:action", async (event, name, payload) => {
@@ -886,6 +867,7 @@ if (!app.requestSingleInstanceLock()) {
     );
     win.once("ready-to-show", () => {
       win.show();
+      win.setIcon(nativeImage.createFromPath(windowIcon));
       if (focusNotificationOnReady) {
         if (win.isMinimized()) win.restore();
         win.focus();

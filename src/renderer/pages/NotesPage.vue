@@ -15,29 +15,28 @@ import {
   setGuard,
   saveForm,
 } from "../state";
-import ProjectSelect from "../components/ProjectSelect.vue";
+import Icon from "../components/Icon.vue";
 const props = defineProps<{ kind: "idea" | "work" }>();
 const draft = model.formDrafts["note-add-" + props.kind] || {};
 const text = ref(draft.text || ""),
-  project = ref<string | null>(draft.projectId || null),
   date = ref(draft.happenedOn || model.today),
   busy = ref(false),
   query = ref(""),
   tab = ref(context.value.tab || "active"),
   month = ref(model.today.slice(0, 7)),
-  filterProject = ref<string | null>(null),
   selected = ref<string | null>(context.value.selected || null);
 watch(
-  [text, project, date],
+  [text, date],
   () =>
     saveForm("note-add-" + props.kind, {
       text: text.value,
-      projectId: project.value,
       happenedOn: date.value,
     }),
   { flush: "sync" },
 );
 const editor = ref<Note | null>(null);
+const composer = ref<HTMLTextAreaElement>();
+const focusComposer = () => composer.value?.focus();
 const baseline = ref("");
 const dirty = computed(
   () => !!editor.value && JSON.stringify(editor.value) !== baseline.value,
@@ -57,7 +56,6 @@ const filtered = computed(() =>
             : tab.value === "deleted" ||
               !month.value ||
               n.happenedOn?.startsWith(month.value)) &&
-        (!filterProject.value || n.projectId === filterProject.value) &&
         (!query.value ||
           n.text.toLowerCase().includes(query.value.toLowerCase()) ||
           n.result.toLowerCase().includes(query.value.toLowerCase())),
@@ -68,6 +66,7 @@ const filtered = computed(() =>
         b.createdAt.localeCompare(a.createdAt),
     ),
 );
+const listOnly = computed(() => !editor.value && !filtered.value.length);
 async function canLeave() {
   return (
     !dirty.value ||
@@ -107,12 +106,12 @@ async function select(n: Note) {
   loadEditor();
 }
 async function add() {
+  if (busy.value || !text.value.trim()) return;
   busy.value = true;
   await attempt(async () => {
     const note = await call<Note>("record.save", {
       kind: props.kind,
       text: text.value,
-      projectId: project.value,
       happenedOn: date.value,
     });
     text.value = "";
@@ -124,6 +123,11 @@ async function add() {
     notify("已保存");
   });
   busy.value = false;
+}
+function onComposerKeydown(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.key !== "Enter") return;
+  event.preventDefault();
+  void add();
 }
 async function save() {
   if (!editor.value) return;
@@ -166,70 +170,117 @@ async function remove() {
 </script>
 <template>
   <form class="note-add" @submit.prevent="add">
-    <div v-if="kind === 'work'" class="row">
-      <input
-        v-model="date"
-        type="date"
-        aria-label="新记录发生日期"
-      /><ProjectSelect v-model="project" />
-    </div>
-    <div class="row">
-      <textarea
-        v-model="text"
-        :rows="kind === 'work' ? 2 : 1"
-        required
-        :placeholder="
-          kind === 'idea' ? '想到的事，先记下来…' : '今天处理了什么…'
-        "
-        aria-label="新记录内容"
-      /><button class="primary" :disabled="busy || !text.trim()">
-        {{ kind === "idea" ? "添加" : "保存记录" }}
-      </button>
+    <textarea
+      ref="composer"
+      v-model="text"
+      :rows="kind === 'work' ? 2 : 1"
+      required
+      :placeholder="
+        kind === 'idea' ? '想到的事，先记下来…' : '今天处理了什么…'
+      "
+      aria-label="新记录内容"
+      @keydown="onComposerKeydown"
+    />
+    <div class="composer-foot">
+      <div class="row">
+        <input
+          v-if="kind === 'work'"
+          v-model="date"
+          type="date"
+          aria-label="新记录发生日期"
+          title="发生日期"
+        />
+      </div>
+      <div class="composer-actions">
+        <span class="shortcut-hint" aria-hidden="true">Ctrl + Enter</span>
+        <button
+          class="primary"
+          :disabled="busy || !text.trim()"
+          :aria-busy="busy"
+          title="Ctrl+Enter 快捷保存"
+        >
+          {{ kind === "idea" ? "添加" : "保存记录" }}
+        </button>
+      </div>
     </div>
   </form>
   <div class="row wrap filters">
+    <span class="toolbar-label">筛选</span>
     <input
       v-if="kind === 'work'"
       v-model="month"
       type="month"
       aria-label="筛选月份"
-    /><ProjectSelect v-model="filterProject" label="项目（全部）" /><input
+    /><input
       v-model="query"
       type="search"
       :placeholder="kind === 'idea' ? '搜索待办…' : '搜索关键词…'"
       aria-label="搜索记录"
     />
   </div>
-  <div class="tabs">
-    <button :class="{ active: tab === 'active' }" @click="tab = 'active'">
+  <div class="tabs" role="group" aria-label="记录状态">
+    <button
+      :class="{ active: tab === 'active' }"
+      :aria-pressed="tab === 'active'"
+      @click="tab = 'active'"
+    >
       {{
+        kind === "idea" ? "未完成" : "按日期"
+      }}<span class="tab-count">{{
         kind === "idea"
-          ? "未完成 " + all.filter((n) => !n.deletedAt && !n.completedAt).length
-          : "按日期"
-      }}</button
+          ? all.filter((n) => !n.deletedAt && !n.completedAt).length
+          : all.filter((n) => !n.deletedAt).length
+      }}</span></button
     ><button
       v-if="kind === 'idea'"
       :class="{ active: tab === 'completed' }"
+      :aria-pressed="tab === 'completed'"
       @click="tab = 'completed'"
     >
-      已完成
-      {{ all.filter((n) => !n.deletedAt && n.completedAt).length }}</button
+      已完成<span class="tab-count">{{
+        all.filter((n) => !n.deletedAt && n.completedAt).length
+      }}</span></button
     ><button
       v-else
       :class="{ active: tab === 'undated' }"
+      :aria-pressed="tab === 'undated'"
       @click="tab = 'undated'"
     >
-      日期待补充
-      {{ all.filter((n) => !n.deletedAt && !n.happenedOn).length }}</button
-    ><button :class="{ active: tab === 'deleted' }" @click="tab = 'deleted'">
-      已删除 {{ all.filter((n) => n.deletedAt).length }}
+      日期待补充<span class="tab-count">{{
+        all.filter((n) => !n.deletedAt && !n.happenedOn).length
+      }}</span></button
+    ><button
+      :class="{ active: tab === 'deleted' }"
+      :aria-pressed="tab === 'deleted'"
+      @click="tab = 'deleted'"
+    >
+      已删除<span class="tab-count">{{
+        all.filter((n) => n.deletedAt).length
+      }}</span>
     </button>
   </div>
-  <div class="columns note-layout">
+  <div class="columns note-layout" :class="{ single: listOnly }">
     <section class="note-list">
-      <p v-if="!filtered.length" class="empty">
-        {{ query ? "没有匹配记录。" : "这里还没有记录。" }}
-      </p>
+      <div v-if="!filtered.length" class="empty">
+        <span class="empty-icon"
+          ><Icon :name="query ? 'search' : 'list'" :size="16"
+        /></span>
+        <p class="empty-title">
+          {{ query ? "没有匹配记录" : "这里还没有记录" }}
+        </p>
+        <p v-if="query" class="empty-hint">
+          换个关键词，或清除搜索查看全部记录。
+        </p>
+        <p v-else class="empty-hint">
+          {{
+            kind === "idea"
+              ? "想到什么就先记下来，之后再整理。"
+              : "记录今天真实发生的工作，方便月度整理。"
+          }}
+        </p>
+        <button v-if="query" class="link" @click="query = ''">清除搜索</button>
+        <button v-else class="link" @click="focusComposer">写下第一条</button>
+      </div>
       <button
         v-for="n in filtered"
         :key="n.id"
@@ -253,7 +304,12 @@ async function remove() {
       </button>
     </section>
     <section v-if="editor" class="note-detail">
-      <h2>{{ kind === "idea" ? "待办详情" : "工作记录" }}</h2>
+      <div class="section-head">
+        <h2>
+          {{ kind === "idea" ? "待办详情" : "工作记录" }}
+        </h2>
+        <span v-if="dirty" class="chip warn">未保存</span>
+      </div>
       <label
         >正文<textarea
           v-model="editor.text"
@@ -266,10 +322,6 @@ async function remove() {
           v-model="editor.happenedOn"
           type="date"
           :disabled="!!editor.deletedAt" /></label
-      ><label class="row spaced"
-        >项目（可选）<ProjectSelect
-          v-model="editor.projectId"
-          :disabled="!!editor.deletedAt" /></label
       ><label v-if="kind === 'work'"
         >实际结果（可选）<textarea
           v-model="editor.result"
@@ -279,7 +331,7 @@ async function remove() {
       </label>
       <p class="muted small">
         {{ editor.importBatch ? "导入时间" : "创建时间" }}
-        {{ dateLabel(editor.createdAt) }}<br />修改时间
+        {{ dateLabel(editor.createdAt) }} · 修改
         {{ dateLabel(editor.updatedAt) }}
       </p>
       <p v-if="editor.importBatch" class="notice small">
@@ -313,7 +365,9 @@ async function remove() {
           ><button v-if="kind === 'idea'" @click="complete">
             {{ editor.completedAt ? "重新打开" : "标记完成" }}</button
           ><button :disabled="!dirty" @click="loadEditor">取消修改</button
-          ><button class="danger text-button" @click="remove">删除记录</button>
+          ><button class="danger text-button push-right" @click="remove">
+            删除记录
+          </button>
         </div>
         <button
           v-if="kind === 'idea'"
@@ -322,18 +376,20 @@ async function remove() {
             openRecord({
               kind: 'work',
               text: editor.text,
-              projectId: editor.projectId,
               sourceId: 'idea:' + editor.id,
             })
           "
         >
           记一条工作 →
         </button>
-        <p v-if="kind === 'idea'" class="small muted">
-          完成待办只改变状态。工作记录由你另行核对并保存。
+        <p v-if="kind === 'idea'" class="inline-note">
+          完成待办只改变状态，不会自动生成工作记录。
         </p></template
       >
     </section>
-    <section v-else class="empty">选择左侧记录，查看和编辑原文。</section>
+    <section v-else-if="filtered.length" class="empty compact">
+      <Icon name="pencil" :size="15" />
+      <p class="empty-hint">选择一条记录查看和编辑</p>
+    </section>
   </div>
 </template>

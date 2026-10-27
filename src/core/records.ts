@@ -1,7 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
 import type {
-  ImportPreview,
   MonthlyDraft,
   MonthlyEntry,
   Note,
@@ -10,8 +7,6 @@ import type {
 import { sections } from "../shared/types.js";
 import { Store } from "./store.js";
 import {
-  atomicWrite,
-  ensureDir,
   hash,
   id,
   localDate,
@@ -20,7 +15,6 @@ import {
   validateDate,
 } from "./util.js";
 export class RecordsService {
-  previews = new Map<string, ImportPreview>();
   constructor(
     public store: Store,
     public dataDir: string,
@@ -112,178 +106,6 @@ export class RecordsService {
   }
   checkMonth(month: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("月份无效");
-  }
-  previewImport(
-    file: string,
-    kind: RecordKind,
-    encoding = "auto",
-  ): ImportPreview {
-    if (!["idea", "work"].includes(kind)) throw new Error("目标记录类型无效");
-    const bytes = fs.readFileSync(file);
-    if (bytes.length > 20 * 1024 * 1024)
-      throw new Error("TXT 超过 20 MB，请先拆分后导入");
-    let raw = "",
-      detected = encoding;
-    let warning: string | null = null;
-    if (encoding === "auto") {
-      try {
-        raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        detected = bytes.subarray(0, 3).equals(Buffer.from([239, 187, 191]))
-          ? "UTF-8 BOM"
-          : "UTF-8";
-      } catch {
-        try {
-          raw = new TextDecoder("gb18030", { fatal: true }).decode(bytes);
-          detected = "GB18030 / GBK";
-          warning = "按中文本机编码解码，请逐条核对，必要时切换编码。";
-        } catch {
-          throw new Error("无法可靠识别编码，请先选择正确编码并核对原文");
-        }
-      }
-    } else {
-      if (!["utf-8", "gb18030", "gbk", "utf-16le"].includes(encoding))
-        throw new Error("不支持的编码");
-      try {
-        raw = new TextDecoder(encoding, { fatal: true }).decode(bytes);
-      } catch {
-        throw new Error("所选编码无法解码此文件");
-      }
-    }
-    raw = raw.replace(/^\uFEFF/, "");
-    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/.test(raw))
-      throw new Error("文本含二进制内容或乱码，请核对格式，不能直接导入");
-    const existing = new Set(
-      this.store
-        .list<Note>("note")
-        .filter(
-          (n) => n.kind === kind && n.importBatch && n.originalText !== null,
-        )
-        .map((n) => n.originalText),
-    );
-    const lines = raw.split(/\r\n|\n|\r/).flatMap((text, i) => {
-      if (!text.trim()) return [];
-      const duplicate = existing.has(text);
-      existing.add(text);
-      return [
-        {
-          line: i + 1,
-          text,
-          duplicate,
-          selected: !duplicate,
-          happenedOn: null,
-        },
-      ];
-    });
-    const preview: ImportPreview = {
-      id: id(),
-      kind,
-      path: path.resolve(file),
-      encoding: detected,
-      hash: hash(bytes),
-      bytes: bytes.length,
-      raw,
-      lines,
-      warning,
-    };
-    const dir = ensureDir(path.join(this.dataDir, "snapshots", preview.id));
-    atomicWrite(path.join(dir, "source.txt"), bytes);
-    atomicWrite(
-      path.join(dir, "source.json"),
-      JSON.stringify({ ...preview, lines: undefined, raw: undefined }, null, 2),
-    );
-    this.previews.set(preview.id, preview);
-    return preview;
-  }
-  async import(
-    previewId: string,
-    selected: number[],
-    dates: Record<string, string | null> = {},
-  ) {
-    const preview = this.previews.get(previewId);
-    if (!preview) throw new Error("预览已失效，请重新选择文件");
-    if (hash(fs.readFileSync(preview.path)) !== preview.hash)
-      throw new Error("原 TXT 已变化，请重新预览");
-    if (
-      new Set(selected).size !== selected.length ||
-      selected.some((n) => !preview.lines.find((l) => l.line === n))
-    )
-      throw new Error("导入选择无效");
-    const snapshot = path.join(
-      this.dataDir,
-      "snapshots",
-      preview.id,
-      "source.txt",
-    );
-    if (hash(fs.readFileSync(snapshot)) !== preview.hash)
-      throw new Error("原文快照校验失败");
-    const before = path.join(
-      this.dataDir,
-      "snapshots",
-      preview.id,
-      "before-import.sqlite",
-    );
-    await this.store.snapshot(before);
-    const saved = this.store.transaction(() => {
-      const current = new Set(
-        this.store
-          .list<Note>("note")
-          .filter((n) => n.kind === preview.kind && n.importBatch)
-          .map((n) => n.originalText),
-      );
-      const rows: Note[] = [];
-      for (const line of preview.lines.filter((l) =>
-        selected.includes(l.line),
-      )) {
-        if (current.has(line.text) && !line.duplicate)
-          throw new Error("预览后有同文内容被导入，请刷新重复判断后重试");
-        const n: Note = {
-          id: id(),
-          kind: preview.kind,
-          text: line.text,
-          projectId: null,
-          happenedOn:
-            preview.kind === "work"
-              ? validateDate(dates[String(line.line)])
-              : null,
-          result: "",
-          createdAt: now(),
-          updatedAt: now(),
-          completedAt: null,
-          deletedAt: null,
-          sourceId: null,
-          importBatch: preview.id,
-          sourceLine: line.line,
-          originalText: line.text,
-        };
-        this.store.set("note", n.id, n);
-        rows.push(n);
-      }
-      this.store.set("import", preview.id, {
-        id: preview.id,
-        path: preview.path,
-        encoding: preview.encoding,
-        hash: preview.hash,
-        snapshot,
-        createdAt: now(),
-        added: rows.length,
-        skipped: preview.lines.length - rows.length,
-        lines: preview.lines.map((l) => ({
-          line: l.line,
-          text: l.text,
-          imported: selected.includes(l.line),
-        })),
-      });
-      return rows;
-    });
-    this.previews.delete(previewId);
-    return {
-      batchId: previewId,
-      added: saved.length,
-      skipped: preview.lines.length - saved.length,
-      failed: 0,
-      records: saved,
-      snapshot,
-    };
   }
   draft(month: string, name = "陈嘉庚") {
     this.checkMonth(month);

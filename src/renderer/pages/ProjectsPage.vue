@@ -101,8 +101,13 @@ onBeforeUnmount(() => {
       type="search"
       placeholder="搜索项目名称"
       aria-label="搜索项目"
-    /><button class="link push-right" :disabled="loading" @click="refresh">
-      <Icon name="refresh" />{{ loading ? "检测中…" : "重新检测" }}
+    /><button
+      class="link push-right"
+      :disabled="loading"
+      :aria-busy="loading"
+      @click="refresh"
+    >
+      <Icon name="refresh" :size="15" />{{ loading ? "检测中…" : "重新检测" }}
     </button>
   </div>
   <table class="table">
@@ -115,6 +120,9 @@ onBeforeUnmount(() => {
       </tr>
     </thead>
     <tbody>
+      <tr v-if="!groups.some((g) => g.projects.length)" class="table-empty">
+        <td colspan="4">没有匹配的工作目录，调整筛选条件后再试。</td>
+      </tr>
       <template v-for="g in groups" :key="g.name"
         ><tr class="group-row">
           <td colspan="4">
@@ -136,7 +144,7 @@ onBeforeUnmount(() => {
           "
         >
           <td>
-            <span class="row" style="gap: 13px"
+            <span class="row project-name"
               ><Icon
                 :name="
                   p.type === 'tomcat' || p.type === 'spring'
@@ -167,7 +175,7 @@ onBeforeUnmount(() => {
             }}</span>
           </td>
           <td>
-            <div class="row" style="gap: 13px" @click.stop>
+            <div class="row row-actions" @click.stop>
               <button
                 v-if="p.type === 'wechat'"
                 class="link"

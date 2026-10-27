@@ -14,6 +14,9 @@ const paths: Record<string, string> = {
   database:
     "M3 5c0-4 18-4 18 0s-18 4-18 0v14c0 4 18 4 18 0V5 M3 12c0 4 18 4 18 0",
   pencil: "m3 17 13-13 5 5L8 22H3Z m11-11 5 5",
+  bulb: "M9 18h6 M10 21h4 M12 3a6 6 0 0 0-3 11.2V16h6v-1.8A6 6 0 0 0 12 3Z",
+  spark: "M12 2.5 14 8.5 20 10.5 14 12.5 12 18.5 10 12.5 4 10.5 10 8.5Z",
+  book: "M6 3h13v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M9 7h7 M9 11h7 M9 15h4",
   list: "M8 5h14 M8 12h14 M8 19h14 M2 5h1 M2 12h1 M2 19h1",
   folder: "M2 6h8l2 3h10v12H2Z",
   check: "m4 12 5 5L20 6",
@@ -28,6 +31,8 @@ const paths: Record<string, string> = {
   lock: "M5 10h14v12H5Z M8 10V6a4 4 0 0 1 8 0v4",
   branch: "M6 3v14a4 4 0 0 0 4 4 M6 11h8a4 4 0 0 0 4-4V3",
   warning: "m12 2 11 20H1Z M12 8v6 M12 18v1",
+  grid: "M4 4h7v7H4Z M13 4h7v7h-7Z M4 13h7v7H4Z M13 13h7v7h-7Z",
+  maximize: "M5 5h14v14H5Z",
 };
 </script>
 <template>

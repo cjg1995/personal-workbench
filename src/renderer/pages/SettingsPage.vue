@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import type { Configuration } from "../../shared/types";
 import {
   attempt,
@@ -7,7 +7,6 @@ import {
   confirm,
   context,
   model,
-  navigate,
   notify,
   reload,
   setGuard,
@@ -20,6 +19,7 @@ const tab = ref(context.value.tab || "data"),
   checks = ref<any[]>([]),
   backups = ref<any[]>([]),
   restorePreview = ref<any>(null);
+const dirty = computed(() => JSON.stringify(form.value) !== saved.value);
 const labels: Record<string, string> = {
   git: "Git 可执行文件",
   hbNode: "HBuilderX Node",
@@ -60,6 +60,10 @@ async function save() {
     notify("本地配置已保存");
   });
   busy.value = false;
+}
+function discard() {
+  form.value = JSON.parse(saved.value);
+  notify("已放弃未保存修改");
 }
 async function pickTool(key: string) {
   await attempt(async () => {
@@ -115,19 +119,35 @@ async function restore() {
 }
 </script>
 <template>
-  <div class="tabs">
-    <button :class="{ active: tab === 'projects' }" @click="tab = 'projects'">
-      项目与工具</button
-    ><button :class="{ active: tab === 'tools' }" @click="tab = 'tools'">
-      工具路径</button
-    ><button :class="{ active: tab === 'data' }" @click="tab = 'data'">
+  <div class="tabs" role="group" aria-label="设置分类">
+    <button
+      :class="{ active: tab === 'projects' }"
+      :aria-pressed="tab === 'projects'"
+      @click="tab = 'projects'"
+    >
+      工作目录</button
+    ><button
+      :class="{ active: tab === 'tools' }"
+      :aria-pressed="tab === 'tools'"
+      @click="tab = 'tools'"
+    >
+      工具与客户端</button
+    ><button
+      :class="{ active: tab === 'data' }"
+      :aria-pressed="tab === 'data'"
+      @click="tab = 'data'"
+    >
       本地数据</button
-    ><button :class="{ active: tab === 'template' }" @click="tab = 'template'">
+    ><button
+      :class="{ active: tab === 'template' }"
+      :aria-pressed="tab === 'template'"
+      @click="tab = 'template'"
+    >
       月报模板
     </button>
   </div>
   <section v-if="tab === 'projects'">
-    <h2>全部 11 个工作目录</h2>
+    <h2>工作目录 · {{ form.projects.length }} 个</h2>
     <p class="small muted">
       类型和项目关联保持登记边界。未填写的高级启动字段从实际项目及 IDEA
       配置读取。
@@ -196,15 +216,6 @@ async function restore() {
         ><input v-model="p.springProfile" placeholder="空为原运行配置"
       /></label>
     </details>
-    <div class="actions">
-      <button
-        class="primary"
-        :disabled="busy || JSON.stringify(form) === saved"
-        @click="save"
-      >
-        保存配置
-      </button>
-    </div>
   </section>
   <section v-else-if="tab === 'tools'" class="form-section">
     <h2>底层工具和客户端</h2>
@@ -225,21 +236,15 @@ async function restore() {
         v-if="
           checks.find((c) => c.key === key)?.path === (form.tools as any)[key]
         "
-        :class="checks.find((c) => c.key === key)?.exists ? 'blue' : 'error'"
-        style="width: 65px"
+        class="pill"
+        :class="checks.find((c) => c.key === key)?.exists ? 'success' : 'warn'"
         >{{
           checks.find((c) => c.key === key)?.exists ? "路径存在" : "待配置"
         }}</span
       >
     </div>
     <div class="actions">
-      <button
-        class="primary"
-        :disabled="busy || JSON.stringify(form) === saved"
-        @click="save"
-      >
-        保存配置</button
-      ><button @click="attempt(check, '检测完成')">重新检测已保存路径</button>
+      <button @click="attempt(check, '检测完成')">重新检测已保存路径</button>
     </div>
   </section>
   <section v-else-if="tab === 'data'">
@@ -341,22 +346,6 @@ async function restore() {
         </div>
       </div>
     </section>
-    <section class="section-rule">
-      <h2>历史 TXT</h2>
-      <div class="row spaced">
-        <span>todo.txt → 灵感待办</span
-        ><button @click="navigate('import', { kind: 'idea' })">
-          复制导入…
-        </button>
-      </div>
-      <div class="row spaced" style="margin-top: 12px">
-        <span>temp.txt → 工作记录</span
-        ><button @click="navigate('import', { kind: 'work' })">
-          复制导入…
-        </button>
-      </div>
-      <p class="small muted">原文件和导入快照保留，不做双向同步。</p>
-    </section>
   </section>
   <section v-else class="form-section">
     <h2>固定月报模板</h2>
@@ -378,14 +367,19 @@ async function restore() {
     </p>
     <div class="actions">
       <button @click="attempt(() => call('settings.template'))">
-        查看已保存的空白模板</button
-      ><button
-        class="primary"
-        :disabled="JSON.stringify(form) === saved"
-        @click="save"
-      >
-        保存配置
+        查看已保存的空白模板
       </button>
     </div>
+    <details class="section-rule">
+      <summary>模板边界</summary>
+      <p class="small muted">
+        自选模板需保留内置模板的五个章节槽位。首版不提供通用模板编辑器。
+      </p>
+    </details>
   </section>
+  <div v-if="dirty" class="save-bar">
+    <span class="save-hint">配置有未保存的修改</span
+    ><button :disabled="busy" @click="discard">放弃修改</button
+    ><button class="primary" :disabled="busy" @click="save">保存配置</button>
+  </div>
 </template>

@@ -12,9 +12,8 @@ import {
   notify,
   setGuard,
 } from "../state";
-import ProjectSelect from "../components/ProjectSelect.vue";
+import Icon from "../components/Icon.vue";
 const month = ref(context.value.month || model.today.slice(0, 7)),
-  project = ref<string | null>(null),
   draft = ref<MonthlyDraft | null>(null),
   materials = ref<Note[]>([]),
   sources = ref<any[]>([]),
@@ -23,13 +22,23 @@ const month = ref(context.value.month || model.today.slice(0, 7)),
   section = ref(sections[0]),
   saveState = ref(""),
   dirty = ref(false),
-  loading = ref(false),
+  loading = ref(true),
   selectedEntries = ref<string[]>([]);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let pending: Promise<void> | null = null,
   unmounted = false;
 const linked = computed(
   () => new Set(draft.value?.entries.flatMap((e) => e.sourceIds) || []),
+);
+const stateClass = computed(() =>
+  saveState.value.includes("失败")
+    ? "error"
+    : saveState.value.includes("待保存") || saveState.value.includes("新修改")
+      ? "pending"
+      : "",
+);
+const sourceCount = computed(() =>
+  sources.value.reduce((total, group) => total + group.sources.length, 0),
 );
 async function flush() {
   if (timer) clearTimeout(timer);
@@ -95,7 +104,6 @@ async function load(replace = true) {
   await attempt(async () => {
     const data = await call<any>("monthly.get", {
       month: month.value,
-      projectId: project.value,
     });
     materials.value = data.materials;
     sources.value = data.sources;
@@ -111,7 +119,6 @@ async function load(replace = true) {
   loading.value = false;
 }
 onMounted(() => load());
-watch(project, () => load(false));
 async function changeMonth(event: Event) {
   const next = (event.target as HTMLInputElement).value;
   if (!next) return;
@@ -197,7 +204,7 @@ async function exportFile() {
     const result = await call("monthly.export", {
       month: month.value,
     });
-    if (result) notify("文件已写入：" + result.path);
+    notify(result ? "文件已写入：" + result.path : "已取消导出");
   });
 }
 async function copy() {
@@ -215,53 +222,67 @@ async function copy() {
       :value="month"
       aria-label="月报月份"
       @change="changeMonth"
-    /><ProjectSelect v-model="project" label="素材项目（全部）" /><span
-      class="muted small"
+    /><span
+      class="save-state"
+      :class="stateClass"
       role="status"
       >{{ saveState }}</span
     >
     <div class="row push-right">
-      <button class="primary" :disabled="!draft" @click="exportFile()">
-        导出 Word</button
-      ><button :disabled="!draft" @click="copy()">复制正文</button>
+      <button :disabled="!draft" @click="copy()">复制正文</button
+      ><button class="primary" :disabled="!draft" @click="exportFile()">
+        导出 Word
+      </button>
     </div>
   </div>
-  <div v-if="draft" class="monthly-layout">
+  <div
+    v-if="draft"
+    class="monthly-layout"
+    :class="{ 'no-sources': !sources.length }"
+  >
     <section>
-      <div class="row spaced">
+      <div class="section-head">
         <h2>本月素材</h2>
         <button class="link small" @click="load(false)">刷新</button>
       </div>
-      <p v-if="!materials.length" class="empty">
+      <p v-if="!materials.length" class="empty compact">
         本月还没有日期明确的工作记录。
       </p>
       <div v-for="n in materials" :key="n.id" class="material">
         <label
+          ><span
+            v-if="linked.has(n.id)"
+            class="material-check"
+            aria-hidden="true"
+            ><Icon name="check" :size="13" /></span
           ><input
+            v-else
             v-model="selected"
             type="checkbox"
             :value="n.id"
-            :disabled="linked.has(n.id)"
           /><span
             ><time class="date">{{ n.happenedOn }}</time
             >{{ n.text
-            }}<span
-              v-if="linked.has(n.id)"
-              class="blue small"
-              style="display: block"
+            }}<span v-if="linked.has(n.id)" class="material-state"
               >已加入正文</span
             ></span
           ></label
         >
       </div>
-      <label style="margin-top: 18px"
-        >放入章节<select v-model="section" style="width: 100%">
-          <option v-for="s in sections" :key="s">{{ s }}</option>
-        </select></label
-      ><button class="primary" :disabled="!selected.length" @click="addSources">
-        加入正文 {{ selected.length || "" }}
-      </button>
-      <p v-if="undated" class="notice warning small">
+      <div v-if="materials.length" class="material-actions">
+        <label class="field-stack"
+          >放入章节<select v-model="section">
+            <option v-for="s in sections" :key="s">{{ s }}</option>
+          </select></label
+        ><button
+          class="primary"
+          :disabled="!selected.length"
+          @click="addSources"
+        >
+          {{ selected.length ? "加入正文 " + selected.length : "加入正文" }}
+        </button>
+      </div>
+      <p v-if="undated" class="inline-note warn">
         {{ undated }} 条工作记录日期待补充，尚未计入本月。<button
           class="link"
           @click="navigate('work', { tab: 'undated' })"
@@ -271,19 +292,23 @@ async function copy() {
       </p>
     </section>
     <section>
-      <label class="row spaced"
-        >姓名<input v-model="draft.name" aria-label="月报姓名" @input="edited"
-      /></label>
-      <h2 style="font-size: 21px; line-height: 1.6">
+      <div class="doc-meta">
+        <span>姓名</span
+        ><input v-model="draft.name" aria-label="月报姓名" @input="edited" />
+      </div>
+      <h2 class="doc-title">
         {{ Number(month.slice(0, 4)) }}年{{
           Number(month.slice(5))
         }}月工作总结-{{ draft.name }}
       </h2>
-      <p class="small muted">
-        Word
-        从“一、工作成果”开始，留一个空行供粘贴截图；学习成长和工作计划有多条内容时自动编号。
+      <p class="inline-note">
+        Word 从「一、工作成果」开始，截图位置留一个空行；学习成长和工作计划多条内容时自动编号。
       </p>
-      <button v-if="selectedEntries.length > 1" class="link" @click="merge">
+      <button
+        v-if="selectedEntries.length > 1"
+        class="link"
+        @click="merge"
+      >
         合并所选 {{ selectedEntries.length }} 条正文</button
       ><template v-for="(s, index) in sections" :key="s"
         ><h2 v-if="index === 0" class="section-rule">一、工作成果</h2>
@@ -309,7 +334,6 @@ async function copy() {
               type="checkbox"
               :value="e.id"
               :aria-label="'选择正文 ' + e.text.slice(0, 20)"
-              style="min-height: 0"
             /><small class="muted">{{
               e.manual ? "手动补充" : "来源 " + e.sourceIds.length + " 条"
             }}</small
@@ -338,17 +362,15 @@ async function copy() {
           ＋ 手动补充
         </button></template
       >
-      <div class="actions">
-        <button :disabled="!dirty" @click="attempt(flush, '草稿已保存')">
-          保存草稿</button
-        ><span class="small muted">材料刷新不会覆盖已编辑正文。</span>
-      </div>
-    </section>
-    <section>
-      <h2>来源核对</h2>
-      <p v-if="!draft.entries.some((e) => e.sourceIds.length)" class="empty">
-        加入工作素材后，这里保留原始来源与变化提示。
+      <p class="inline-note section-rule">
+        正文修改自动保存；材料刷新不会覆盖已编辑内容。
       </p>
+    </section>
+    <section v-if="sources.length">
+      <div class="section-head">
+        <h2>来源核对</h2>
+        <span class="tab-count">{{ sourceCount }}</span>
+      </div>
       <template v-for="group in sources" :key="group.entryId"
         ><div v-for="s in group.sources" :key="s.id" class="source-block">
           <p v-if="s.deleted" class="notice warning">
@@ -361,26 +383,27 @@ async function copy() {
             <p>
               {{ s.note.text }}<br v-if="s.note.result" />{{ s.note.result }}
             </p>
-            <span
-              v-if="s.changed"
-              class="notice warning small"
-              style="display: block"
+            <span v-if="s.changed" class="inline-note warn"
               >来源已变化，保留现有正文，请人工核对。</span
             ><button
               class="link small"
               @click="navigate('work', { selected: s.id })"
             >
-              查看原记录 ↗
+              查看原记录 →
             </button></template
           >
         </div></template
       >
-      <p class="small muted section-rule">
-        无日期记录和待办不会自动成为本月已完成成果。学习、计划和建议由你填写。
+      <p class="inline-note section-rule">
+        无日期记录和待办不会自动成为本月已完成成果。
       </p>
     </section>
   </div>
-  <p v-else class="loading">
-    {{ loading ? "正在读取月报草稿…" : "月报读取失败，请重新选择月份或重试。" }}
-  </p>
+  <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
+  <div v-else class="empty">
+    <span class="empty-icon"><Icon name="chart" :size="16" /></span>
+    <p class="empty-title">暂时没有月报草稿</p>
+    <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
+    <button class="link" @click="load()">重新读取</button>
+  </div>
 </template>

@@ -9,9 +9,15 @@ try {
   playwright = require("C:/Users/Master/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
 }
 const root = path.resolve(__dirname, "..");
-const exe =
-  process.env.WORKBENCH_VERIFY_EXE ||
-  path.join(root, ".local", "installed-app", "个人工作台.exe");
+const defaultExe = process.env.LOCALAPPDATA
+  ? path.join(
+      process.env.LOCALAPPDATA,
+      "Programs",
+      "PersonalWorkbench",
+      "个人工作台.exe",
+    )
+  : path.join(root, ".local", "installed-app", "个人工作台.exe");
+const exe = process.env.WORKBENCH_VERIFY_EXE || defaultExe;
 const infoPath = path.join(root, ".local", "installation-probe.json");
 const mode = process.argv[2] || "seed";
 const env = { ...process.env };

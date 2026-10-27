@@ -12,6 +12,7 @@ import {
   taskLabels,
 } from "../state";
 import TaskDetail from "../components/TaskDetail.vue";
+import Icon from "../components/Icon.vue";
 const projectId = ref(context.value.projectId || "employee"),
   variant = ref<"Release" | "Debug">("Release"),
   config = ref<BuildConfig | null>(null),
@@ -76,22 +77,25 @@ async function start() {
           />{{ p.name.replace(" APP", "") }}</label
         >
       </div>
-      <div class="row section-rule build-types">
-        <label
-          ><input
-            v-model="variant"
-            type="radio"
-            value="Release"
+      <div class="section-rule">
+        <p class="muted small">构建类型</p>
+        <div class="segmented" role="group" aria-label="构建类型">
+          <button
+            :class="{ active: variant === 'Release' }"
+            :aria-pressed="variant === 'Release'"
             :disabled="!!active"
-          />Release</label
-        ><label
-          ><input
-            v-model="variant"
-            type="radio"
-            value="Debug"
+            @click="variant = 'Release'"
+          >
+            Release</button
+          ><button
+            :class="{ active: variant === 'Debug' }"
+            :aria-pressed="variant === 'Debug'"
             :disabled="!!active"
-          />Debug</label
-        >
+            @click="variant = 'Debug'"
+          >
+            Debug
+          </button>
+        </div>
       </div>
       <p v-if="error" class="notice warning">{{ error }}</p>
       <dl v-if="config" class="kv">
@@ -111,31 +115,47 @@ async function start() {
         <p class="path">JDK {{ config.java }}</p>
         <p class="path">SDK {{ config.sdk }}</p>
       </details>
-      <div class="actions">
+      <div v-if="config" class="row actions">
         <button
           class="primary"
           :disabled="!config || busy || !!active"
           @click="start"
         >
-          {{ active ? "打包进行中…" : "预检查通过，开始打包" }}</button
-        ><button :disabled="!!active" @click="inspect">重新检查</button>
+          {{ active ? "打包进行中…" : "开始打包" }}</button
+        ><span class="pill success">预检查通过</span
+        ><button class="link" :disabled="!!active" @click="inspect">
+          重新检查
+        </button>
       </div>
-      <p class="small muted section-rule">
-        版本、签名和工具链沿用现有工程配置。只有资源、签名、包名和版本校验全部通过才显示成功。首版不自动安装到手机。
-      </p>
+      <div v-else class="actions">
+        <button class="primary" disabled>开始打包</button
+        ><button class="link" :disabled="!!active" @click="inspect">
+          重新检查
+        </button>
+      </div>
+      <details class="section-rule">
+        <summary>打包边界</summary>
+        <p class="small muted">
+          版本、签名与工具链沿用现有工程配置；资源、签名、包名和版本校验全部通过才显示成功。首版不自动安装到手机。
+        </p>
+      </details>
       <button
         v-if="error"
         class="link"
-        @click="navigate('settings', { tab: 'tools' })"
+        @click="navigate('settings', { tab: 'projects' })"
       >
-        修改项目与工具配置 →
+        检查项目与工具配置 →
       </button>
     </section>
     <section>
       <TaskDetail v-if="task" :task="task" compact />
-      <p v-else class="empty">
-        选择配置后开始真实构建。四个阶段的状态和耗时来自实际执行。
-      </p>
+      <div v-else class="empty">
+        <span class="empty-icon"><Icon name="box" :size="16" /></span>
+        <p class="empty-title">尚未开始构建</p>
+        <p class="empty-hint">
+          左侧确认配置后开始构建，四个阶段的状态与耗时来自实际执行。
+        </p>
+      </div>
       <section class="section-rule">
         <h2>历史构建记录</h2>
         <p v-if="!history.length" class="empty compact">暂无构建记录。</p>

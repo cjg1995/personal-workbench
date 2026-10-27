@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { context, dateLabel, model, taskLabels } from "../state";
 import TaskDetail from "../components/TaskDetail.vue";
+import Icon from "../components/Icon.vue";
 const query = ref(""),
   selected = ref(context.value.taskId || model.tasks[0]?.id || "");
 const tasks = computed(() =>
@@ -23,17 +24,30 @@ watch(context, (value) => {
 <template>
   <div class="tasks-layout">
     <section>
-      <div class="row spaced">
+      <div class="section-head">
         <h2>任务记录</h2>
         <input
           v-model="query"
           type="search"
           placeholder="搜索任务"
           aria-label="搜索任务"
-          style="width: 135px"
+          class="task-search"
         />
       </div>
-      <p v-if="!tasks.length" class="empty">没有执行记录。</p>
+      <div v-if="!tasks.length" class="empty">
+        <span class="empty-icon"><Icon name="list" :size="16" /></span>
+        <p class="empty-title">没有执行记录</p>
+        <p class="empty-hint">
+          {{
+            query
+              ? "换个关键词再试，或清空搜索查看全部任务。"
+              : "提交、打包或启动项目后，任务会记录在这里。"
+          }}
+        </p>
+        <button v-if="query" class="link" @click="query = ''">
+          清空搜索
+        </button>
+      </div>
       <button
         v-for="t in tasks"
         :key="t.id"
@@ -48,7 +62,11 @@ watch(context, (value) => {
     </section>
     <section>
       <TaskDetail v-if="active" :task="active" />
-      <p v-else class="empty">选择任务，核对真实阶段、结果和日志。</p>
+      <div v-else class="empty">
+        <span class="empty-icon"><Icon name="list" :size="16" /></span>
+        <p class="empty-title">选择一个任务</p>
+        <p class="empty-hint">核对真实阶段、结果和日志。</p>
+      </div>
     </section>
   </div>
 </template>

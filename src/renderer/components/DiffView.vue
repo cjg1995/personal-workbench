@@ -130,7 +130,14 @@ defineExpose({ jump, line });
   <p v-else-if="file.limited" class="notice warning">
     文件或本次快照正文超过内置展示上限。此文件仍在审查范围内，请使用外部工具核对。
   </p>
-  <div v-else ref="root" class="diff" tabindex="0" aria-label="只读代码差异">
+  <div
+    v-else
+    ref="root"
+    class="diff"
+    tabindex="0"
+    aria-label="只读代码差异"
+    title="可横向滚动查看完整代码"
+  >
     <table v-if="mode === 'split'">
       <tbody>
         <template v-for="(row, i) in visibleRows" :key="start + i"

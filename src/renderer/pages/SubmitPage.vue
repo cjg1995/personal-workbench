@@ -12,6 +12,7 @@ import {
 } from "../state";
 import ProjectSelect from "../components/ProjectSelect.vue";
 import TaskDetail from "../components/TaskDetail.vue";
+import Icon from "../components/Icon.vue";
 const tab = ref<"erp" | "app">(context.value.tab || "erp"),
   projectId = ref<string | null>(
     context.value.projectId ||
@@ -66,6 +67,15 @@ const active = computed(
   () =>
     task.value &&
     ["running", "cancelling", "awaiting"].includes(task.value.state),
+);
+const needsMessage = computed(
+  () =>
+    (tab.value === "erp" || task.value?.state === "awaiting") &&
+    !!effective.value?.files.some((f) => f.included) &&
+    !message.value.trim(),
+);
+const failedChecks = computed(
+  () => effective.value?.checks.filter((c) => !c.ok).length || 0,
 );
 watch(tab, () => {
   projectId.value = tab.value === "erp" ? "homeproject" : "employee";
@@ -151,10 +161,10 @@ async function diff(path: string) {
     </button>
   </div>
   <div class="toolbar">
-    <span>{{ tab === "erp" ? "仓库" : "应用" }}</span
-    ><ProjectSelect
+    <ProjectSelect
       v-model="projectId"
       :optional="false"
+      :label="tab === 'erp' ? '选择仓库' : '选择应用'"
       :ids="
         tab === 'erp'
           ? ['homeproject', 'homeproject-ai']
@@ -163,7 +173,7 @@ async function diff(path: string) {
       :disabled="!!active"
     /><button :disabled="busy || !!active" @click="inspect">
       {{ busy ? "检查中…" : "检查仓库与预览" }}</button
-    ><span v-if="effective" class="blue"
+    ><span v-if="effective" class="pill"
       >{{ effective.branch }} → {{ effective.target }}</span
     >
   </div>
@@ -171,38 +181,32 @@ async function diff(path: string) {
     {{ model.config?.projects.find((p) => p.id === projectId)?.path }}
   </p>
   <template v-if="task && task.state !== 'awaiting'"
-    ><TaskDetail :task="task" compact /><button
-      v-if="!active"
-      class="link"
-      @click="inspect"
-    >
-      重新检查当前仓库 →
-    </button></template
+    ><TaskDetail :task="task" compact /></template
   >
   <template v-else-if="effective"
-    ><div class="step-strip">
-      <span class="active"><b>1</b>选择仓库</span
-      ><span class="active"><b>2</b>检查与预览</span><span><b>3</b>执行</span
-      ><span><b>4</b>结果</span>
-    </div>
-    <p v-if="task?.state === 'awaiting'" class="notice">
+    ><p v-if="task?.state === 'awaiting'" class="notice">
       远程更新完成，本地改动已恢复。取消不会撤销已经完成的远程更新。
     </p>
     <div class="split-editor">
       <section>
-        <div class="tabs">
+        <div class="tabs" role="group" aria-label="文件范围">
           <button
             :class="{ active: filter === 'included' }"
+            :aria-pressed="filter === 'included'"
             @click="filter = 'included'"
           >
-            将提交
-            {{ effective.files.filter((f) => f.included).length }}</button
+            将提交<span class="tab-count">{{
+              effective.files.filter((f) => f.included).length
+            }}</span></button
           ><button
             :class="{ active: filter === 'excluded' }"
+            :aria-pressed="filter === 'excluded'"
             @click="filter = 'excluded'"
           >
-            {{ tab === "erp" ? "未跟踪 / 跳过" : "已排除" }}
-            {{ effective.files.filter((f) => !f.included).length }}
+            {{ tab === "erp" ? "未跟踪 / 跳过" : "已排除" }}<span
+              class="tab-count"
+              >{{ effective.files.filter((f) => !f.included).length }}</span
+            >
           </button>
         </div>
         <input
@@ -210,7 +214,7 @@ async function diff(path: string) {
           type="search"
           placeholder="搜索文件路径"
           aria-label="搜索提交文件"
-          style="width: 100%; margin-bottom: 12px"
+          class="block-filter"
         />
         <p v-if="!files.length" class="empty compact">此分组没有文件。</p>
         <div class="file-list">
@@ -224,7 +228,7 @@ async function diff(path: string) {
             <span class="file-status" :class="f.status">{{ f.status }}</span
             ><span
               >{{ f.path
-              }}<small v-if="f.reason" class="muted" style="display: block">{{
+              }}<small v-if="f.reason" class="muted sub-line">{{
                 f.reason
               }}</small></span
             ><small class="push-right muted">{{
@@ -267,7 +271,12 @@ async function diff(path: string) {
         </section>
       </section>
       <section>
-        <h2>检查项</h2>
+        <div class="section-head">
+          <h2>检查项</h2>
+          <span v-if="failedChecks" class="pill warn"
+            >{{ failedChecks }} 项需注意</span
+          >
+        </div>
         <ul class="check-list">
           <li v-for="c in effective.checks" :key="c.label">
             <span class="mark" :class="{ bad: !c.ok }">{{
@@ -278,9 +287,8 @@ async function diff(path: string) {
             </div>
           </li>
         </ul>
-        <p v-if="tab === 'app'" class="notice small">
-          store/index.js
-          始终受保护，不提供绕过选项。其余文件按原纳入与排除规则处理。
+        <p v-if="tab === 'app'" class="inline-note">
+          store/index.js 始终受保护，不提供绕过选项。
         </p>
         <label
           v-if="tab === 'erp' || task?.state === 'awaiting'"
@@ -291,24 +299,27 @@ async function diff(path: string) {
             placeholder="填写本次提交说明…"
           />
         </label>
-        <p class="small muted">已有未推送提交 {{ effective.ahead }} 个</p>
-        <p v-if="effective.testPath" class="path">
-          test 工作目录 {{ effective.testPath }}
+        <p v-if="needsMessage" class="inline-note warn">
+          填写提交说明后可继续。
         </p>
-        <p v-if="tab === 'erp'" class="small muted">
-          本地提交 → 推送开发分支 → 更新 test → merge → 推送
-          test。最终分支按实际结果显示，不自动切回。
+        <p class="small muted">
+          已有未推送提交 {{ effective.ahead }} 个<span
+            v-if="effective.testPath"
+          >
+            · test 目录 {{ effective.testPath }}</span
+          >
         </p>
+        <details v-if="tab === 'erp'" class="section-rule">
+          <summary>执行流程与分支去向</summary>
+          <p class="small muted">
+            本地提交 → 推送开发分支 → 更新 test → merge → 推送
+            test。最终分支按实际结果显示，不自动切回。
+          </p>
+        </details>
         <div class="actions wrap">
           <button
             class="primary"
-            :disabled="
-              busy ||
-              !effective.valid ||
-              ((tab === 'erp' || task?.state === 'awaiting') &&
-                effective.files.some((f) => f.included) &&
-                !message.trim())
-            "
+            :disabled="busy || !effective.valid || needsMessage"
             @click="run"
           >
             {{
@@ -338,7 +349,11 @@ async function diff(path: string) {
       </section>
     </div></template
   >
-  <p v-else class="empty">
-    先选择工作目录，检查真实分支、暂存区和文件范围。检查不会提交或推送代码。
-  </p>
+  <div v-else class="empty">
+    <span class="empty-icon"><Icon name="branch" :size="16" /></span>
+    <p class="empty-title">尚未检查仓库</p>
+    <p class="empty-hint">
+      选择工作目录后点击「检查仓库与预览」，查看真实分支、暂存区和文件范围。检查不会提交或推送代码。
+    </p>
+  </div>
 </template>

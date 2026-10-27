@@ -17,6 +17,7 @@ import {
 } from "../state";
 import ProjectSelect from "../components/ProjectSelect.vue";
 import DiffView from "../components/DiffView.vue";
+import Icon from "../components/Icon.vue";
 const projectId = ref<string | null>(context.value.projectId || "homeproject"),
   scope = ref<DiffScope>(context.value.scope || "local"),
   base = ref("origin/test"),
@@ -26,7 +27,7 @@ const projectId = ref<string | null>(context.value.projectId || "homeproject"),
   query = ref(""),
   fileLimit = ref(200),
   status = ref(""),
-  mode = ref<"split" | "unified">("split"),
+  mode = ref<"split" | "unified">("unified"),
   busy = ref(false),
   changed = ref(false),
   line = ref<string>(""),
@@ -149,7 +150,7 @@ async function refresh(contextLines = 3) {
   if (busy.value || validating.value) return;
   if (contextLines === 3 && !(await guard())) return;
   busy.value = true;
-  await attempt(async () => {
+  try {
     const value = await call<ReviewSnapshot>("review.open", {
       projectId: projectId.value,
       scope: scope.value,
@@ -167,8 +168,12 @@ async function refresh(contextLines = 3) {
     if (!snapshot.value!.files.some((f) => f.path === selected.value))
       selected.value = snapshot.value!.files[0]?.path || "";
     await loadHistory();
-  });
-  busy.value = false;
+  } catch (error) {
+    if (!disposed)
+      notify(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    busy.value = false;
+  }
 }
 async function loadHistory(append = false) {
   if (historyLoading.value) return;
@@ -195,7 +200,7 @@ async function validate() {
   )
     return;
   validating.value = true;
-  await attempt(async () => {
+  try {
     const result = await call<any>("review.validate", {
       id: snapshot.value!.id,
     });
@@ -203,8 +208,12 @@ async function validate() {
       changed.value = true;
       snapshot.value!.seen = {};
     }
-  });
-  validating.value = false;
+  } catch (error) {
+    if (!disposed)
+      notify(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    validating.value = false;
+  }
 }
 onMounted(() => {
   unsubscribeProgress = window.workbench.onReviewProgress((message) => {
@@ -353,7 +362,9 @@ function locate(issue: ReviewIssue) {
       获取远端引用
     </button>
   </div>
-  <p v-if="progress" class="small muted" role="status">{{ progress }}</p>
+  <p v-if="progress || validating" class="progress-line" role="status">
+    <span class="spinner" />{{ progress || "正在核对代码是否变化…" }}
+  </p>
   <div v-if="['versions', 'ancestor'].includes(scope)" class="row filters">
     <label class="inline-label"
       >基准<input
@@ -377,21 +388,24 @@ function locate(issue: ReviewIssue) {
   </p>
   <template v-if="snapshot"
     ><p class="path">
-      {{ snapshot.repo }}<br />{{ snapshot.base }}（{{
+      {{ snapshot.repo }} · {{ snapshot.base }}（{{
         snapshot.baseCommit.slice(0, 10)
-      }}） → {{ snapshot.target }}（{{ snapshot.targetCommit.slice(0, 10) }}） ·
-      比较时间 {{ dateLabel(snapshot.createdAt) }}<br />远端最后获取
-      {{
-        snapshot.fetchedAt
-          ? dateLabel(snapshot.fetchedAt)
-          : "尚未通过工作台获取，引用可能过时"
-      }}
+      }}）→ {{ snapshot.target }}（{{ snapshot.targetCommit.slice(0, 10) }}）·
+      {{ dateLabel(snapshot.createdAt) }}
     </p>
-    <p class="small muted">
-      内置正文单文件上限 512 KB、单份快照合计 16
-      MB。超限内容可在编辑器查看；大文件按大小与修改时间核对变化，不加载正文。
-      大批未跟踪文件先按大小与时间检测变化，选中后读取正文；已读文件另核对内容摘要。
-    </p>
+    <details class="review-limits">
+      <summary>读取范围与大小限制</summary>
+      <p class="small muted">
+        内置正文单文件上限 512 KB、单份快照合计 16
+        MB。超限内容可在编辑器查看；大文件按大小与修改时间核对变化，不加载正文。
+        大批未跟踪文件先按大小与时间检测变化，选中后读取正文。远端最后获取
+        {{
+          snapshot.fetchedAt
+            ? dateLabel(snapshot.fetchedAt)
+            : "尚未通过工作台获取，引用可能过时"
+        }}。
+      </p>
+    </details>
     <p v-if="changed || snapshot.stale" class="notice warning">
       {{
         changed
@@ -413,11 +427,11 @@ function locate(issue: ReviewIssue) {
             type="search"
             placeholder="搜索文件…"
             aria-label="搜索审查文件"
-            style="width: 100%; margin-bottom: 12px"
+            class="review-filter"
           /><select
             v-model="status"
             aria-label="变更类型"
-            style="width: 100%; margin-bottom: 12px"
+            class="review-filter"
           >
             <option value="">全部类型</option>
             <option value="A">新增</option>
@@ -436,8 +450,8 @@ function locate(issue: ReviewIssue) {
             ><span
               >{{ f.path
               }}<small
-                style="display: block"
-                :class="snapshot.seen[f.path] === f.hash ? 'blue' : 'muted'"
+                class="sub-line"
+                :class="snapshot.seen[f.path] === f.hash ? 'seen' : 'muted'"
                 >{{
                   f.binary
                     ? "二进制 · "
@@ -468,19 +482,19 @@ function locate(issue: ReviewIssue) {
           <p v-if="!files.length" class="empty">当前范围没有匹配的差异。</p>
         </section>
         <section>
-          <div class="row spaced">
+          <div class="section-head">
             <h2>代码差异</h2>
-            <div class="row" style="gap: 6px">
+            <div class="segmented" role="group" aria-label="差异显示方式">
               <button
-                :class="{ primary: mode === 'split' }"
+                :class="{ active: mode === 'split' }"
+                :aria-pressed="mode === 'split'"
                 @click="mode = 'split'"
-                style="font-size: 11px; padding: 6px"
               >
                 并排</button
               ><button
-                :class="{ primary: mode === 'unified' }"
+                :class="{ active: mode === 'unified' }"
+                :aria-pressed="mode === 'unified'"
                 @click="mode = 'unified'"
-                style="font-size: 11px; padding: 6px"
               >
                 统一
               </button>
@@ -490,7 +504,7 @@ function locate(issue: ReviewIssue) {
             ><p class="path">
               {{ file.oldPath ? file.oldPath + " → " : "" }}{{ file.path }}
             </p>
-            <div class="row wrap" style="gap: 12px; margin-bottom: 12px">
+            <div class="row wrap diff-actions">
               <button class="link small" @click="viewer?.jump(-1)">
                 上一变更</button
               ><button class="link small" @click="viewer?.jump(1)">
@@ -561,8 +575,7 @@ function locate(issue: ReviewIssue) {
           </h2>
           <div v-for="issue in issues" :key="issue.id" class="issue">
             <button
-              class="link small"
-              style="white-space: normal; text-align: left"
+              class="link small issue-locate"
               @click="locate(issue)"
             >
               {{ issue.file }}
@@ -595,9 +608,9 @@ function locate(issue: ReviewIssue) {
               v-model="issueEdits[issue.id].reason"
               placeholder="不采纳原因"
               aria-label="不采纳原因"
-              style="margin-top: 9px; width: 100%"
+              class="issue-reason"
             />
-            <div class="row wrap" style="margin-top: 8px">
+            <div class="row wrap issue-actions">
               <button class="link small" @click="issueState(issue)">
                 保存问题状态</button
               ><button class="link small" @click="toTodo(issue)">
@@ -608,11 +621,11 @@ function locate(issue: ReviewIssue) {
           <section class="section-rule">
             <h3>添加审查意见</h3>
             <p class="path">{{ file?.path || "先选择文件" }}</p>
-            <div class="row" style="gap: 8px; margin-bottom: 10px">
+            <div class="row issue-form-row">
               <select
                 v-model="side"
                 aria-label="意见版本侧"
-                style="min-width: 100px"
+                class="issue-side"
               >
                 <option value="new">新版本</option>
                 <option value="old">旧版本</option></select
@@ -622,7 +635,7 @@ function locate(issue: ReviewIssue) {
                 min="1"
                 placeholder="行号（可选）"
                 aria-label="意见行号"
-                style="width: 120px"
+                class="issue-line"
               />
             </div>
             <textarea
@@ -644,22 +657,25 @@ function locate(issue: ReviewIssue) {
         </section>
       </div>
       <section class="section-rule">
-        <div class="row wrap spaced">
-          <p class="small">
-            已看 {{ Object.keys(snapshot.seen).length }} /
-            {{ snapshot.files.length }} · 未解决
+        <div class="review-summary">
+          <span class="pill"
+            >已看 {{ Object.keys(snapshot.seen).length }} /
+            {{ snapshot.files.length }}</span
+          ><span class="pill"
+            >未解决
             {{
               issues.filter((i) => ["open", "fixed"].includes(i.state)).length
-            }}
-            · 正文待选读
+            }}</span
+          ><span class="pill"
+            >正文待选读
             {{
               snapshot.files.filter((f) => f.deferred && !f.contentHash).length
-            }}
-            · 已确认无法内置显示
-            {{ snapshot.files.filter((f) => f.binary || f.limited).length }}
-          </p>
-          <button
-            class="link"
+            }}</span
+          ><span class="pill"
+            >无法内置
+            {{ snapshot.files.filter((f) => f.binary || f.limited).length }}</span
+          ><button
+            class="link small push-right"
             @click="
               attempt(
                 () => call('review.copy', { id: snapshot!.id }),
@@ -679,7 +695,7 @@ function locate(issue: ReviewIssue) {
             v-model="summary"
             placeholder="人工总结（可选）"
             aria-label="人工审查总结"
-            style="flex: 1"
+            class="review-summary-input"
           /><button
             class="primary"
             :disabled="!conclusion || changed"
@@ -688,7 +704,10 @@ function locate(issue: ReviewIssue) {
             结束审查
           </button>
         </div>
-        <p class="small muted">
+        <p v-if="!conclusion" class="inline-note">
+          选择人工结论后可结束本次审查。
+        </p>
+        <p class="inline-note">
           空问题列表不代表通过。结束审查不会提交代码，也不新增提交门禁。
         </p>
         <details>
@@ -714,5 +733,14 @@ function locate(issue: ReviewIssue) {
       </section>
     </fieldset></template
   >
-  <p v-else class="empty">选择仓库及明确范围后读取 Git 差异。</p>
+  <p v-else-if="busy && !progress" class="progress-line" role="status">
+    <span class="spinner" />正在读取 Git 差异…
+  </p>
+  <div v-else class="empty">
+    <span class="empty-icon"><Icon name="search" :size="16" /></span>
+    <p class="empty-title">尚未读取差异</p>
+    <p class="empty-hint">
+      选择仓库与比较范围后读取 Git 差异。读取不会切换分支或修改暂存区。
+    </p>
+  </div>
 </template>

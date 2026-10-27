@@ -80,83 +80,6 @@ test("月份边界、无日期与来源变更保留人工月报；重复来源�
   assert.equal(f.records.draft("2026-10").entries[0].text, "人工编辑成果");
   f.store.close();
 });
-test("TXT 字节、物理行、BOM、括号和正文空格保持；默认去重不推断日期状态", async () => {
-  const f = fixture();
-  const file = path.join(f.dir, "原文 [待办].txt");
-  const bytes = Buffer.from(
-    "\uFEFF想法（完成初版）\r\n\r\n  保留 空格  \r\n想法（完成初版）\r\n",
-    "utf8",
-  );
-  fs.writeFileSync(file, bytes);
-  const p = f.records.previewImport(file, "idea");
-  assert.equal(p.lines.length, 3);
-  assert.equal(p.lines[1].text, "  保留 空格  ");
-  assert.equal(p.lines[2].duplicate, true);
-  const first = await f.records.import(
-    p.id,
-    p.lines.filter((l) => l.selected).map((l) => l.line),
-  );
-  assert.equal(first.added, 2);
-  assert.equal(first.skipped, 1);
-  assert.equal(first.records[0].completedAt, null);
-  assert.equal(first.records[0].happenedOn, null);
-  assert.equal(hash(fs.readFileSync(file)), hash(bytes));
-  assert.equal(hash(fs.readFileSync(first.snapshot)), hash(bytes));
-  const second = f.records.previewImport(file, "idea");
-  assert.equal(second.lines.filter((l) => l.selected).length, 0);
-  f.records.save({ kind: "idea", text: "手工同文" });
-  const file2 = path.join(f.dir, "same.txt");
-  fs.writeFileSync(file2, "手工同文");
-  assert.equal(
-    f.records.previewImport(file2, "idea").lines[0].duplicate,
-    false,
-  );
-  f.store.close();
-});
-test("GBK、UTF-8 BOM、特殊符号正确解码；乱码与二进制不导入", () => {
-  const f = fixture();
-  const gbk = path.join(f.dir, "gbk.txt");
-  fs.writeFileSync(gbk, Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0d, 0x0a]));
-  assert.equal(f.records.previewImport(gbk, "work").lines[0].text, "中文");
-  const bom = path.join(f.dir, "bom.txt");
-  fs.writeFileSync(bom, "\uFEFF中文 & <原文>");
-  assert.equal(
-    f.records.previewImport(bom, "work").lines[0].text,
-    "中文 & <原文>",
-  );
-  const binary = path.join(f.dir, "binary.txt");
-  fs.writeFileSync(binary, Buffer.from([0, 1, 2, 3]));
-  assert.throws(
-    () => f.records.previewImport(binary, "work"),
-    /二进制|编码|乱码/,
-  );
-  f.store.close();
-});
-test("TXT 批次事务失败不留下半批数据，原文快照保留且可重试", async () => {
-  const f = fixture();
-  const source = path.join(f.dir, "batch.txt");
-  fs.writeFileSync(source, "一\n二\n三");
-  const p = f.records.previewImport(source, "work");
-  const original = f.store.set.bind(f.store);
-  let count = 0;
-  f.store.set = (...args: any[]) => {
-    if (args[0] === "note" && ++count === 2)
-      throw new Error("模拟实际保存失败");
-    return (original as any)(...args);
-  };
-  await assert.rejects(() => f.records.import(p.id, [1, 2, 3]), /保存失败/);
-  assert.equal(f.records.list("work").length, 0);
-  assert.equal(f.store.list("import").length, 0);
-  assert.equal(fs.readFileSync(source, "utf8"), "一\n二\n三");
-  f.store.set = original;
-  const result = await f.records.import(p.id, [1, 2, 3]);
-  assert.equal(result.added, 3);
-  assert.equal(
-    f.records.list("work").every((n) => n.happenedOn === null),
-    true,
-  );
-  f.store.close();
-});
 test("SQLite WAL 一致备份、恢复预览、保护副本、恢复后任务中断与数据原样", async () => {
   const f = fixture();
   const n = f.records.save({
@@ -304,10 +227,11 @@ test("月报 Word 无顶部标题或大框；截图只留空行；学习和计�
 });
 test("恢复替换后打开失败，数据库与原文快照回到恢复前", async () => {
   const f = fixture();
-  const file = path.join(f.dir, "source.txt");
-  fs.writeFileSync(file, "原始内容");
-  const p = f.records.previewImport(file, "work");
-  await f.records.import(p.id, [1]);
+  f.records.save({
+    kind: "work",
+    text: "恢复前记录",
+    happenedOn: "2026-10-24",
+  });
   const zip = path.join(f.dir, "backup.zip");
   await f.backup.create(zip);
   const original = f.records.list("work")[0];
@@ -324,10 +248,6 @@ test("恢复替换后打开失败，数据库与原文快照回到恢复前", as
   };
   await assert.rejects(() => f.backup.restore(preview.token), /原数据已恢复/);
   assert.equal(f.records.get(original.id).text, "恢复前的较新正文");
-  assert.equal(
-    fs.readFileSync(path.join(f.dir, "snapshots", p.id, "source.txt"), "utf8"),
-    "原始内容",
-  );
   f.store.close();
 });
 
