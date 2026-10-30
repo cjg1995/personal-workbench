@@ -33,7 +33,7 @@ export const model = reactive<{
   imports: [],
   formDrafts: {},
 });
-export const route = ref("home"),
+export const route = ref("work"),
   context = ref<Record<string, any>>({});
 export const toast = ref<{ text: string; error: boolean } | null>(null);
 export const recordModal = ref<Partial<Note> | null>(null);

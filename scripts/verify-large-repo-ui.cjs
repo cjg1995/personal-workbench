@@ -42,7 +42,7 @@ async function capture(file) {
     });
     page = await app.firstWindow();
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.waitForSelector("[data-page=home]");
+    await page.waitForSelector("[data-page=work]");
     await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 800),
     );

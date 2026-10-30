@@ -7,7 +7,6 @@ import {
   shell,
   screen,
   Notification,
-  nativeImage,
 } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -23,7 +22,11 @@ import { ApkService } from "../core/apk.js";
 import { BackupService } from "../core/backup.js";
 import { ReviewService } from "../core/review.js";
 import { ProjectService } from "../core/projects.js";
-import { visibleClientWindows } from "../core/process.js";
+import {
+  activateClientWindow,
+  clientProcesses,
+  visibleClientWindows,
+} from "../core/process.js";
 import { exportWord } from "../core/documents.js";
 import {
   activationTask,
@@ -63,18 +66,31 @@ const dataDir = ensureDir(
 );
 app.setPath("userData", dataDir);
 app.setName("个人工作台");
-const sourceIcon = path.resolve(here, "../../assets/workbench-v2-64.png");
-let windowIcon = sourceIcon;
-try {
-  const iconFile = path.join(dataDir, "app-icon.png");
-  fs.copyFileSync(sourceIcon, iconFile);
-  windowIcon = iconFile;
-} catch {
-  windowIcon = sourceIcon;
+function localIcon(name: string) {
+  const source = path.resolve(here, "../../assets", name);
+  const target = path.join(dataDir, name);
+  try {
+    fs.copyFileSync(source, target);
+    return target;
+  } catch {
+    return source;
+  }
 }
+const notificationIcon = localIcon("workbench-v2-64.png");
+const windowIcon =
+  process.platform === "win32"
+    ? localIcon("workbench-v2.ico")
+    : notificationIcon;
+// Electron's development shortcut and toast server must not claim the installed app.
+const windowsAppId = app.isPackaged
+  ? notificationAppId
+  : notificationAppId + ".dev";
+const toastActivatorClsid = app.isPackaged
+  ? notificationClsid
+  : "{6F558728-F459-4FF1-9226-489EEA7A4842}";
 if (process.platform === "win32") {
-  app.setAppUserModelId(notificationAppId);
-  app.setToastActivatorCLSID(notificationClsid);
+  app.setAppUserModelId(windowsAppId);
+  app.setToastActivatorCLSID(toastActivatorClsid);
 }
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -171,7 +187,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     const notification = new Notification({
       ...options,
-      icon: windowIcon,
+      icon: notificationIcon,
       id: task.id,
       groupId: "project-startup",
     });
@@ -320,11 +336,6 @@ if (!app.requestSingleInstanceLock()) {
         const draft = records.addSources(p.month, p.name, p.section, p.ids);
         changed();
         return draft;
-      }
-      case "monthly.copy": {
-        const draft = records.draft(p.month, config.get().name);
-        clipboard.writeText(records.monthlyText(draft));
-        return { copied: true };
       }
       case "monthly.export": {
         if ((p.format && p.format !== "docx") || p.range === "raw")
@@ -614,7 +625,7 @@ if (!app.requestSingleInstanceLock()) {
       case "tapd.open": {
         const tools = config.get().tools;
         if (!fs.existsSync(tools.tapd))
-          throw new Error("TAPD 客户端路径不存在，请修改配置");
+          throw new Error("TAPD 客户端路径不存在，请在设置 → 工具中配置后重试");
         const task = tasks.create(
           "tapd",
           "打开 TAPD 导入客户端",
@@ -625,22 +636,45 @@ if (!app.requestSingleInstanceLock()) {
         );
         tasks.launch(task, async (ctx) => {
           await ctx.step("打开现有客户端", async () => {
-            const existing = await visibleClientWindows(tools.tapd);
-            if (!existing.length)
-              await new Promise<void>((resolve, reject) => {
-                const child = spawn(tools.tapd, [], {
-                  cwd: tools.tapdCwd,
-                  windowsHide: false,
-                  detached: true,
-                  stdio: "ignore",
-                });
-                child.once("error", reject);
-                child.once("spawn", () => {
-                  child.unref();
-                  resolve();
-                });
+            // 已在运行时只把原窗口还原并提到最前，避免再开一个实例。
+            const running = await clientProcesses(tools.tapd);
+            if (running.length) {
+              const target = running.find((w) => w.handle) || running[0];
+              const state = await activateClientWindow(target.pid, target.handle);
+              ctx.log(
+                `客户端已在运行：pid=${target.pid} hwnd=${target.handle} 激活结果=${state}`,
+              );
+              ctx.result({
+                clientOpened: true,
+                pid: target.pid,
+                reused: true,
+                focused: state === "ok",
+                raised: state === "raised",
+                message:
+                  state === "ok"
+                    ? "客户端已在运行，已切换到前台"
+                    : state === "raised"
+                      ? "客户端已在运行，已提到最前；若仍未显示请从任务栏点开"
+                      : state === "missing"
+                        ? "客户端已在运行但未找到窗口，请从任务栏或托盘点开"
+                        : "客户端已在运行，系统未允许自动前置，请从任务栏点开",
               });
-            let windows = existing;
+              return;
+            }
+            await new Promise<void>((resolve, reject) => {
+              const child = spawn(tools.tapd, [], {
+                cwd: tools.tapdCwd,
+                windowsHide: false,
+                detached: true,
+                stdio: "ignore",
+              });
+              child.once("error", reject);
+              child.once("spawn", () => {
+                child.unref();
+                resolve();
+              });
+            });
+            let windows: { pid: number; handle: number; title: string }[] = [];
             const started = Date.now();
             while (!windows.length && Date.now() - started < 20000) {
               ctx.checkStop();
@@ -654,17 +688,19 @@ if (!app.requestSingleInstanceLock()) {
             ctx.result({
               clientOpened: true,
               pid: windows[0].pid,
-              reused: existing.length > 0,
+              reused: false,
               message: "客户端已打开，导入结果请在原客户端核对",
             });
           });
         });
-        return task;
+        // 复用分支很快，等一小会儿把真实结果带回界面提示。
+        return (
+          (await Promise.race([
+            tasks.wait(task.id),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+          ])) || task
+        );
       }
-      case "tapd.documents":
-        return openPath(config.get().tools.documents);
-      case "tapd.help":
-        return openPath(path.join(config.get().tools.tapdCwd, "使用说明.txt"));
       case "settings.check":
         return config.check();
       case "settings.save": {
@@ -775,24 +811,40 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
   app.whenReady().then(() => {
-    if (process.platform === "win32" && app.isPackaged) {
+    if (process.platform === "win32") {
+      const shortcutName = app.isPackaged
+        ? "个人工作台.lnk"
+        : path.basename(process.execPath, ".exe") + ".lnk";
       const shortcuts = [
         path.join(
           app.getPath("appData"),
-          "Microsoft/Windows/Start Menu/Programs/个人工作台.lnk",
+          "Microsoft/Windows/Start Menu/Programs",
+          shortcutName,
         ),
-        path.join(app.getPath("desktop"), "个人工作台.lnk"),
+        ...(app.isPackaged
+          ? [path.join(app.getPath("desktop"), shortcutName)]
+          : []),
       ];
       for (const shortcut of shortcuts) {
         try {
-          if (fs.existsSync(shortcut))
-            shell.writeShortcutLink(shortcut, "update", {
-              target: shell.readShortcutLink(shortcut).target,
-              appUserModelId: notificationAppId,
-              toastActivatorClsid: notificationClsid,
-            });
+          if (!fs.existsSync(shortcut)) continue;
+          const details = shell.readShortcutLink(shortcut);
+          if (
+            path.resolve(details.target).toLowerCase() !==
+            path.resolve(process.execPath).toLowerCase()
+          )
+            continue;
+          shell.writeShortcutLink(shortcut, "update", {
+            target: process.execPath,
+            cwd: path.dirname(process.execPath),
+            args: app.isPackaged ? details.args : `"${app.getAppPath()}"`,
+            icon: app.isPackaged ? process.execPath : windowIcon,
+            iconIndex: 0,
+            appUserModelId: windowsAppId,
+            toastActivatorClsid,
+          });
         } catch (error) {
-          console.error("通知快捷方式更新失败：" + errorText(error));
+          console.error("Windows 快捷方式更新失败：" + errorText(error));
         }
       }
     }
@@ -827,7 +879,16 @@ if (!app.requestSingleInstanceLock()) {
         webSecurity: true,
       },
     });
-    win.setIcon(windowIcon);
+    if (process.platform === "win32")
+      win.setAppDetails({
+        appId: windowsAppId,
+        appIconPath: app.isPackaged ? process.execPath : windowIcon,
+        appIconIndex: 0,
+        relaunchCommand: app.isPackaged
+          ? `"${process.execPath}"`
+          : `"${process.execPath}" "${app.getAppPath()}"`,
+        relaunchDisplayName: app.getName(),
+      });
     const entry = path.resolve(here, "../renderer/index.html");
     const allowed = pathToFileURL(entry).href;
     ipcMain.handle("workbench:action", async (event, name, payload) => {
@@ -867,7 +928,6 @@ if (!app.requestSingleInstanceLock()) {
     );
     win.once("ready-to-show", () => {
       win.show();
-      win.setIcon(nativeImage.createFromPath(windowIcon));
       if (focusNotificationOnReady) {
         if (win.isMinimized()) win.restore();
         win.focus();

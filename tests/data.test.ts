@@ -225,6 +225,106 @@ test("月报 Word 无顶部标题或大框；截图只留空行；学习和计�
     assert.ok(xml.includes(text));
   f.store.close();
 });
+test("月报截图写入 Word 图片并落在工作成果标题下", () => {
+  const f = fixture();
+  const draft = f.records.saveDraft({
+    month: "2026-10",
+    name: "陈嘉庚",
+    entries: [
+      {
+        id: randomUUID(),
+        section: "主要工作",
+        text: "主要工作正文",
+        sourceIds: [],
+        sourceVersions: {},
+        manual: true,
+      },
+    ],
+    images: [
+      {
+        id: randomUUID(),
+        name: "工作内容汇总截图1",
+        mime: "image/png",
+        width: 800,
+        height: 400,
+        data:
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  });
+  assert.equal(f.records.draft("2026-10").images!.length, 1);
+  const output = path.join(f.dir, "带截图月报.docx");
+  exportWord(path.resolve("assets/monthly-template.docx"), draft, output);
+  const entries = unzipSync(fs.readFileSync(output));
+  assert.ok(entries["word/media/monthly-1.png"]?.length);
+  const { DOMParser } = requireXml;
+  const rels = new DOMParser().parseFromString(
+    strFromU8(entries["word/_rels/document.xml.rels"]),
+    "application/xml",
+  );
+  const relationship = Array.from(rels.getElementsByTagName("Relationship")).find(
+    (n) => n.getAttribute("Target") === "media/monthly-1.png",
+  )!;
+  assert.ok(relationship);
+  const rid = relationship.getAttribute("Id");
+  const xml = strFromU8(entries["word/document.xml"]);
+  assert.ok(xml.includes(`r:embed="${rid}"`));
+  const ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  const paragraphs = Array.from(document.getElementsByTagNameNS(ns, "p"));
+  const picture = paragraphs.findIndex((p) => p.getElementsByTagNameNS(ns, "drawing").length);
+  const heading = paragraphs.findIndex((p) => p.textContent?.includes("工作成果"));
+  const work = paragraphs.findIndex((p) => p.textContent?.includes("主要工作"));
+  assert.ok(heading >= 0 && picture > heading && picture < work);
+  assert.match(paragraphs[picture + 1].textContent || "", /主要工作/);
+  assert.ok(!xml.includes("{{"));
+  const extent = paragraphs[picture]
+    .getElementsByTagNameNS(
+      "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+      "extent",
+    )[0];
+  const cx = Number(extent.getAttribute("cx")),
+    cy = Number(extent.getAttribute("cy"));
+  assert.ok(cx > 0 && cx <= 5_274_310);
+  assert.ok(Math.abs(cy / cx - 0.5) < 0.02);
+  f.store.close();
+});
+test("月报截图格式无效时拒绝保存", () => {
+  const f = fixture();
+  const base = {
+    month: "2026-10",
+    name: "陈嘉庚",
+    entries: [],
+    updatedAt: new Date().toISOString(),
+  };
+  assert.throws(
+    () =>
+      f.records.saveDraft({
+        ...base,
+        images: [
+          { id: "a", name: "x", mime: "image/gif", width: 10, height: 10, data: "AA" },
+        ],
+      }),
+    /截图格式无效/,
+  );
+  assert.throws(
+    () =>
+      f.records.saveDraft({
+        ...base,
+        images: Array.from({ length: 9 }, (_, index) => ({
+          id: String(index),
+          name: "x",
+          mime: "image/png",
+          width: 10,
+          height: 10,
+          data: "AA",
+        })),
+      }),
+    /只保留一张/,
+  );
+  f.store.close();
+});
 test("恢复替换后打开失败，数据库与原文快照回到恢复前", async () => {
   const f = fixture();
   f.records.save({

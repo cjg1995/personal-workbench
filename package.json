@@ -1,6 +1,6 @@
 {
   "name": "personal-workbench",
-  "version": "0.1.15",
+  "version": "0.1.33",
   "description": "本地个人工作台",
   "private": true,
   "type": "module",

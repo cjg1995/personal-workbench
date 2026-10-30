@@ -28,7 +28,7 @@ async function launch() {
     timeout: 90000,
   });
   page = await app.firstWindow();
-  await page.waitForSelector("[data-page=home]");
+  await page.waitForSelector("[data-page=work]");
 }
 async function close() {
   if (!app) return;

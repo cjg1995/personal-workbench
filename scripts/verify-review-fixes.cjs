@@ -53,7 +53,7 @@ async function unusedPort() {
     });
     page = await application.firstWindow();
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.waitForSelector('[data-page="home"]');
+    await page.waitForSelector('[data-page="work"]');
     const note = await api("record.save", {
       kind: "work", text: "审查回归中的已保存记录", happenedOn: "2026-10-25",
     });

@@ -350,11 +350,14 @@ async function restore() {
   <section v-else class="form-section">
     <h2>固定月报模板</h2>
     <p>
-      沿用现有月报章节与排版，旧业务正文已清除。截图原位置和尺寸保留为空白占位区。
+      沿用现有月报章节与排版，旧业务正文已清除。「一、工作成果」下的截图在月报页粘贴后自动插入。
     </p>
     <label class="form-line"
       ><span>默认姓名</span><input v-model="form.name"
     /></label>
+    <p class="small muted">
+      默认姓名用于月报导出文件名，月报页不再单独输入。
+    </p>
     <div class="form-line">
       <span>模板路径</span
       ><input

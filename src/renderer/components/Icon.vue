@@ -33,6 +33,8 @@ const paths: Record<string, string> = {
   warning: "m12 2 11 20H1Z M12 8v6 M12 18v1",
   grid: "M4 4h7v7H4Z M13 4h7v7h-7Z M4 13h7v7H4Z M13 13h7v7h-7Z",
   maximize: "M5 5h14v14H5Z",
+  image:
+    "M3 4h18v16H3Z M3 15.5l5-5 4 4 3-3 6 6 M8.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z",
 };
 </script>
 <template>

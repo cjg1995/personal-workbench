@@ -109,14 +109,20 @@ export class RecordsService {
   }
   draft(month: string, name = "陈嘉庚") {
     this.checkMonth(month);
-    return (
-      this.store.get<MonthlyDraft>("monthly", month) || {
+    const stored = this.store.get<MonthlyDraft>("monthly", month);
+    if (!stored)
+      return {
         month,
         name,
         entries: [],
+        images: [],
         updatedAt: now(),
-      }
-    );
+      };
+    stored.images ??= [];
+    if (stored.images.length > 1) stored.images = stored.images.slice(0, 1);
+    // 姓名统一取设置里的默认姓名，月报页不再单独编辑。
+    stored.name = name;
+    return stored;
   }
   saveDraft(draft: MonthlyDraft) {
     this.checkMonth(draft.month);
@@ -135,6 +141,24 @@ export class RecordsService {
         throw new Error("月报条目格式无效");
       ids.add(e.id);
     }
+    const images = draft.images ?? [];
+    if (!Array.isArray(images) || images.length > 1)
+      throw new Error("工作成果只保留一张截图");
+    for (const image of images) {
+      if (
+        !image?.id ||
+        !/^image\/(png|jpeg)$/.test(image.mime || "") ||
+        typeof image.data !== "string" ||
+        !image.data ||
+        image.data.length > 12_000_000 ||
+        !(image.width > 0) ||
+        !(image.height > 0)
+      )
+        throw new Error("截图格式无效，请重新粘贴");
+    }
+    if (images.reduce((total, image) => total + image.data.length, 0) > 24_000_000)
+      throw new Error("截图总量过大，请移除部分截图后保存");
+    draft.images = images;
     draft.updatedAt = now();
     this.store.set("monthly", draft.month, draft);
     return draft;
@@ -183,24 +207,5 @@ export class RecordsService {
         };
       }),
     }));
-  }
-  monthlyText(draft: MonthlyDraft) {
-    return (
-      `一、工作成果\n\n` +
-      sections
-        .map(
-          (s, i) =>
-            `${i === 0 ? "1. " : i === 1 ? "2. " : i === 2 ? "二、" : i === 3 ? "三、" : "四、"}${s}\n${draft.entries
-              .filter((e) => e.section === s)
-              .map(
-                (e, index, entries) =>
-                  (i < 2 || ((i === 2 || i === 3) && entries.length > 1)
-                    ? `${index + 1}. `
-                    : "") + e.text,
-              )
-              .join("\n\n")}`,
-        )
-        .join("\n\n")
-    );
   }
 }

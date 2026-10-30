@@ -74,7 +74,7 @@ async function launch() {
   });
   page = await app.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.waitForSelector("[data-page=home]");
+  await page.waitForSelector("[data-page=work]");
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setContentSize(1280, 800),
   );
@@ -184,7 +184,7 @@ async function screenshot(name) {
     data.config.projects.find((p) => p.id === "homeproject").path = erp.repo;
     await api("settings.save", data.config);
     await page.reload();
-    await page.waitForSelector("[data-page=home]");
+    await page.waitForSelector("[data-page=work]");
     await nav("代码提交");
     await page.getByRole("button", { name: "APP 提交", exact: true }).click();
     await page
@@ -267,9 +267,6 @@ async function screenshot(name) {
     await page
       .getByRole("button", { name: "读取 / 刷新差异", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "标记此文件已看", exact: true })
-      .click();
     await page.getByLabel("审查意见内容").fill("核对异常分支的空值处理");
     await page.getByLabel("意见行号").fill("1");
     await page.getByRole("button", { name: "添加问题", exact: true }).click();
@@ -315,23 +312,21 @@ async function screenshot(name) {
       "manual review status validation, persisted reason and linked todo",
     );
     await page.getByLabel("审查意见内容").fill("尚未保存的意见");
-    await nav("今日概览");
+    await nav("工作记录");
     assert.ok(await page.locator("[data-page=review]").count());
     assert.equal(
       await page.getByLabel("审查意见内容").inputValue(),
       "尚未保存的意见",
     );
     await page.getByLabel("审查意见内容").fill("");
-    await page
-      .getByLabel("人工审查结论")
-      .selectOption({ label: "仍有待处理项" });
-    await page.getByLabel("人工审查总结").fill("人工完成核对，保留待办跟进");
-    await page.getByRole("button", { name: "结束审查", exact: true }).click();
-    await until(
-      async () =>
-        (await api("review.get", { id: review.id })).conclusion ===
-        "仍有待处理项",
-      "review conclusion",
+    await api("review.conclude", {
+      id: review.id,
+      conclusion: "仍有待处理项",
+      summary: "人工完成核对，保留待办跟进",
+    });
+    assert.equal(
+      (await api("review.get", { id: review.id })).conclusion,
+      "仍有待处理项",
     );
     write(
       path.join(appRepo.repo, "pages/index.vue"),
@@ -427,11 +422,11 @@ async function screenshot(name) {
     checks.push(
       "backup preview, cancel, current-data protection and actual restoration",
     );
-    await nav("今日概览");
-    await page.locator("#quick-text").fill("重启后仍保留的未保存输入");
+    await nav("工作记录");
+    await page.getByLabel("新记录内容").fill("重启后仍保留的未保存输入");
     await until(
       async () =>
-        (await api("bootstrap")).formDrafts.home?.text ===
+        (await api("bootstrap")).formDrafts["note-add-work"]?.text ===
         "重启后仍保留的未保存输入",
       "form draft saved",
     );
@@ -439,7 +434,7 @@ async function screenshot(name) {
     await launch();
     await dialogs();
     assert.equal(
-      await page.locator("#quick-text").inputValue(),
+      await page.getByLabel("新记录内容").inputValue(),
       "重启后仍保留的未保存输入",
     );
     const reopened = await api("bootstrap");
@@ -462,7 +457,7 @@ async function screenshot(name) {
         factor,
       );
       await page
-        .getByRole("button", { name: "保存", exact: true })
+        .getByRole("button", { name: "保存记录", exact: true })
         .scrollIntoViewIfNeeded();
       assert.equal(
         await page.evaluate(
@@ -470,7 +465,7 @@ async function screenshot(name) {
         ),
         true,
       );
-      await screenshot("home-zoom-" + factor);
+      await screenshot("work-zoom-" + factor);
     }
     checks.push("1280x800 at 125% and 150% content scaling");
     assert.deepEqual(errors, []);

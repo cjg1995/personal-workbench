@@ -55,7 +55,7 @@ async function port() {
       timeout: 45000,
     });
     page = await app.firstWindow();
-    await page.waitForSelector("[data-page=home]");
+    await page.waitForSelector("[data-page=work]");
     // Keep browser-open verification separate from native notification verification.
     await app.evaluate(({ shell }) => {
       shell.openExternal = async () => {};

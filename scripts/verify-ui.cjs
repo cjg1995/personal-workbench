@@ -24,7 +24,7 @@ async function launch() {
   });
   const page = await application.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.waitForSelector('[data-page="home"]', { timeout: 20000 });
+  await page.waitForSelector('[data-page="work"]', { timeout: 20000 });
   return page;
 }
 async function api(page, name, payload) {
@@ -64,13 +64,13 @@ async function capture(page, file) {
     await application.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 800),
     );
-    await page.locator("#quick-text").fill("界面回归：一句话灵感");
-    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await nav(page, "灵感待办");
+    await page.getByLabel("新记录内容").fill("界面回归：一句话灵感");
+    await page.getByRole("button", { name: "保存记录", exact: true }).click();
     await until(
-      async () => !(await page.locator("#quick-text").inputValue()),
+      async () => !(await page.getByLabel("新记录内容").inputValue()),
       "quick-save",
     );
-    await nav(page, "灵感待办");
     await page.getByRole("button", { name: /界面回归：一句话灵感/ }).click();
     await page.locator(".note-detail textarea").fill("界面回归：编辑后的灵感");
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -155,22 +155,21 @@ async function capture(page, file) {
     await until(async () => fs.existsSync(output), "Word export");
     assert.ok(fs.statSync(output).size > 1000);
     await capture(page, path.join(dir, "monthly-1280.png"));
-    await nav(page, "今日概览");
-    await page.locator("#quick-text").fill("x".repeat(100001));
-    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await nav(page, "工作记录");
+    await page.getByLabel("新记录内容").fill("x".repeat(100001));
+    await page.getByRole("button", { name: "保存记录", exact: true }).click();
     await page.getByRole("status").filter({ hasText: "内容过长" }).waitFor();
     assert.equal(
-      (await page.locator("#quick-text").inputValue()).length,
+      (await page.getByLabel("新记录内容").inputValue()).length,
       100001,
       "failed save keeps input",
     );
-    await page.locator("#quick-text").fill("");
+    await page.getByLabel("新记录内容").fill("");
     await page.getByRole("button", { name: "关闭提示" }).click();
-    await capture(page, path.join(dir, "home-1280.png"));
+    await capture(page, path.join(dir, "work-1280.png"));
     for (const name of [
       "代码提交",
       "APK 打包",
-      "TAPD 入口",
       "代码审查",
       "项目运行",
     ]) {
@@ -183,7 +182,6 @@ async function capture(page, file) {
           {
             代码提交: "submit",
             "APK 打包": "apk",
-            "TAPD 入口": "tapd",
             代码审查: "review",
             项目运行: "projects",
           }[name] + "-1280.png",

@@ -5,6 +5,7 @@ import {
   call,
   model,
   navigate,
+  notify,
   openRecord,
   reload,
   route,
@@ -16,12 +17,10 @@ import {
 import Icon from "./components/Icon.vue";
 import workbenchIcon from "../../assets/workbench-v2-64.png";
 import RecordDialog from "./components/RecordDialog.vue";
-import HomePage from "./pages/HomePage.vue";
 import NotesPage from "./pages/NotesPage.vue";
 import MonthlyPage from "./pages/MonthlyPage.vue";
 import SubmitPage from "./pages/SubmitPage.vue";
 import ApkPage from "./pages/ApkPage.vue";
-import TapdPage from "./pages/TapdPage.vue";
 import ProjectsPage from "./pages/ProjectsPage.vue";
 import ReviewPage from "./pages/ReviewPage.vue";
 import SettingsPage from "./pages/SettingsPage.vue";
@@ -29,15 +28,21 @@ import TasksPage from "./pages/TasksPage.vue";
 const ready = ref(false),
   initialError = ref(""),
   navOpen = ref(false),
-  pageBody = ref<HTMLElement>();
+  pageView = ref<HTMLElement>();
 const groups = [
   {
     name: "日常",
     items: [
-      ["home", "home", "今日概览"],
-      ["ideas", "spark", "灵感待办"],
       ["work", "book", "工作记录"],
+      ["ideas", "spark", "灵感待办"],
       ["monthly", "chart", "月度总结"],
+    ],
+  },
+  {
+    name: "开发",
+    items: [
+      ["projects", "play", "项目运行"],
+      ["review", "search", "代码审查"],
     ],
   },
   {
@@ -48,22 +53,13 @@ const groups = [
       ["tapd", "external", "TAPD 入口"],
     ],
   },
-  {
-    name: "开发",
-    items: [
-      ["projects", "play", "项目运行"],
-      ["review", "search", "代码审查"],
-    ],
-  },
 ];
 const titles: Record<string, string> = {
-  home: "今日",
   ideas: "灵感待办",
   work: "工作记录",
   monthly: "月度总结",
   submit: "代码提交",
   apk: "APK 打包",
-  tapd: "TAPD 入口",
   projects: "项目运行",
   review: "代码审查",
   settings: "设置",
@@ -80,6 +76,17 @@ const activeStage = computed(() => {
   if (!task) return "";
   return task.stages.find((s) => s.state === "running")?.name || "";
 });
+async function openTapd() {
+  await attempt(async () => {
+    const task = await call<any>("tapd.open");
+    if (task?.state === "failed" || task?.state === "partial")
+      notify(
+        task.error ? "打开 TAPD 失败：" + task.error : "打开 TAPD 失败",
+        true,
+      );
+    else notify(task?.result?.message || "已请求打开 TAPD 客户端");
+  });
+}
 async function init() {
   try {
     await reload();
@@ -102,10 +109,6 @@ function onKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
     if (recordModal.value) return;
     event.preventDefault();
-    if (route.value === "home") {
-      document.getElementById("quick-text")?.focus();
-      return;
-    }
     openRecord();
   }
   if (event.key === "Escape" && navOpen.value) navOpen.value = false;
@@ -113,7 +116,7 @@ function onKeydown(event: KeyboardEvent) {
 const workspace = ref<HTMLElement>();
 watch(route, () => {
   navOpen.value = false;
-  pageBody.value?.scrollTo({ top: 0, left: 0 });
+  pageView.value?.scrollTo({ top: 0, left: 0 });
   void workspace.value?.focus({ preventScroll: true });
 });
 onMounted(() => {
@@ -172,7 +175,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
               :class="{ active: route === item[0] }"
               :aria-current="route === item[0] ? 'page' : undefined"
               :title="item[2]"
-              @click="navigate(item[0])"
+              @click="item[0] === 'tapd' ? openTapd() : navigate(item[0])"
             >
               <span class="nav-icon"><Icon :name="item[1]" :size="18" /></span
               ><span class="nav-label">{{ item[2] }}</span>
@@ -188,11 +191,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
             <span class="nav-icon"><Icon name="settings" :size="18" /></span
             ><span class="nav-label">设置</span>
           </button>
-          <div class="data-health" :title="ready ? '本地数据库已连接' : '本地数据库未就绪'">
-            <Icon name="database" :size="13" /><span class="data-health-text"
-              >本地数据{{ ready ? "已连接" : "未就绪" }}</span
-            ><span class="dot" :class="{ bad: !ready }" />
-          </div>
         </div>
       </aside>
       <div
@@ -212,13 +210,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <header class="page-header">
           <div class="page-heading">
             <h1>{{ titles[route] }}</h1>
-            <span v-if="route === 'home'" class="header-date">{{
-              model.today.replaceAll("-", ".")
-            }}</span>
           </div>
           <div class="header-actions">
             <button
-              v-if="route !== 'home'"
               class="header-button"
               title="快速记录（Ctrl+N）"
               @click="openRecord()"
@@ -240,20 +234,21 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
             </button>
           </div>
         </header>
-        <div ref="pageBody" class="page-body">
-          <HomePage v-if="route === 'home'" /><NotesPage
-            v-else-if="route === 'ideas' || route === 'work'"
-            :key="route"
-            :kind="route === 'ideas' ? 'idea' : 'work'"
-          /><MonthlyPage v-else-if="route === 'monthly'" /><SubmitPage
-            v-else-if="route === 'submit'"
-          /><ApkPage v-else-if="route === 'apk'" /><TapdPage
-            v-else-if="route === 'tapd'"
-          /><ProjectsPage v-else-if="route === 'projects'" /><ReviewPage
-            v-else-if="route === 'review'"
-                    /><SettingsPage v-else-if="route === 'settings'" /><TasksPage
-            v-else-if="route === 'tasks'"
-          />
+        <div class="page-body" :class="'page-' + route">
+          <div ref="pageView" class="page-view">
+            <NotesPage
+              v-if="route === 'ideas' || route === 'work'"
+              :key="route"
+              :kind="route === 'ideas' ? 'idea' : 'work'"
+            /><MonthlyPage v-else-if="route === 'monthly'" /><SubmitPage
+              v-else-if="route === 'submit'"
+            /><ApkPage v-else-if="route === 'apk'" /><ProjectsPage
+              v-else-if="route === 'projects'" /><ReviewPage
+              v-else-if="route === 'review'"
+            /><SettingsPage v-else-if="route === 'settings'" /><TasksPage
+              v-else-if="route === 'tasks'"
+            />
+          </div>
         </div>
         <button
           v-if="currentTask && route !== 'tasks'"

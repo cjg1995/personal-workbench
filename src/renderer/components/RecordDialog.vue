@@ -71,7 +71,6 @@ function onKeydown(event: KeyboardEvent) {
 function setKind(value: "idea" | "work") {
   if (form.value.kind === value) return;
   form.value.kind = value;
-  if (value === "idea") form.value.result = "";
 }
 </script>
 <template>
@@ -97,18 +96,18 @@ function setKind(value: "idea" | "work") {
       <div class="tabs" role="group" aria-label="记录类型">
         <button
           type="button"
-          :class="{ active: form.kind === 'idea' }"
-          :aria-pressed="form.kind === 'idea'"
-          @click="setKind('idea')"
-        >
-          记个想法</button
-        ><button
-          type="button"
           :class="{ active: form.kind === 'work' }"
           :aria-pressed="form.kind === 'work'"
           @click="setKind('work')"
         >
-          记一条工作
+          记一条工作</button
+        ><button
+          type="button"
+          :class="{ active: form.kind === 'idea' }"
+          :aria-pressed="form.kind === 'idea'"
+          @click="setKind('idea')"
+        >
+          记个想法
         </button>
       </div>
       <p v-if="existing.length" class="notice">
@@ -125,19 +124,6 @@ function setKind(value: "idea" | "work") {
               : '记录实际发生的工作，保存前可以修改…'
           "
         />
-      </label>
-      <div class="row wrap">
-        <label
-          v-if="form.kind === 'work'"
-          class="inline-label"
-          >发生日期<input
-            v-model="form.happenedOn"
-            type="date"
-            aria-label="发生日期"
-        /></label>
-      </div>
-      <label v-if="form.kind === 'work'"
-        >实际结果（可选）<textarea v-model="form.result" rows="3" />
       </label>
       <div class="actions spaced">
         <span class="dialog-hint"

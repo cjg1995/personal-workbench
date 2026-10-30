@@ -253,6 +253,147 @@ export async function visibleClientWindows(
   const parsed = JSON.parse(result.stdout || "[]");
   return Array.isArray(parsed) ? parsed : [parsed];
 }
+/** 按可执行文件路径查找进程，不要求有可见窗口，用于判断客户端是否已在运行。 */
+export async function clientProcesses(
+  executable: string,
+): Promise<{ pid: number; handle: number; title: string }[]> {
+  const target = path.resolve(executable).replaceAll("'", "''");
+  const script = `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '${target}' } | Select-Object @{n='pid';e={$_.Id}},@{n='handle';e={$_.MainWindowHandle.ToInt64()}},@{n='title';e={$_.MainWindowTitle}}) | ConvertTo-Json -Compress`;
+  const result = await command(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    { timeoutMs: 15000, allowFailure: true },
+  );
+  const parsed = JSON.parse(result.stdout || "[]");
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+export type ActivateResult = "ok" | "raised" | "missing" | "blocked";
+const ACTIVATE_CODE = String.raw`
+using System;
+using System.Runtime.InteropServices;
+public class WorkbenchActivate {
+  delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
+  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int cmd);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint attach, uint attachTo, bool value);
+  [DllImport("user32.dll")] static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  static IntPtr best;
+  static int bestScore;
+  public static IntPtr Find(uint target) {
+    best = IntPtr.Zero; bestScore = -1;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint process; GetWindowThreadProcessId(h, out process);
+      if (process != target) return true;
+      int score = 0;
+      if (IsWindowVisible(h)) score += 4;
+      if (!IsIconic(h)) score += 2;
+      if (GetWindowTextLength(h) > 0) score += 1;
+      if (score > bestScore) { bestScore = score; best = h; }
+      return true;
+    }, IntPtr.Zero);
+    return best;
+  }
+  public static bool IsFront(IntPtr h) { return GetForegroundWindow() == h; }
+  public static bool Topmost(IntPtr h) { return (GetWindowLong(h, -20) & 0x8) != 0; }
+  public static bool SetTop(IntPtr h, bool on) {
+    return SetWindowPos(h, new IntPtr(on ? -1 : -2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);
+  }
+  public static bool ToTop(IntPtr h) {
+    return SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002);
+  }
+  public static bool Focus(IntPtr h) {
+    if (h == IntPtr.Zero) return false;
+    if (IsIconic(h)) ShowWindowAsync(h, 9);
+    ShowWindow(h, 5);
+    if (IsFront(h)) { SetTop(h, true); return true; }
+    SetTop(h, true);
+    BringWindowToTop(h);
+    SwitchToThisWindow(h, true);
+    SetForegroundWindow(h);
+    if (IsFront(h)) return true;
+    uint pid; uint other = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+    uint self = GetCurrentThreadId();
+    AttachThreadInput(self, other, true);
+    SetForegroundWindow(h);
+    BringWindowToTop(h);
+    AttachThreadInput(self, other, false);
+    if (IsFront(h)) return true;
+    keybd_event(0x12, 0, 0, UIntPtr.Zero);
+    keybd_event(0x12, 0, 2, UIntPtr.Zero);
+    ShowWindow(h, 6);
+    ShowWindow(h, 9);
+    BringWindowToTop(h);
+    SwitchToThisWindow(h, true);
+    SetForegroundWindow(h);
+    return IsFront(h);
+  }
+}`;
+/** 生成窗口激活脚本；独立导出便于离线核对 PowerShell 语法。 */
+export function activationScript(pid: number, handle = 0): string {
+  const id = Math.max(0, Math.trunc(pid)),
+    hwnd = Math.max(0, Math.trunc(handle));
+  return [
+    "$ErrorActionPreference='Stop'",
+    `Add-Type -TypeDefinition @'`,
+    ACTIVATE_CODE,
+    `'@`,
+    `$h=[IntPtr](${hwnd})`,
+    `if ($h -eq [IntPtr]::Zero) { $h=[WorkbenchActivate]::Find([uint32]${id}) }`,
+    `if ($h -eq [IntPtr]::Zero) { '{"result":"missing"}' }`,
+    `else {`,
+    `  [WorkbenchActivate]::Focus($h) | Out-Null`,
+    `  $front=[WorkbenchActivate]::IsFront($h)`,
+    `  if (-not $front) { Start-Sleep -Milliseconds 800 }`,
+    `  $top=[WorkbenchActivate]::Topmost($h)`,
+    `  [WorkbenchActivate]::SetTop($h, $false) | Out-Null`,
+    `  [WorkbenchActivate]::ToTop($h) | Out-Null`,
+    `  $result = if ($front) { 'ok' } elseif ($top) { 'raised' } else { 'blocked' }`,
+    `  '{"result":"' + $result + '","hwnd":' + $h.ToInt64() + '}'`,
+    `}`,
+  ].join("\n");
+}
+/** 把已运行客户端的窗口还原并提到最前；ok 表示已拿到前台焦点，raised 表示已置顶弹出。 */
+export async function activateClientWindow(
+  pid: number,
+  handle = 0,
+): Promise<ActivateResult> {
+  const result = await command(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(activationScript(pid, handle), "utf16le").toString("base64"),
+    ],
+    { timeoutMs: 15000, allowFailure: true },
+  );
+  try {
+    const parsed = JSON.parse(result.stdout.trim() || "{}");
+    const value = parsed.result;
+    return value === "ok" || value === "raised" || value === "missing"
+      ? value
+      : "blocked";
+  } catch {
+    return "blocked";
+  }
+}
 export async function processEnvironments(
   pids: number[],
 ): Promise<

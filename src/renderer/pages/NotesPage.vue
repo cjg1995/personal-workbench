@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { Note } from "../../shared/types";
 import {
   attempt,
@@ -19,19 +19,14 @@ import Icon from "../components/Icon.vue";
 const props = defineProps<{ kind: "idea" | "work" }>();
 const draft = model.formDrafts["note-add-" + props.kind] || {};
 const text = ref(draft.text || ""),
-  date = ref(draft.happenedOn || model.today),
   busy = ref(false),
   query = ref(""),
   tab = ref(context.value.tab || "active"),
   month = ref(model.today.slice(0, 7)),
   selected = ref<string | null>(context.value.selected || null);
 watch(
-  [text, date],
-  () =>
-    saveForm("note-add-" + props.kind, {
-      text: text.value,
-      happenedOn: date.value,
-    }),
+  text,
+  () => saveForm("note-add-" + props.kind, { text: text.value }),
   { flush: "sync" },
 );
 const editor = ref<Note | null>(null);
@@ -57,8 +52,7 @@ const filtered = computed(() =>
               !month.value ||
               n.happenedOn?.startsWith(month.value)) &&
         (!query.value ||
-          n.text.toLowerCase().includes(query.value.toLowerCase()) ||
-          n.result.toLowerCase().includes(query.value.toLowerCase())),
+          n.text.toLowerCase().includes(query.value.toLowerCase())),
     )
     .sort(
       (a, b) =>
@@ -100,6 +94,13 @@ watch(
     if (!dirty.value) loadEditor();
   },
 );
+onMounted(() => {
+  if (!selected.value) {
+    const first = filtered.value[0];
+    if (first) selected.value = first.id;
+  }
+  focusComposer();
+});
 async function select(n: Note) {
   if (!(await canLeave())) return;
   selected.value = n.id;
@@ -112,7 +113,7 @@ async function add() {
     const note = await call<Note>("record.save", {
       kind: props.kind,
       text: text.value,
-      happenedOn: date.value,
+      happenedOn: model.today,
     });
     text.value = "";
     await reload();
@@ -173,7 +174,7 @@ async function remove() {
     <textarea
       ref="composer"
       v-model="text"
-      :rows="kind === 'work' ? 2 : 1"
+      :rows="2"
       required
       :placeholder="
         kind === 'idea' ? '想到的事，先记下来…' : '今天处理了什么…'
@@ -182,15 +183,6 @@ async function remove() {
       @keydown="onComposerKeydown"
     />
     <div class="composer-foot">
-      <div class="row">
-        <input
-          v-if="kind === 'work'"
-          v-model="date"
-          type="date"
-          aria-label="新记录发生日期"
-          title="发生日期"
-        />
-      </div>
       <div class="composer-actions">
         <span class="shortcut-hint" aria-hidden="true">Ctrl + Enter</span>
         <button
@@ -199,13 +191,12 @@ async function remove() {
           :aria-busy="busy"
           title="Ctrl+Enter 快捷保存"
         >
-          {{ kind === "idea" ? "添加" : "保存记录" }}
+          保存记录
         </button>
       </div>
     </div>
   </form>
   <div class="row wrap filters">
-    <span class="toolbar-label">筛选</span>
     <input
       v-if="kind === 'work'"
       v-model="month"
@@ -322,13 +313,7 @@ async function remove() {
           v-model="editor.happenedOn"
           type="date"
           :disabled="!!editor.deletedAt" /></label
-      ><label v-if="kind === 'work'"
-        >实际结果（可选）<textarea
-          v-model="editor.result"
-          rows="3"
-          :disabled="!!editor.deletedAt"
-        />
-      </label>
+      >
       <p class="muted small">
         {{ editor.importBatch ? "导入时间" : "创建时间" }}
         {{ dateLabel(editor.createdAt) }} · 修改

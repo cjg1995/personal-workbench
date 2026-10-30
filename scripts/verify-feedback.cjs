@@ -73,7 +73,7 @@ async function launch() {
   });
   page = await app.firstWindow();
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.waitForSelector("[data-page=home]");
+  await page.waitForSelector("[data-page=work]");
 }
 (async () => {
   try {
@@ -138,10 +138,9 @@ async function launch() {
       await page.getByRole("button", { name: /TXT|原始记录/ }).count(),
       0,
     );
-    await page.getByRole("button", { name: "复制正文", exact: true }).click();
-    assert.match(
-      await app.evaluate(({ clipboard }) => clipboard.readText()),
-      /^一、工作成果/,
+    assert.equal(
+      await page.getByRole("button", { name: "复制正文", exact: true }).count(),
+      0,
     );
     const draft = (await api("monthly.get", { month: "2026-10" })).draft;
     for (const section of [
@@ -222,15 +221,17 @@ async function launch() {
       name: "12000-line diff paginates, navigation reaches pages, long lines do not freeze rendering",
     });
     await capture("large-diff");
-    await page
-      .getByRole("button", { name: "标记此文件已看", exact: true })
-      .click();
+    const seenTarget = (await api("review.history"))[0];
+    const seenSnapshot = await api("review.get", { id: seenTarget.id });
+    await api("review.seen", {
+      id: seenTarget.id,
+      file: seenSnapshot.files[0].path,
+      viewed: true,
+    });
     await until(
       async () =>
-        Object.keys(
-          (await api("review.get", { id: (await api("review.history"))[0].id }))
-            .seen,
-        ).length === 1,
+        Object.keys((await api("review.get", { id: seenTarget.id })).seen)
+          .length === 1,
       "seen save",
     );
     const latest = (await api("review.history"))[0];

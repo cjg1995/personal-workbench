@@ -42,7 +42,7 @@ async function launch() {
     timeout: 90000,
   });
   page = await app.firstWindow();
-  await page.waitForSelector("[data-page=home]", { timeout: 60000 });
+  await page.waitForSelector("[data-page=work]", { timeout: 60000 });
 }
 async function call(name, payload) {
   const r = await page.evaluate(

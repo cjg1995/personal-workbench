@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { MonthlyDraft, Note } from "../../shared/types";
+import type { MonthlyDraft, MonthlyImage, Note } from "../../shared/types";
 import { sections } from "../../shared/types";
 import {
   attempt,
@@ -16,14 +16,23 @@ import Icon from "../components/Icon.vue";
 const month = ref(context.value.month || model.today.slice(0, 7)),
   draft = ref<MonthlyDraft | null>(null),
   materials = ref<Note[]>([]),
-  sources = ref<any[]>([]),
   undated = ref(0),
   selected = ref<string[]>([]),
-  section = ref(sections[0]),
+  section = ref("其他"),
   saveState = ref(""),
   dirty = ref(false),
-  loading = ref(true),
-  selectedEntries = ref<string[]>([]);
+  loading = ref(true);
+const imageInput = ref<HTMLInputElement | null>(null),
+  imageBusy = ref(false),
+  imageError = ref("");
+const maxImageWidth = 1240;
+const images = computed(() => draft.value?.images ?? []);
+const shotUrls = computed(() => {
+  const urls = new Map<string, string>();
+  for (const image of images.value)
+    urls.set(image.id, `data:${image.mime};base64,${image.data}`);
+  return urls;
+});
 let timer: ReturnType<typeof setTimeout> | undefined;
 let pending: Promise<void> | null = null,
   unmounted = false;
@@ -37,9 +46,22 @@ const stateClass = computed(() =>
       ? "pending"
       : "",
 );
-const sourceCount = computed(() =>
-  sources.value.reduce((total, group) => total + group.sources.length, 0),
+const selectableMaterials = computed(() =>
+  materials.value.filter((n) => !linked.value.has(n.id)),
 );
+const allSelected = computed(
+  () =>
+    selectableMaterials.value.length > 0 &&
+    selectableMaterials.value.every((n) => selected.value.includes(n.id)),
+);
+const someSelected = computed(
+  () => selected.value.length > 0 && !allSelected.value,
+);
+function toggleAll(event: Event) {
+  selected.value = (event.target as HTMLInputElement).checked
+    ? selectableMaterials.value.map((n) => n.id)
+    : [];
+}
 async function flush() {
   if (timer) clearTimeout(timer);
   if (pending) await pending;
@@ -90,6 +112,9 @@ onBeforeUnmount(() => {
   unmounted = true;
   setGuard(null);
   if (timer) clearTimeout(timer);
+  document.removeEventListener("paste", pasteEverywhere);
+  document.removeEventListener("dragover", guardDrag);
+  document.removeEventListener("drop", dropEverywhere);
 });
 function edited() {
   dirty.value = true;
@@ -106,19 +131,23 @@ async function load(replace = true) {
       month: month.value,
     });
     materials.value = data.materials;
-    sources.value = data.sources;
     undated.value = data.undated;
     if (replace) {
       draft.value = data.draft;
+      draft.value!.images ??= [];
       dirty.value = false;
-      saveState.value = draft.value!.entries.length ? "草稿已读取" : "空白草稿";
+      saveState.value = draft.value!.entries.length ? "草稿已读取" : "";
       selected.value = [];
-      selectedEntries.value = [];
     }
   });
   loading.value = false;
 }
-onMounted(() => load());
+onMounted(() => {
+  document.addEventListener("paste", pasteEverywhere);
+  document.addEventListener("dragover", guardDrag);
+  document.addEventListener("drop", dropEverywhere);
+  void load();
+});
 async function changeMonth(event: Event) {
   const next = (event.target as HTMLInputElement).value;
   if (!next) return;
@@ -179,23 +208,102 @@ async function remove(entryId: string) {
   draft.value.entries = draft.value.entries.filter((e) => e.id !== entryId);
   edited();
 }
-function merge() {
-  if (!draft.value || selectedEntries.value.length < 2) return;
-  const entries = draft.value.entries.filter((e) =>
-    selectedEntries.value.includes(e.id),
-  );
-  const first = entries[0];
-  first.text = entries.map((e) => e.text).join("\n");
-  first.sourceIds = Array.from(new Set(entries.flatMap((e) => e.sourceIds)));
-  first.sourceVersions = Object.assign(
-    {},
-    ...entries.map((e) => e.sourceVersions),
-  );
-  first.manual = first.sourceIds.length === 0;
-  draft.value.entries = draft.value.entries.filter(
-    (e) => e.id === first.id || !selectedEntries.value.includes(e.id),
-  );
-  selectedEntries.value = [];
+async function shrinkShot(file: Blob, order: number): Promise<MonthlyImage> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, maxImageWidth / bitmap.width);
+    const width = Math.max(1, Math.round(bitmap.width * scale)),
+      height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("当前环境无法处理图片");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    const url = canvas.toDataURL(
+      file.type === "image/png" ? "image/png" : "image/jpeg",
+      0.92,
+    );
+    return {
+      id: crypto.randomUUID(),
+      name: `工作内容汇总截图${order}`,
+      mime: url.slice(5, url.indexOf(";", 5)),
+      width,
+      height,
+      data: url.slice(url.indexOf(",") + 1),
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+async function addShots(list: Array<File | Blob>) {
+  if (!draft.value || imageBusy.value) return;
+  const candidates = list.filter((file) => file.type.startsWith("image/"));
+  if (!candidates.length) {
+    imageError.value = "剪贴板里没有可粘贴的图片。";
+    return;
+  }
+  imageBusy.value = true;
+  imageError.value = "";
+  const replaced = (draft.value.images?.length || 0) > 0;
+  try {
+    const shot = await shrinkShot(candidates[0], 1);
+    (draft.value.images ??= []).splice(0, draft.value.images.length, shot);
+    edited();
+    notify(replaced ? "已用新截图替换原截图" : "已加入截图，导出 Word 时自动带上");
+  } catch (e) {
+    imageError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    imageBusy.value = false;
+  }
+}
+function clipboardShots(event: ClipboardEvent) {
+  return Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => !!file);
+}
+function onPaste(event: ClipboardEvent) {
+  const files = clipboardShots(event);
+  if (!files.length) return;
+  event.preventDefault();
+  void addShots(files);
+}
+function pasteEverywhere(event: ClipboardEvent) {
+  if (event.defaultPrevented || !clipboardShots(event).length) return;
+  onPaste(event);
+}
+function guardDrag(event: DragEvent) {
+  if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+}
+function dropEverywhere(event: DragEvent) {
+  if (event.defaultPrevented) return;
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (!files.length) return;
+  event.preventDefault();
+  void addShots(files);
+}
+function onDrop(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (!files.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void addShots(files);
+}
+function pickShots() {
+  imageInput.value?.click();
+}
+function onPickShots(event: Event) {
+  const input = event.target as HTMLInputElement;
+  void addShots(Array.from(input.files || []));
+  input.value = "";
+}
+function removeShot(shotId: string) {
+  if (!draft.value?.images) return;
+  draft.value.images = draft.value.images.filter((i) => i.id !== shotId);
+  imageError.value = "";
   edited();
 }
 async function exportFile() {
@@ -207,15 +315,9 @@ async function exportFile() {
     notify(result ? "文件已写入：" + result.path : "已取消导出");
   });
 }
-async function copy() {
-  await attempt(async () => {
-    await flush();
-    await call("monthly.copy", { month: month.value });
-    notify("已复制当前月报正文");
-  });
-}
 </script>
 <template>
+  <div class="monthly-page">
   <div class="toolbar">
     <input
       type="month"
@@ -223,27 +325,40 @@ async function copy() {
       aria-label="月报月份"
       @change="changeMonth"
     /><span
+      v-if="saveState"
       class="save-state"
       :class="stateClass"
       role="status"
       >{{ saveState }}</span
     >
     <div class="row push-right">
-      <button :disabled="!draft" @click="copy()">复制正文</button
-      ><button class="primary" :disabled="!draft" @click="exportFile()">
+      <button class="primary" :disabled="!draft" @click="exportFile()">
         导出 Word
       </button>
     </div>
   </div>
-  <div
-    v-if="draft"
-    class="monthly-layout"
-    :class="{ 'no-sources': !sources.length }"
-  >
+  <div v-if="draft" class="monthly-layout">
     <section>
       <div class="section-head">
         <h2>本月素材</h2>
         <button class="link small" @click="load(false)">刷新</button>
+      </div>
+      <div v-if="materials.length" class="material-select-all">
+        <label>
+          <input
+            type="checkbox"
+            :checked="allSelected"
+            :indeterminate="someSelected"
+            :disabled="!selectableMaterials.length"
+            aria-label="全选本月素材"
+            @change="toggleAll"
+          />
+          <span
+            >全选<small class="muted"
+              >{{ selected.length }} / {{ selectableMaterials.length }}</small
+            ></span
+          >
+        </label>
       </div>
       <p v-if="!materials.length" class="empty compact">
         本月还没有日期明确的工作记录。
@@ -262,16 +377,13 @@ async function copy() {
             :value="n.id"
           /><span
             ><time class="date">{{ n.happenedOn }}</time
-            >{{ n.text
-            }}<span v-if="linked.has(n.id)" class="material-state"
-              >已加入正文</span
-            ></span
+            >{{ n.text }}</span
           ></label
         >
       </div>
       <div v-if="materials.length" class="material-actions">
         <label class="field-stack"
-          >放入章节<select v-model="section">
+          ><select v-model="section" aria-label="放入章节" title="放入章节">
             <option v-for="s in sections" :key="s">{{ s }}</option>
           </select></label
         ><button
@@ -292,26 +404,53 @@ async function copy() {
       </p>
     </section>
     <section>
-      <div class="doc-meta">
-        <span>姓名</span
-        ><input v-model="draft.name" aria-label="月报姓名" @input="edited" />
+      <h2 class="doc-first">一、工作成果</h2>
+      <div class="shot-block">
+        <ul v-if="images.length" class="shot-list">
+          <li v-for="shot in images" :key="shot.id" class="shot-item">
+            <img :src="shotUrls.get(shot.id)" :alt="shot.name" />
+            <button
+              class="shot-remove"
+              aria-label="移除截图"
+              title="移除这张截图"
+              @click="removeShot(shot.id)"
+            >
+              <Icon name="close" :size="12" />
+            </button>
+          </li>
+        </ul>
+        <div
+          v-else
+          class="shot-zone"
+          :class="{ busy: imageBusy }"
+          tabindex="0"
+          aria-label="粘贴钉钉工作内容汇总截图"
+          @paste="onPaste"
+          @dragover.prevent
+          @drop="onDrop"
+        >
+          <span class="shot-hint"
+            ><Icon name="image" :size="15" /><span v-if="imageBusy"
+              >正在处理截图…</span
+            ><span v-else>粘贴钉钉「工作内容汇总」截图</span></span
+          >
+          <small class="shot-tip"
+            >页面任意位置 Ctrl+V 或拖入图片，导出 Word 会自动带上，不用再手工排版。</small
+          >
+          <button class="link small" @click="pickShots">选择图片…</button>
+        </div>
+        <p v-if="imageError" class="inline-note warn">{{ imageError }}</p>
+        <input
+          ref="imageInput"
+          class="shot-input"
+          type="file"
+          accept="image/*"
+          aria-hidden="true"
+          tabindex="-1"
+          @change="onPickShots"
+        />
       </div>
-      <h2 class="doc-title">
-        {{ Number(month.slice(0, 4)) }}年{{
-          Number(month.slice(5))
-        }}月工作总结-{{ draft.name }}
-      </h2>
-      <p class="inline-note">
-        Word 从「一、工作成果」开始，截图位置留一个空行；学习成长和工作计划多条内容时自动编号。
-      </p>
-      <button
-        v-if="selectedEntries.length > 1"
-        class="link"
-        @click="merge"
-      >
-        合并所选 {{ selectedEntries.length }} 条正文</button
-      ><template v-for="(s, index) in sections" :key="s"
-        ><h2 v-if="index === 0" class="section-rule">一、工作成果</h2>
+      <template v-for="(s, index) in sections" :key="s">
         <h3 v-if="index < 2">{{ index + 1 }}. {{ s }}</h3>
         <h2 v-else class="section-rule">
           {{ index === 2 ? "二、" : index === 3 ? "三、" : "四、" }}{{ s }}
@@ -323,18 +462,13 @@ async function copy() {
         >
           <textarea
             v-model="e.text"
-            rows="3"
+            rows="1"
             :aria-label="s + '正文'"
             placeholder="在此人工编辑正文…"
             @input="edited"
           />
           <div class="row">
-            <input
-              v-model="selectedEntries"
-              type="checkbox"
-              :value="e.id"
-              :aria-label="'选择正文 ' + e.text.slice(0, 20)"
-            /><small class="muted">{{
+            <small class="muted">{{
               e.manual ? "手动补充" : "来源 " + e.sourceIds.length + " 条"
             }}</small
             ><select
@@ -362,41 +496,6 @@ async function copy() {
           ＋ 手动补充
         </button></template
       >
-      <p class="inline-note section-rule">
-        正文修改自动保存；材料刷新不会覆盖已编辑内容。
-      </p>
-    </section>
-    <section v-if="sources.length">
-      <div class="section-head">
-        <h2>来源核对</h2>
-        <span class="tab-count">{{ sourceCount }}</span>
-      </div>
-      <template v-for="group in sources" :key="group.entryId"
-        ><div v-for="s in group.sources" :key="s.id" class="source-block">
-          <p v-if="s.deleted" class="notice warning">
-            原始记录已删除，月报正文仍保留。
-          </p>
-          <template v-else
-            ><time class="muted small">{{
-              s.note.happenedOn || "日期待补充"
-            }}</time>
-            <p>
-              {{ s.note.text }}<br v-if="s.note.result" />{{ s.note.result }}
-            </p>
-            <span v-if="s.changed" class="inline-note warn"
-              >来源已变化，保留现有正文，请人工核对。</span
-            ><button
-              class="link small"
-              @click="navigate('work', { selected: s.id })"
-            >
-              查看原记录 →
-            </button></template
-          >
-        </div></template
-      >
-      <p class="inline-note section-rule">
-        无日期记录和待办不会自动成为本月已完成成果。
-      </p>
     </section>
   </div>
   <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
@@ -405,5 +504,6 @@ async function copy() {
     <p class="empty-title">暂时没有月报草稿</p>
     <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
     <button class="link" @click="load()">重新读取</button>
+  </div>
   </div>
 </template>

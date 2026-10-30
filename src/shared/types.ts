@@ -203,10 +203,19 @@ export interface MonthlyEntry {
   sourceVersions: Record<string, string>;
   manual: boolean;
 }
+export interface MonthlyImage {
+  id: string;
+  name: string;
+  mime: string;
+  width: number;
+  height: number;
+  data: string;
+}
 export interface MonthlyDraft {
   month: string;
   name: string;
   entries: MonthlyEntry[];
+  images?: MonthlyImage[];
   updatedAt: string;
 }
 export interface BuildConfig {

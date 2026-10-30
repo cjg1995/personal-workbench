@@ -76,20 +76,20 @@ export function defaults(dataDir: string): Configuration {
         "com.house.driverapp",
       ),
       {
-        id: "customer",
-        logicalId: "customer",
-        group: hp,
-        name: "客户小程序",
-        path: "D:/git-project/customerwechat",
-        type: "wechat",
-      },
-      {
         id: "wecom",
         logicalId: "wecom",
         group: hp,
         name: "企微侧边栏",
         path: "D:/HBuilderProjects/wecomproject",
         type: "h5",
+      },
+      {
+        id: "customer",
+        logicalId: "customer",
+        group: hp,
+        name: "客户小程序",
+        path: "D:/git-project/customerwechat",
+        type: "wechat",
       },
       {
         id: "refsys",
@@ -144,8 +144,25 @@ export class ConfigService {
     public dataDir: string,
   ) {
     ensureDir(dataDir);
-    if (!store.get("config", "main"))
+    const existing = store.get<Configuration>("config", "main");
+    if (!existing) {
       store.set("config", "main", defaults(dataDir));
+      return;
+    }
+    const customerIndex = existing.projects.findIndex(
+      (project) => project.id === "customer",
+    );
+    const wecomIndex = existing.projects.findIndex(
+      (project) => project.id === "wecom",
+    );
+    if (customerIndex !== -1 && wecomIndex !== -1 && customerIndex < wecomIndex) {
+      const [customer] = existing.projects.splice(customerIndex, 1);
+      const nextWecom = existing.projects.findIndex(
+        (project) => project.id === "wecom",
+      );
+      existing.projects.splice(nextWecom + 1, 0, customer);
+      store.set("config", "main", existing);
+    }
   }
   get() {
     return this.store.get<Configuration>("config", "main")!;

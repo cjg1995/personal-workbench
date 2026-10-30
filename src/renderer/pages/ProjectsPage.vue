@@ -17,7 +17,11 @@ const runs = ref<
   status = ref(""),
   busy = ref<string | null>(null),
   loading = ref(false),
-  log = ref<any>(null);
+  log = ref<any>(null),
+  rulesDialog = ref<HTMLDialogElement>(),
+  rules = ref<{ path: string; text: string }[]>([]),
+  rulesBusy = ref(false),
+  rulesFor = ref("");
 let timer: ReturnType<typeof setInterval> | undefined;
 const selectedProject = computed(() =>
   model.config?.projects.find((p) => p.id === selected.value),
@@ -76,6 +80,18 @@ async function act(action: string, id: string) {
     );
   });
   busy.value = null;
+}
+async function openRules() {
+  const project = selectedProject.value;
+  if (!project) return;
+  rulesFor.value = project.name;
+  rules.value = [];
+  rulesBusy.value = true;
+  rulesDialog.value?.showModal();
+  await attempt(async () => {
+    rules.value = await call("review.rules", { projectId: project.id });
+  });
+  rulesBusy.value = false;
 }
 onMounted(() => {
   void refresh();
@@ -233,18 +249,17 @@ onBeforeUnmount(() => {
                   >查看详情</span
                 ></template
               >
-              <details class="context-menu">
-                <summary aria-label="项目更多操作">•••</summary>
-                <div>
-                  <button
-                    v-if="run(p.id)?.canStop"
-                    @click="act('restart', p.id)"
-                  >
-                    重新启动</button
-                  ><button @click="act('ide', p.id)">打开 IDE</button
-                  ><button @click="act('folder', p.id)">打开目录</button>
-                </div>
-              </details>
+              <button
+                v-if="run(p.id)?.canStop"
+                class="link"
+                @click="act('restart', p.id)"
+              >
+                重新启动</button
+              ><button class="link" @click="act('ide', p.id)">
+                打开 IDE</button
+              ><button class="link" @click="act('folder', p.id)">
+                打开目录
+              </button>
             </div>
           </td>
         </tr></template
@@ -307,8 +322,36 @@ onBeforeUnmount(() => {
         "
       >
         查看工作台日志</button
+      ><button @click="openRules">项目规则</button
       ><button @click="act('folder', selected)">打开目录</button>
     </div>
     <pre v-if="log" class="log">{{ log.text }}</pre>
   </section>
+  <dialog
+    ref="rulesDialog"
+    class="rules-dialog"
+    aria-labelledby="project-rules-title"
+    @cancel.prevent="rulesDialog?.close()"
+  >
+    <div class="dialog-head">
+      <h2 id="project-rules-title">{{ rulesFor }} · 项目规则</h2>
+      <button
+        class="dialog-close"
+        aria-label="关闭项目规则"
+        @click="rulesDialog?.close()"
+      >
+        <Icon name="close" :size="15" />
+      </button>
+    </div>
+    <p v-if="rulesBusy" class="loading" role="status">正在读取规则文件…</p>
+    <template v-else
+      ><div v-for="rule in rules" :key="rule.path" class="rule-block">
+        <p class="path">{{ rule.path }}</p>
+        <pre class="rule-text">{{ rule.text }}</pre>
+      </div>
+      <p v-if="!rules.length" class="muted small">
+        此项目没有自己的规则文件。
+      </p></template
+    >
+  </dialog>
 </template>
