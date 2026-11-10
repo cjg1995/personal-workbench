@@ -73,12 +73,12 @@ async function port() {
       `require('node:http').createServer((q,r)=>r.end('notification QA ready')).listen(${chosen},'127.0.0.1',()=>console.log('Local: http://127.0.0.1:${chosen}/'));`,
     );
     const config = (await api("bootstrap")).config;
-    config.projects.find((p) => p.id === "employee").path = source;
-    config.projects.find((p) => p.id === "employee").name = "通知验收本地服务";
+    config.projects.find((p) => p.id === "wecom").path = source;
+    config.projects.find((p) => p.id === "wecom").name = "通知验收本地服务";
     config.tools.hbNode = process.execPath;
     config.tools.hbCli = cli;
     await api("settings.save", config);
-    const started = await api("projects.start", { projectId: "employee" });
+    const started = await api("projects.start", { projectId: "wecom" });
     owned = true;
     await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].minimize(),
@@ -165,7 +165,7 @@ async function port() {
   } finally {
     if (app) {
       if (owned)
-        await api("projects.stop", { projectId: "employee" }).catch(() => {});
+        await api("projects.stop", { projectId: "wecom" }).catch(() => {});
       const closed = app
         .waitForEvent("close", { timeout: 10000 })
         .catch(() => {});

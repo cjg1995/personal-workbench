@@ -137,7 +137,7 @@ async function unusedPort() {
         `require('node:http').createServer((q,r)=>r.end('packaged native runner ready')).listen(${port},'127.0.0.1',()=>console.log('Local: http://127.0.0.1:${port}/'));`,
       );
       const b = await call("bootstrap");
-      b.config.projects.find((p) => p.id === "employee").path = source;
+      b.config.projects.find((p) => p.id === "wecom").path = source;
       b.config.tools.hbNode = process.execPath;
       b.config.tools.hbCli = cli;
       await call("settings.save", b.config);
@@ -185,7 +185,7 @@ async function unusedPort() {
         range: "draft",
       });
       assert.ok(fs.existsSync(word));
-      const started = await call("projects.start", { projectId: "employee" });
+      const started = await call("projects.start", { projectId: "wecom" });
       owned = true;
       let task;
       for (let attempt = 0; attempt < 120; attempt++) {
@@ -197,7 +197,7 @@ async function unusedPort() {
       }
       assert.equal(task.state, "success", task.error || "");
       assert.equal(task.result.browserOpened, true);
-      const running = await call("projects.inspect", { projectId: "employee" });
+      const running = await call("projects.inspect", { projectId: "wecom" });
       assert.equal(running.state, "running");
       assert.ok(running.canStop);
       assert.match(
@@ -206,14 +206,14 @@ async function unusedPort() {
       );
       await close();
       await launch();
-      const adopted = await call("projects.inspect", { projectId: "employee" });
+      const adopted = await call("projects.inspect", { projectId: "wecom" });
       assert.equal(adopted.pid, running.pid);
       assert.ok(adopted.canStop);
       assert.equal(
-        (await call("projects.start", { projectId: "employee" })).reused,
+        (await call("projects.start", { projectId: "wecom" })).reused,
         true,
       );
-      const stopped = await call("projects.stop", { projectId: "employee" });
+      const stopped = await call("projects.stop", { projectId: "wecom" });
       owned = false;
       assert.equal(stopped.state, "stopped");
       assert.equal(
@@ -251,7 +251,7 @@ async function unusedPort() {
   } catch (error) {
     console.error(error);
     if (owned && app)
-      await call("projects.stop", { projectId: "employee" }).catch(() => {});
+      await call("projects.stop", { projectId: "wecom" }).catch(() => {});
     await close();
     process.exit(1);
   }

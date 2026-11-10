@@ -129,6 +129,8 @@ export interface GitFile {
   reason?: string;
 }
 export interface SubmitCheck {
+  /** Git 管理提测纳入已暂存内容和已跟踪修改，不自动创建工作树。 */
+  fromGit?: boolean;
   repo: string;
   branch: string;
   head: string;
@@ -253,4 +255,5 @@ export interface WorkbenchApi {
   onChanged(callback: () => void): () => void;
   onReviewProgress(callback: (message: string) => void): () => void;
   onNavigate(callback: (destination: { taskId: string }) => void): () => void;
+  onGitDiff(callback: (request: import("./git-client.js").DiffWindowRequest) => void): () => void;
 }

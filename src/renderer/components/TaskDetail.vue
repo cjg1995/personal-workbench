@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { Task } from "../../shared/types";
+import { submitTabForProject } from "../../shared/submit-policy";
 import {
   attempt,
   call,
@@ -79,7 +80,7 @@ function openOperation() {
     navigate("apk", { projectId: props.task.projectId, taskId: props.task.id });
   else if (["app", "erp"].includes(props.task.type))
     navigate("submit", {
-      tab: props.task.type === "app" ? "app" : "erp",
+      tab: submitTabForProject(props.task.projectId || "") || props.task.type,
       projectId: props.task.projectId,
       taskId: props.task.id,
     });
@@ -189,7 +190,9 @@ function openOperation() {
         {{ task.result.commitSkipped ? "跳过提交，当前 HEAD" : "本地提交" }}
       </dt>
       <dd class="path">{{ task.result.localCommit || "尚未生成" }}</dd>
-      <dt>开发分支推送</dt>
+      <dt>
+        {{ task.type === 'app' ? task.params.target + ' 推送' : '开发分支推送' }}
+      </dt>
       <dd>
         {{
           task.result.developmentPushed
@@ -220,7 +223,7 @@ function openOperation() {
       }}
     </p>
     <p v-if="task.result.recoveryDir" class="path">
-      配置和暂存区备份 {{ task.result.recoveryDir }}
+      本地改动恢复备份 {{ task.result.recoveryDir }}
     </p>
     <section v-if="conflicts.length" class="section-rule">
       <h2>冲突文件 {{ conflicts.length }}</h2>
@@ -327,10 +330,13 @@ function openOperation() {
         )
       "
     >
-      <summary>本地配置恢复信息</summary>
+      <summary>本地改动恢复信息</summary>
       <div v-for="r in recoveries.filter((r) => r.id === task.id)" :key="r.id">
         <p class="small">
-          配置 {{ r.restored ? "已经恢复" : "待核实" }} · 阶段 {{ r.phase }}
+          <template v-if="r.protectedFile !== ''">
+            {{ r.protectedFile || 'store/index.js' }}
+            {{ r.restored ? "已经恢复" : "待核实" }} · </template
+          >阶段 {{ r.phase }}
         </p>
         <p class="path">{{ r.directory }}</p>
         <p v-if="r.stashExists" class="notice warning small">
@@ -339,6 +345,7 @@ function openOperation() {
         </p>
         <div class="actions wrap">
           <button
+            v-if="r.protectedFile !== ''"
             @click="
               attempt(
                 () =>

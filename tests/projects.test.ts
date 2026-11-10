@@ -10,6 +10,7 @@ import { ConfigService } from "../src/core/config.js";
 import { Git } from "../src/core/git.js";
 import { TaskManager } from "../src/core/tasks.js";
 import { ProjectService } from "../src/core/projects.js";
+import type { ProjectConfig } from "../src/shared/types.js";
 import {
   processEnvironments,
   processes,
@@ -22,7 +23,7 @@ async function unusedPort() {
   await new Promise<void>((r) => server.close(() => r()));
   return port;
 }
-function fixture(port: number, opener?: (url: string) => Promise<void>) {
+function fixture(port: number, opener?: (url: string, project: ProjectConfig) => Promise<void>) {
   const dir = path.resolve(".local", "run-fixtures", randomUUID());
   fs.mkdirSync(dir, { recursive: true });
   const source = path.join(dir, "source");
@@ -157,6 +158,83 @@ test("端口占用保持未知并阻断，不静默改端口或结束其他服�
     assert.equal(server.listening, true);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
+    f.store.close();
+  }
+});
+
+test("Vue 与 H5 工具链禁用自行打开浏览器，就绪后只调用工作台一次并传递项目", async () => {
+  const opened: { url: string; id: string }[] = [];
+  const f = fixture(await unusedPort(), async (url, project) => {
+    opened.push({ url, id: project.id });
+  });
+  try {
+    const config = f.config.get();
+    const vue = config.projects.find((p) => p.id === "refsys-ui")!;
+    vue.path = f.source;
+    const cli = path.join(f.source, "node_modules/@vue/cli-service/bin/vue-cli-service.js");
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.writeFileSync(cli, "");
+    fs.writeFileSync(path.join(f.source, "package.json"), JSON.stringify({ scripts: { dev: "vue-cli-service serve" } }));
+    fs.writeFileSync(path.join(f.source, "vue.config.js"), "const port = process.env.port || 80; module.exports = {devServer: { port, open: true }};");
+    f.config.save(config);
+    assert.equal(f.service.launchConfig(vue, "vue").env.BROWSER, "none");
+    assert.equal(f.service.launchConfig(config.projects.find((p) => p.id === "employee")!, "h5").env.BROWSER, "none");
+    const started = await f.service.start("employee");
+    assert.equal((await f.tasks.wait(started.taskId!)).state, "success");
+    assert.deepEqual(opened, [{ id: "employee", url: (await f.service.inspect("employee", true)).url }]);
+    assert.equal((await f.service.start("employee")).reused, true);
+    assert.equal(opened.length, 1);
+  } finally {
+    for (const run of await f.service.owned()) await f.service.stop(run.projectId);
+    f.store.close();
+  }
+});
+
+test("推荐官小程序：启动后自动将 mp-weixin 导入开发者工具，失败保留监听并支持重新打开", async () => {
+  const f = fixture(await unusedPort());
+  try {
+    const config = f.config.get();
+    const mini = config.projects.find((p) => p.id === "refsys-wechat")!;
+    mini.path = f.source;
+    const toolDir = path.join(f.dir, "wechat-tools");
+    fs.mkdirSync(toolDir);
+    fs.writeFileSync(path.join(toolDir, "package.json"), JSON.stringify({ type: "commonjs" }));
+    fs.copyFileSync(process.execPath, path.join(toolDir, "node.exe"));
+    config.tools.wechat = path.join(toolDir, "wechat.exe");
+    const calls = path.join(toolDir, "calls.jsonl");
+    const fail = path.join(toolDir, "fail");
+    fs.writeFileSync(path.join(toolDir, "cli.js"), `const fs=require('node:fs');if(fs.existsSync(${JSON.stringify(fail)})){console.error('[error] { code: 10, message: "错误 需要重新登录" }');process.exit(0);}fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(process.argv.slice(2))+'\\n');`);
+    fs.writeFileSync(f.cli, `const fs=require('node:fs'),path=require('node:path');if(process.env.UNI_PLATFORM!=='mp-weixin')process.exit(8);const out=process.env.UNI_OUTPUT_DIR;fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'app.json'),'{}');fs.writeFileSync(path.join(out,'project.config.json'),'{}');console.log('Compiled successfully');setInterval(()=>{},1000);`);
+    f.config.save(config);
+    const target = path.join(f.source, "unpackage/dist/dev/mp-weixin");
+    const first = await f.service.openWechat(mini.id);
+    const task = await f.tasks.wait(first.taskId!);
+    assert.equal(task.state, "success", task.error || "");
+    assert.equal(task.stages.at(-1)?.name, "打开微信开发者工具");
+    assert.equal(task.result.clientOpened, true);
+    assert.equal(task.result.target, target);
+    assert.deepEqual(JSON.parse(fs.readFileSync(calls, "utf8").trim()), ["open", "--project", target]);
+    const run = await f.service.inspect(mini.id, true);
+    assert.equal(run.state, "watching");
+    assert.equal(run.toolOpened, true);
+    assert.equal((await f.service.start(mini.id)).reused, true);
+    await f.service.stop(mini.id);
+    fs.writeFileSync(fail, "fail");
+    const second = await f.service.start(mini.id);
+    const failed = await f.tasks.wait(second.taskId!);
+    assert.equal(failed.state, "partial");
+    assert.equal(failed.stages[2].state, "done");
+    assert.equal(failed.stages[3].state, "failed");
+    assert.match(failed.error || "", /扫码登录/);
+    assert.equal((await f.service.inspect(mini.id, true)).state, "watching");
+    assert.match((await f.service.inspect(mini.id, true)).message || "", /重试/);
+    fs.unlinkSync(fail);
+    const retry = await f.service.openWechat(mini.id);
+    assert.equal((await f.tasks.wait(retry.taskId!)).state, "success");
+    assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, 2);
+    assert.equal((await f.service.inspect(mini.id, true)).pid, second.run.pid);
+  } finally {
+    for (const run of await f.service.owned()) await f.service.stop(run.projectId);
     f.store.close();
   }
 });

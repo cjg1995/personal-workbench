@@ -168,9 +168,8 @@ async function capture(page, file) {
     await page.getByRole("button", { name: "关闭提示" }).click();
     await capture(page, path.join(dir, "work-1280.png"));
     for (const name of [
-      "代码提交",
       "APK 打包",
-      "代码审查",
+      "Git 管理",
       "项目运行",
     ]) {
       await nav(page, name);
@@ -180,9 +179,8 @@ async function capture(page, file) {
         path.join(
           dir,
           {
-            代码提交: "submit",
             "APK 打包": "apk",
-            代码审查: "review",
+            "Git 管理": "review",
             项目运行: "projects",
           }[name] + "-1280.png",
         ),

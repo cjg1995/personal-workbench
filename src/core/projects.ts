@@ -39,6 +39,11 @@ interface Launch {
   kind: ProjectConfig["type"];
   deployment?: string;
   identity: string;
+  prepare?: {
+    exe: string;
+    args: string[];
+    classpathFile: string;
+  };
 }
 const normalize = (s: string | undefined | null) =>
   (s || "").replaceAll("\\", "/").toLowerCase();
@@ -153,7 +158,7 @@ export class ProjectService {
     private changed: () => void = () => {},
     private runnerFile?: string,
     private tomcatHelper?: string,
-    private openReadyUrl?: (url: string) => Promise<void>,
+    private openReadyUrl?: (url: string, project: ProjectConfig) => Promise<void>,
   ) {}
   private ideaOptions() {
     const base = path.join(process.env.APPDATA || "", "JetBrains");
@@ -411,27 +416,46 @@ export class ProjectService {
         p.context || /^\s+context-path:\s*(\S+)/m.exec(serverBlock)?.[1] || "/";
       const profiles = p.springProfile || opts.ACTIVE_PROFILES || "";
       const vm = args(p.vmArgs?.trim() ? p.vmArgs : opts.VM_PARAMETERS || "");
+      const classpathFile = path.join(
+        this.dataDir,
+        "runtime",
+        "spring",
+        hash(normalize(p.path)),
+        "classpath.txt",
+      );
       return {
         exe: java,
         args: [
           ...vm,
           `-Dpersonal.workbench.instance=${marker}`,
-          "-Dmaven.home=" + maven,
-          "-Dclassworlds.conf=" + path.join(maven, "bin", "m2.conf"),
-          "-Dmaven.multiModuleProjectDirectory=" + p.path,
           "-classpath",
-          path.join(boot, jar),
-          "org.codehaus.plexus.classworlds.launcher.Launcher",
-          "spring-boot:run",
-          "-Dspring-boot.run.main-class=com.ruoyi.RuoYiApplication",
-          ...(profiles ? ["-Dspring-boot.run.profiles=" + profiles] : []),
+          path.join(p.path, "target", "classes"),
+          "com.ruoyi.RuoYiApplication",
+          ...(profiles ? ["--spring.profiles.active=" + profiles] : []),
         ],
+        prepare: {
+          exe: java,
+          args: [
+            "-Dmaven.home=" + maven,
+            "-Dclassworlds.conf=" + path.join(maven, "bin", "m2.conf"),
+            "-Dmaven.multiModuleProjectDirectory=" + p.path,
+            "-classpath",
+            path.join(boot, jar),
+            "org.codehaus.plexus.classworlds.launcher.Launcher",
+            "compile",
+            "dependency:build-classpath",
+            "-DskipTests",
+            "-DincludeScope=runtime",
+            "-Dmdep.outputFile=" + classpathFile,
+          ],
+          classpathFile,
+        },
         cwd: p.path,
         env: { JAVA_HOME: path.dirname(path.dirname(java)) },
         port,
         context,
         description:
-          "沿用 RuoYiApplication 主类与现有 Spring Profile，使用项目 Maven 插件编译运行",
+          "Maven 编译与解析依赖后退出，直接运行 RuoYiApplication，保留 JVM 参数、Spring Profile 与 DevTools 热更新",
         kind: p.type,
         identity: p.path,
       };
@@ -463,7 +487,8 @@ export class ProjectService {
         exe: tools.hbNode,
         args: [`--title=workbench-${marker}`, cli, "serve"],
         cwd: p.path,
-        env: {},
+        // Vue CLI honors BROWSER=none even when vue.config.js has open: true.
+        env: { BROWSER: "none" },
         port,
         context: "/",
         description: "原 dev 入口 vue-cli-service serve",
@@ -501,6 +526,7 @@ export class ProjectService {
         UNI_OUTPUT_DIR: output,
         UNI_PLATFORM: platform,
         NODE_ENV: "development",
+        BROWSER: "none",
       },
       port,
       context: "/",
@@ -543,6 +569,7 @@ export class ProjectService {
         cfg.port,
         cfg.context,
         cfg.deployment,
+        ...(cfg.prepare ? [cfg.prepare] : []),
       ]),
     );
   }
@@ -793,7 +820,7 @@ export class ProjectService {
       ),
     );
   }
-  async start(projectId: string) {
+  async start(projectId: string): Promise<{ run: RunInfo; taskId?: string; reused: boolean }> {
     const p = this.config.project(projectId),
       current = await this.inspect(projectId, true);
     if (["running", "watching", "starting", "external"].includes(current.state))
@@ -804,8 +831,10 @@ export class ProjectService {
       );
     if (["unknown", "unconfigured"].includes(current.state))
       throw new Error(current.message || "请先检查运行配置");
-    if (p.type === "wechat")
-      return { run: await this.openWechat(projectId), reused: false };
+    if (p.type === "wechat") {
+      const opened = await this.openWechat(projectId);
+      return { run: current, taskId: opened.taskId, reused: false };
+    }
     const marker = id(),
       cfg = this.launchConfig(p, marker);
     const task = this.tasks.create(
@@ -821,6 +850,7 @@ export class ProjectService {
         ...(this.openReadyUrl && ["h5", "vue"].includes(p.type)
           ? ["打开实际地址"]
           : []),
+        ...(p.type === "uni-wechat" ? ["打开微信开发者工具"] : []),
       ],
     );
     const run: RunInfo = {
@@ -881,8 +911,22 @@ export class ProjectService {
           proc.unref();
           if (!proc.pid) throw new Error("未能创建服务进程");
           run.pid = proc.pid;
-          const actual = (await processes()).find((x) => x.pid === proc.pid);
-          if (!actual) throw new Error("启动进程已退出，查看日志定位");
+          // Windows can briefly return a process before ExecutablePath is available.
+          // Wait for a complete identity rather than persisting an unmanageable PID.
+          let actual: ProcessIdentity | undefined;
+          const identityDeadline = Date.now() + 10000;
+          while (Date.now() < identityDeadline) {
+            const candidate = (await processes()).find((x) => x.pid === proc.pid);
+            if (candidate?.created && candidate.executable && candidate.commandLine?.includes(marker)) {
+              actual = candidate;
+              break;
+            }
+            if (proc.exitCode !== null)
+              throw new Error("启动进程已退出，查看日志定位");
+            ctx.checkStop();
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+          if (!actual) throw new Error("未能核实启动进程的完整身份，查看日志定位");
           run.created = actual.created;
           run.executable = actual.executable;
           this.save(run);
@@ -905,7 +949,7 @@ export class ProjectService {
               Object.assign(run, ready, {
                 message:
                   ready.state === "watching"
-                    ? "编译成功，监听中；开发者工具需独立打开"
+                    ? "编译成功，监听中；正在打开微信开发者工具"
                     : "已从工具输出、HTTP 响应与监听进程确认就绪",
               });
               this.save(run);
@@ -925,14 +969,30 @@ export class ProjectService {
         if (this.openReadyUrl && ["h5", "vue"].includes(p.type))
           await ctx.step("打开实际地址", async () => {
             if (!run.url) throw new Error("服务没有经过核实的地址");
-            await this.openReadyUrl!(run.url);
+            await this.openReadyUrl!(run.url, p);
             ctx.result({ browserOpened: true, url: run.url });
+          });
+        if (p.type === "uni-wechat")
+          await ctx.step("打开微信开发者工具", async () => {
+            const target = await this.wechatTarget(p);
+            const abort = new AbortController();
+            this.tasks.aborts.set(task.id, abort);
+            ctx.checkStop();
+            await this.openWechatTarget(p, target, task.logPath, abort.signal);
+            ctx.result({ target, clientOpened: true });
           });
       } catch (e) {
         if (run.state === "starting") {
           run.state = "unknown";
           run.message = errorText(e);
           this.save(run);
+        } else if (p.type === "uni-wechat") {
+          const current = this.tasks.store.get<RunInfo>("run", projectId);
+          if (current?.state === "watching")
+            this.save({
+              ...current,
+              message: "编译监听仍在运行，微信开发者工具未打开；可点击“打开开发者工具”重试。" + errorText(e),
+            });
         }
         throw e;
       } finally {
@@ -978,19 +1038,19 @@ export class ProjectService {
     await this.stop(projectId);
     return this.start(projectId);
   }
-  async openWechat(projectId: string) {
-    const p = this.config.project(projectId);
+  private async wechatTarget(p: ProjectConfig) {
     if (!["wechat", "uni-wechat"].includes(p.type))
       throw new Error("该项目不是小程序");
-    const tools = this.config.get().tools;
     let target = p.path;
     if (p.type === "uni-wechat") {
-      const run = await this.inspect(projectId, true);
+      const run = await this.inspect(p.id, true);
       if (run.state !== "watching" && run.state !== "external")
         throw new Error("请先完成微信小程序编译监听");
       target = path.join(p.path, "unpackage", "dist", "dev", "mp-weixin");
       if (!fs.existsSync(path.join(target, "app.json")))
         throw new Error("实际编译输出不存在");
+      if (!fs.existsSync(path.join(target, "project.config.json")))
+        throw new Error("微信小程序编译输出缺少 project.config.json");
     } else {
       const config = jsonc(
         fs.readFileSync(path.join(p.path, "project.config.json"), "utf8"),
@@ -998,11 +1058,49 @@ export class ProjectService {
       if (config.compileType !== "miniprogram")
         throw new Error("原生项目类型不是 miniprogram");
     }
-    const root = path.dirname(tools.wechat),
+    return target;
+  }
+  private async openWechatTarget(
+    p: ProjectConfig,
+    target: string,
+    logPath: string,
+    signal?: AbortSignal,
+  ) {
+    const root = path.dirname(this.config.get().tools.wechat),
       node = path.join(root, "node.exe"),
       cli = path.join(root, "cli.js");
     if (!fs.existsSync(node) || !fs.existsSync(cli))
       throw new Error("缺少微信开发者工具原生 CLI");
+    const result = await command(node, [cli, "open", "--project", target], {
+      cwd: root,
+      logPath,
+      timeoutMs: 90000,
+      signal,
+    });
+    // Some WeChat CLI versions report a project-open error but still exit with 0.
+    const output = result.stdout + "\n" + result.stderr;
+    if (/需要重新登录|未登录|not logged in|login required/i.test(output))
+      throw new Error("微信开发者工具需要重新登录，请扫码登录后点击“打开开发者工具”重试");
+    if (/(?:^|\n)\s*(?:\[error\]|(?:Error|错误)\s*[:：])/i.test(output))
+      throw new Error("微信开发者工具未能打开项目，请查看任务日志后重试");
+    const previous = this.tasks.store.get<RunInfo>("run", p.id);
+    this.save({
+      ...previous,
+      projectId: p.id,
+      state: p.type === "wechat" ? "tool-open" : previous?.state || "unknown",
+      branch: previous?.branch || "",
+      toolOpened: true,
+      message: "开发者工具已打开，模拟器与业务结果在原工具内核对",
+    });
+  }
+  async openWechat(projectId: string) {
+    const p = this.config.project(projectId);
+    if (p.type === "uni-wechat") {
+      const run = await this.inspect(projectId, true);
+      if (!["watching", "external"].includes(run.state))
+        return this.start(projectId);
+    }
+    const target = await this.wechatTarget(p);
     const task = this.tasks.create(
       "wechat",
       `打开 ${p.name} 开发者工具`,
@@ -1013,22 +1111,10 @@ export class ProjectService {
     );
     this.tasks.launch(task, async (ctx) => {
       await ctx.step("打开现有开发者工具", async () => {
-        await command(node, [cli, "open", "--project", target], {
-          cwd: root,
-          logPath: task.logPath,
-          timeoutMs: 90000,
-        });
-        const previous = this.tasks.store.get<RunInfo>("run", projectId);
-        const run: RunInfo = {
-          ...previous,
-          projectId,
-          state:
-            p.type === "wechat" ? "tool-open" : previous?.state || "unknown",
-          branch: previous?.branch || "",
-          toolOpened: true,
-          message: "开发者工具已打开，模拟器与业务结果在原工具内核对",
-        };
-        this.save(run);
+        const abort = new AbortController();
+        this.tasks.aborts.set(task.id, abort);
+        ctx.checkStop();
+        await this.openWechatTarget(p, target, task.logPath, abort.signal);
         ctx.result({ target, clientOpened: true });
       });
     });

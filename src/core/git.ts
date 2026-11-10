@@ -1,14 +1,38 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { GitFile, SubmitCheck } from "../shared/types.js";
+import {
+  appSubmitPolicy,
+  type FixedBranchPolicy,
+  type SubmitPolicy,
+} from "../shared/submit-policy.js";
 import { command, type CommandOptions } from "./process.js";
 import { hash } from "./util.js";
 export const protectedFile = "store/index.js";
+export function trackedDirectoryTree(files: string[]) {
+  const directories = new Set<string>();
+  for (const file of files) {
+    let directory = path.posix.dirname(file);
+    while (!directories.has(directoryKey(directory))) {
+      directories.add(directoryKey(directory));
+      if (directory === ".") break;
+      directory = path.posix.dirname(directory);
+    }
+  }
+  return directories;
+}
+const directoryKey = (directory: string) =>
+  process.platform === "win32" ? directory.toLowerCase() : directory;
+export function inTrackedDirectory(file: string, directories: Set<string>) {
+  const parent = path.posix.dirname(file);
+  return parent !== "." && directories.has(directoryKey(parent));
+}
 export function appPathRule(
   file: string,
   tracked: boolean,
+  policy: FixedBranchPolicy = appSubmitPolicy,
 ): { included: boolean; reason?: string } {
-  if (file.toLowerCase() === protectedFile)
+  if (file.toLowerCase() === policy.protectedFile.toLowerCase())
     return { included: false, reason: "本地测试配置，始终保护" };
   if (
     /(^|\/)(\.[^/]+\/|tests?\/|__tests__\/|__mocks__\/|__snapshots__\/|node_modules\/|unpackage\/|dist\/|build\/|coverage\/|logs?\/|tmp\/|temp\/)/i.test(
@@ -27,11 +51,18 @@ export function appPathRule(
   if (tracked) return { included: true };
   if (/\.(md|txt|bat|ps1|sh|patch|diff)$/i.test(file))
     return { included: false, reason: "新文档或脚本不自动纳入" };
+  if (policy.source === "vue")
+    return /^(src|public)\//i.test(file) ||
+      /^(package(?:-lock)?\.json|vue\.config\.js|babel\.config\.js|jsconfig\.json)$/i.test(
+        file,
+      )
+      ? { included: true }
+      : { included: false, reason: "新文件不在源码目录或根文件白名单" };
   if (
-    /^(api|components|js|lib|nativeplugins|pages|static|store|utils)\//i.test(
+    /^(api|components|js|lib|nativeplugins|pages|static|store|utils|plugins|uni_modules|common)\//i.test(
       file,
     ) ||
-    /^(App\.vue|main\.js|mixin\.js|manifest\.json|pages\.json|uni\.scss|icon\.(png|jpg|jpeg|webp))$/i.test(
+    /^(App\.vue|main\.js|mixin\.js|permission\.js|manifest\.json|pages\.json|uni\.scss|icon\.(png|jpg|jpeg|webp))$/i.test(
       file,
     )
   )
@@ -119,18 +150,24 @@ export class Git {
     }
     return files;
   }
-  async fingerprint(repo: string, includeUntracked = true) {
+  async fingerprint(
+    repo: string,
+    includeUntracked = true,
+    protectedPath = protectedFile,
+    exceptFile?: string,
+  ) {
+    const scope = exceptFile ? ["--", ".", ":(exclude,literal)" + exceptFile] : [];
     const [head, branch, index, diff, untracked] = await Promise.all([
       this.text(repo, ["rev-parse", "HEAD"]),
       this.text(repo, ["branch", "--show-current"]),
-      this.run(repo, ["ls-files", "--stage", "-z"]),
+      this.run(repo, ["ls-files", "--stage", "-z", ...scope]),
       this.run(
         repo,
-        ["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"],
+        ["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", ...scope],
         { maxBytes: 1024 * 1024, requireFullOutput: false },
       ),
       includeUntracked
-        ? this.paths(repo, ["ls-files", "--others", "--exclude-standard", "-z"])
+        ? this.paths(repo, ["ls-files", "--others", "--exclude-standard", "-z", ...scope])
         : Promise.resolve<string[]>([]),
     ]);
     const content = untracked.map((p) => {
@@ -147,10 +184,9 @@ export class Git {
         return [p, "missing"];
       }
     });
-    const store = path.join(repo, protectedFile);
-    const localConfig = fs.existsSync(store)
-      ? hash(fs.readFileSync(store))
-      : "";
+    const store = path.join(repo, protectedPath);
+    const localConfig =
+      protectedPath && fs.existsSync(store) ? hash(fs.readFileSync(store)) : "";
     return hash(
       JSON.stringify({
         head,
@@ -164,7 +200,16 @@ export class Git {
       }),
     );
   }
-  async inspect(repo: string, kind: "erp" | "app"): Promise<SubmitCheck> {
+  async inspect(
+    repo: string,
+    selection: "erp" | "app" | SubmitPolicy,
+  ): Promise<SubmitCheck> {
+    const policy =
+      typeof selection === "string"
+        ? selection === "erp"
+          ? { kind: "erp" as const }
+          : appSubmitPolicy
+        : selection;
     const [branch, head, gitDir, commonDir, files, ops] = await Promise.all([
       this.text(repo, ["branch", "--show-current"]),
       this.text(repo, ["rev-parse", "HEAD"]),
@@ -194,7 +239,7 @@ export class Git {
     let ahead = 0;
     let testPath: string | undefined;
     let defaultMessage = "";
-    if (kind === "erp") {
+    if (policy.kind === "erp") {
       const match = /^(feature-|hotfix-)(.+)$/.exec(branch);
       check(
         "开发分支有效",
@@ -251,23 +296,30 @@ export class Git {
         if (!f.included) f.reason = "未暂存的未跟踪文件不加入 ERP 提交";
       }
     } else {
-      check("固定 dev 分支", branch === "dev", branch || "detached HEAD");
-      const flags = await this.text(repo, [
-        "ls-files",
-        "-v",
-        "--",
-        protectedFile,
-      ]);
       check(
-        "本地配置存在且已跟踪",
-        !!flags && fs.existsSync(path.join(repo, protectedFile)),
-        flags || "未找到 store/index.js",
+        `固定 ${policy.branch} 分支`,
+        branch === policy.branch,
+        branch || "detached HEAD",
       );
+      if (policy.protectedFile) {
+        const flags = await this.text(repo, [
+          "ls-files",
+          "-v",
+          "--",
+          policy.protectedFile,
+        ]);
+        check(
+          "本地配置存在且已跟踪",
+          !!flags && fs.existsSync(path.join(repo, policy.protectedFile)),
+          flags || `未找到 ${policy.protectedFile}`,
+        );
+      }
       const stages = await this.text(repo, ["ls-files", "--stage"]);
       check("未使用子模块", !/^160000 /m.test(stages), "子模块不支持自动提交");
-      for (const f of files) Object.assign(f, appPathRule(f.path, f.tracked));
+      for (const f of files)
+        Object.assign(f, appPathRule(f.path, f.tracked, policy));
     }
-    const aheadRef = kind === "app" ? "origin/dev" : upstream;
+    const aheadRef = policy.kind === "app" ? `origin/${policy.branch}` : upstream;
     if (aheadRef) {
       const n = await this.run(
         repo,
@@ -283,13 +335,17 @@ export class Git {
       gitDir,
       commonDir,
       upstream,
-      target: kind === "app" ? "origin/dev" : "origin/test",
+      target: policy.kind === "app" ? `origin/${policy.branch}` : "origin/test",
       testPath,
       files,
       ahead,
       defaultMessage,
       // ERP only stages tracked/index content; unrelated build output must not enter its write precondition.
-      fingerprint: await this.fingerprint(repo, kind === "app"),
+      fingerprint: await this.fingerprint(
+        repo,
+        policy.kind === "app",
+        policy.kind === "app" ? policy.protectedFile : protectedFile,
+      ),
       checks,
       valid: checks.every((c) => c.ok),
     };

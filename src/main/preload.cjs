@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("workbench:navigate", listener);
     return () => ipcRenderer.removeListener("workbench:navigate", listener);
   },
+  onGitDiff: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on("workbench:git-diff", listener);
+    return () => ipcRenderer.removeListener("workbench:git-diff", listener);
+  },
 });

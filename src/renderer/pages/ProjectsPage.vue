@@ -214,11 +214,9 @@ onBeforeUnmount(() => {
                 >
                   打开页面</button
                 ><button
-                  v-if="
-                    p.type === 'uni-wechat' &&
-                    ['watching', 'external'].includes(run(p.id)?.state || '')
-                  "
+                  v-if="p.type === 'uni-wechat'"
                   class="link"
+                  :disabled="busy === p.id || run(p.id)?.state === 'starting'"
                   @click="act('wechat', p.id)"
                 >
                   打开开发者工具</button
@@ -234,7 +232,7 @@ onBeforeUnmount(() => {
                 >
                   {{ p.type === "uni-wechat" ? "停止监听" : "停止" }}</button
                 ><button
-                  v-if="run(p.id)?.state === 'external'"
+                  v-if="run(p.id)?.state === 'external' && p.type !== 'uni-wechat'"
                   class="link"
                   @click="act('ide', p.id)"
                 >
@@ -255,7 +253,11 @@ onBeforeUnmount(() => {
                 @click="act('restart', p.id)"
               >
                 重新启动</button
-              ><button class="link" @click="act('ide', p.id)">
+              ><button
+                v-if="!['wechat', 'uni-wechat'].includes(p.type)"
+                class="link"
+                @click="act('ide', p.id)"
+              >
                 打开 IDE</button
               ><button class="link" @click="act('folder', p.id)">
                 打开目录

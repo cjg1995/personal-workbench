@@ -37,8 +37,9 @@ export const route = ref("work"),
   context = ref<Record<string, any>>({});
 export const toast = ref<{ text: string; error: boolean } | null>(null);
 export const recordModal = ref<Partial<Note> | null>(null);
-export let leaveGuard: (() => Promise<boolean>) | null = null;
-export const setGuard = (guard: (() => Promise<boolean>) | null) => {
+type LeaveGuard = (reason?: "navigate" | "close") => Promise<boolean>;
+export let leaveGuard: LeaveGuard | null = null;
+export const setGuard = (guard: LeaveGuard | null) => {
   leaveGuard = guard;
 };
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -79,7 +80,11 @@ export function saveForm(key: string, value: unknown) {
   void attempt(() => call("form.save", { key, value }));
 }
 export async function navigate(page: string, params: Record<string, any> = {}) {
-  if (leaveGuard && !(await leaveGuard())) return;
+  if (leaveGuard && !(await leaveGuard("navigate"))) return;
+  if (page === "submit") {
+    page = "review";
+    params = { ...params, submit: true };
+  }
   route.value = page;
   context.value = params;
 }

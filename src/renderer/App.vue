@@ -19,10 +19,9 @@ import workbenchIcon from "../../assets/workbench-v2-64.png";
 import RecordDialog from "./components/RecordDialog.vue";
 import NotesPage from "./pages/NotesPage.vue";
 import MonthlyPage from "./pages/MonthlyPage.vue";
-import SubmitPage from "./pages/SubmitPage.vue";
 import ApkPage from "./pages/ApkPage.vue";
 import ProjectsPage from "./pages/ProjectsPage.vue";
-import ReviewPage from "./pages/ReviewPage.vue";
+import ReviewPage from "./pages/GitPage.vue";
 import SettingsPage from "./pages/SettingsPage.vue";
 import TasksPage from "./pages/TasksPage.vue";
 const ready = ref(false),
@@ -42,13 +41,12 @@ const groups = [
     name: "开发",
     items: [
       ["projects", "play", "项目运行"],
-      ["review", "search", "代码审查"],
+      ["review", "branch", "Git 管理"],
     ],
   },
   {
     name: "交付",
     items: [
-      ["submit", "code", "代码提交"],
       ["apk", "box", "APK 打包"],
       ["tapd", "external", "TAPD 入口"],
     ],
@@ -58,10 +56,10 @@ const titles: Record<string, string> = {
   ideas: "灵感待办",
   work: "工作记录",
   monthly: "月度总结",
-  submit: "代码提交",
+  submit: "一键提测",
   apk: "APK 打包",
   projects: "项目运行",
-  review: "代码审查",
+  review: "Git 管理",
   settings: "设置",
   tasks: "任务中心",
 };
@@ -120,7 +118,7 @@ watch(route, () => {
   void workspace.value?.focus({ preventScroll: true });
 });
 onMounted(() => {
-  window.__workbenchCanClose = async () => (leaveGuard ? leaveGuard() : true);
+  window.__workbenchCanClose = async () => (leaveGuard ? leaveGuard("close") : true);
   window.addEventListener("keydown", onKeydown);
   void init();
   window.workbench.onNavigate(() => {
@@ -240,14 +238,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
               v-if="route === 'ideas' || route === 'work'"
               :key="route"
               :kind="route === 'ideas' ? 'idea' : 'work'"
-            /><MonthlyPage v-else-if="route === 'monthly'" /><SubmitPage
-              v-else-if="route === 'submit'"
-            /><ApkPage v-else-if="route === 'apk'" /><ProjectsPage
-              v-else-if="route === 'projects'" /><ReviewPage
-              v-else-if="route === 'review'"
-            /><SettingsPage v-else-if="route === 'settings'" /><TasksPage
+            /><MonthlyPage v-else-if="route === 'monthly'" /><ApkPage v-else-if="route === 'apk'" /><ProjectsPage
+              v-else-if="route === 'projects'" /><SettingsPage v-else-if="route === 'settings'" /><TasksPage
               v-else-if="route === 'tasks'"
             />
+            <KeepAlive><ReviewPage v-if="route === 'review'" /></KeepAlive>
           </div>
         </div>
         <button

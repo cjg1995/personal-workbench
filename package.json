@@ -1,6 +1,6 @@
 {
   "name": "personal-workbench",
-  "version": "0.1.33",
+  "version": "0.1.48",
   "description": "本地个人工作台",
   "private": true,
   "type": "module",
@@ -28,6 +28,7 @@
     "@vitejs/plugin-vue": "6.0.10",
     "electron": "45.0.0",
     "electron-builder": "26.18.0",
+    "monaco-editor": "0.57.0",
     "typescript": "5.9.3",
     "vite": "8.3.5",
     "vue": "3.5.44",
