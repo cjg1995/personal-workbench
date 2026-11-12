@@ -128,7 +128,27 @@
   flex-wrap: wrap;
 }
 .git-toolbar > select {
+  display: inline-flex;
+  align-items: center;
   max-width: 210px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+.git-toolbar > select::picker-icon {
+  width: 14px;
+  height: 14px;
+  margin-left: 6px;
+  align-self: center;
+  color: var(--ink-4);
 }
 .git-toolbar .git-branch-button {
   display: flex;
@@ -477,19 +497,25 @@
   flex-wrap: wrap;
 }
 .git-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   white-space: pre-wrap;
   background: #c95d5710;
   border: 1px solid #c95d5733;
   color: #b4544e;
-  padding: 9px 12px;
+  padding: 6px 8px 6px 12px;
   max-height: 160px;
   overflow: auto;
   flex-shrink: 0;
 }
-.git-error button {
-  float: right;
-  border: 0;
-  background: none;
+.git-error > span {
+  flex: 1;
+  min-width: 0;
+}
+.git-error button.close-button {
+  margin-left: auto;
+  color: inherit;
 }
 .git-more {
   position: relative;
@@ -1334,4 +1360,57 @@ body:has(.diff-window) #app {
   flex-shrink: 0;
   max-height: 180px;
   overflow: auto;
+}
+button.close-button,
+.git-page button.close-button,
+.diff-alert button.close-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-3, #646a73);
+}
+button.close-button:hover:not(:disabled),
+.git-page button.close-button:hover:not(:disabled),
+.diff-alert button.close-button:hover:not(:disabled) {
+  background: var(--hover, rgba(31, 35, 41, 0.06));
+  border-color: transparent;
+  color: var(--ink-1, #1f2329);
+}
+button.close-button.inverse {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  color: rgba(255, 255, 255, 0.78);
+}
+button.close-button.inverse:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.diff-alert {
+  align-items: flex-start;
+}
+.diff-alert > span {
+  flex: 1;
+  min-width: 0;
+}
+.diff-alert button.close-button {
+  margin-left: auto;
+  color: inherit;
+}
+.git-dialog .dialog-head,
+.git-dialog > .section-head {
+  margin-bottom: 0;
+  align-items: center;
+}
+.git-dialog .dialog-head h2,
+.git-dialog > .section-head h2 {
+  margin: 0;
+  font-size: 16px;
 }

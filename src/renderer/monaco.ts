@@ -6,6 +6,8 @@ import "monaco-editor/editor/contrib/folding/browser/folding.js";
 import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching.js";
 import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js";
 import "monaco-editor/editor/contrib/hover/browser/hoverContribution.js";
+import "monaco-editor/editor/contrib/suggest/browser/suggestController.js";
+import "monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js";
 import "monaco-editor/languages/definitions/java/register.js";
 import "monaco-editor/languages/definitions/javascript/register.js";
 import "monaco-editor/languages/definitions/typescript/register.js";

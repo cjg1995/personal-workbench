@@ -21,6 +21,7 @@ import { monaco, language, diffCodeOptions, ideaLineDecorations } from "../monac
 import { DiffScrollbar } from "../diff-scrollbar";
 import VirtualFiles from "../components/VirtualFiles.vue";
 import Icon from "../components/Icon.vue";
+import CloseButton from "../components/CloseButton.vue";
 const request = ref<DiffWindowRequest>(),
   projectName = ref(""),
   files = ref<ChangeFile[]>([]),
@@ -1012,7 +1013,8 @@ onBeforeUnmount(disposeViewer);
       >
     </div>
     <div v-if="error" class="diff-alert" role="alert">
-      {{ error }}<button @click="error = ''">×</button>
+      <span>{{ error }}</span>
+      <CloseButton label="关闭错误" @click="error = ''" />
     </div>
     <div v-if="stale" class="diff-alert">
       文件或暂存区已在外部变化。请刷新后操作；当前内容保留。<button

@@ -207,11 +207,35 @@ export class ConfigService {
     this.store.set("config", "main", value);
     return this.get();
   }
-  check() {
-    return Object.entries(this.get().tools).map(([key, value]) => ({
-      key,
-      path: value,
-      exists: !!value && fs.existsSync(value),
-    }));
+  check(input?: {
+    tools?: Record<string, string>;
+    projects?: { id: string; path: string }[];
+  }) {
+    const saved = this.get();
+    const tools =
+      input?.tools && typeof input.tools === "object" ? input.tools : saved.tools;
+    const projects = Array.isArray(input?.projects)
+      ? input.projects
+      : saved.projects.map((item) => ({ id: item.id, path: item.path }));
+    const present = (value: unknown) =>
+      typeof value === "string" &&
+      !!value &&
+      path.isAbsolute(value) &&
+      fs.existsSync(value);
+    return [
+      ...Object.entries(tools)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+        .map(([key, value]) => ({ key, path: value, exists: present(value) })),
+      ...projects
+        .filter(
+          (item) =>
+            !!item && typeof item.id === "string" && typeof item.path === "string",
+        )
+        .map((item) => ({
+          key: "project:" + item.id,
+          path: item.path,
+          exists: present(item.path),
+        })),
+    ];
   }
 }

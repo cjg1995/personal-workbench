@@ -96,7 +96,7 @@ async function task(id) {
     await api("settings.save", config);
     await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "项目运行", exact: true }).click();
     for (const name of ["客户小程序", "推荐官小程序"]) {
-      const row = page.locator("tr.click-row").filter({ has: page.locator(".project-name", { hasText: name }) });
+      const row = page.locator(".project-item").filter({ has: page.locator(".project-name", { hasText: name }) });
       assert.equal(await row.getByRole("button", { name: "打开 IDE", exact: true }).count(), 0);
       assert.equal(await row.getByRole("button", { name: "打开开发者工具", exact: true }).count(), 1);
     }

@@ -12,6 +12,7 @@ export default defineConfig({
       input: {
         index: path.resolve("src/renderer/index.html"),
         diff: path.resolve("src/renderer/diff.html"),
+        editor: path.resolve("src/renderer/editor.html"),
       },
     },
   },

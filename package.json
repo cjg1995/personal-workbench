@@ -1,6 +1,6 @@
 {
   "name": "personal-workbench",
-  "version": "0.1.48",
+  "version": "0.1.60",
   "description": "本地个人工作台",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "start": "node scripts/start.cjs",
     "dev": "npm run build && npm start",
     "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 .local/tests/tests/*.test.js",
-    "prepackage": "node scripts/prepare-package.cjs",
+    "prepackage": "node scripts/prepare-editor-runtime.cjs && node scripts/prepare-package.cjs",
     "package": "npm run build && electron-builder --win nsis --x64",
     "package:dir": "npm run build && electron-builder --win dir --x64",
     "reinstall": "npm run package && node scripts/reinstall.cjs",
@@ -21,11 +21,13 @@
   },
   "dependencies": {
     "@xmldom/xmldom": "0.9.12",
-    "fflate": "0.8.3"
+    "fflate": "0.8.3",
+    "iconv-lite": "^0.7.0"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
     "@vitejs/plugin-vue": "6.0.10",
+    "@vscode/ripgrep": "^1.18.0",
     "electron": "45.0.0",
     "electron-builder": "26.18.0",
     "monaco-editor": "0.57.0",
@@ -47,6 +49,20 @@
       "assets/workbench-v2-64.png",
       "assets/workbench.svg",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".local/editor-runtime/jdtls",
+        "to": "editor-runtime/jdtls"
+      },
+      {
+        "from": ".local/editor-runtime/jre",
+        "to": "editor-runtime/jre"
+      },
+      {
+        "from": "node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe",
+        "to": "editor-runtime/rg.exe"
+      }
     ],
     "asar": true,
     "electronDist": "node_modules/electron/dist",

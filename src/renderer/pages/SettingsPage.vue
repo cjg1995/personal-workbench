@@ -35,6 +35,10 @@ const labels: Record<string, string> = {
   backupDir: "备份目录",
   template: "月报空白模板（空为内置）",
 };
+const commonTools = ["git", "idea", "maven", "wechat", "tapd"];
+const advancedTools = Object.keys(labels).filter(
+  (key) => key !== "template" && !commonTools.includes(key),
+);
 setGuard(
   async () =>
     JSON.stringify(form.value) === saved.value ||
@@ -45,8 +49,25 @@ setGuard(
     )),
 );
 onBeforeUnmount(() => setGuard(null));
+function pathStatus(key: string, value: string) {
+  if (!value) return { text: "未填写", cls: "warn" };
+  const hit = checks.value.find((item) => item.key === key && item.path === value);
+  if (!hit) return { text: "未检测", cls: "" };
+  return hit.exists
+    ? { text: "存在", cls: "success" }
+    : { text: "不存在", cls: "warn" };
+}
+async function refreshChecks() {
+  checks.value = await call("settings.check", {
+    tools: form.value.tools,
+    projects: form.value.projects.map((item) => ({
+      id: item.id,
+      path: item.path,
+    })),
+  });
+}
 async function check() {
-  checks.value = await call("settings.check");
+  await refreshChecks();
   backups.value = await call("backup.list");
 }
 void attempt(check);
@@ -64,6 +85,7 @@ async function save() {
 function discard() {
   form.value = JSON.parse(saved.value);
   notify("已放弃未保存修改");
+  void attempt(refreshChecks);
 }
 async function pickTool(key: string) {
   await attempt(async () => {
@@ -79,7 +101,22 @@ async function pickTool(key: string) {
         ? "directory"
         : "file",
     });
-    if (value) (form.value.tools as any)[key] = value;
+    if (value) {
+      (form.value.tools as any)[key] = value;
+      await refreshChecks();
+    }
+  });
+}
+async function pickProject(project: { path: string }) {
+  await attempt(async () => {
+    const value = await call<string | null>("settings.pick-path", {
+      current: project.path,
+      target: "directory",
+    });
+    if (value) {
+      project.path = value;
+      await refreshChecks();
+    }
   });
 }
 async function createBackup() {
@@ -148,32 +185,26 @@ async function restore() {
   </div>
   <section v-if="tab === 'projects'">
     <h2>工作目录 · {{ form.projects.length }} 个</h2>
-    <p class="small muted">
-      类型和项目关联保持登记边界。未填写的高级启动字段从实际项目及 IDEA
-      配置读取。
-    </p>
+    <p class="small muted">未填写的高级字段沿用项目和 IDEA 配置。</p>
     <details v-for="p in form.projects" :key="p.id" class="settings-project">
       <summary>
         {{ p.name }} <span>{{ p.group }} · {{ p.type }}</span>
+        <span
+          class="pill"
+          :class="pathStatus('project:' + p.id, p.path).cls"
+          >{{ pathStatus("project:" + p.id, p.path).text }}</span
+        >
       </summary>
       <label class="form-line"
         ><span>显示名称</span><input v-model="p.name"
       /></label>
       <div class="form-line">
         <span>工作目录</span
-        ><input v-model="p.path" :aria-label="p.id + ' 工作目录'" /><button
-          @click="
-            attempt(async () => {
-              const value = await call('settings.pick-path', {
-                current: p.path,
-                target: 'directory',
-              });
-              if (value) p.path = value;
-            })
-          "
-        >
-          选择…
-        </button>
+        ><input
+          v-model="p.path"
+          :aria-label="p.id + ' 工作目录'"
+          @change="refreshChecks"
+        /><button @click="pickProject(p)">选择…</button>
       </div>
       <label v-if="p.android" class="form-line"
         ><span>Android 工程</span><input v-model="p.android" /></label
@@ -218,33 +249,38 @@ async function restore() {
     </details>
   </section>
   <section v-else-if="tab === 'tools'" class="form-section">
-    <h2>底层工具和客户端</h2>
-    <p class="small muted">
-      业务流程由工作台自身执行，原 BAT 与业务 PowerShell 脚本不在配置中。
-    </p>
-    <div
-      v-for="key in Object.keys(labels).filter((k) => k !== 'template')"
-      :key="key"
-      class="form-line"
-    >
+    <h2>常用工具</h2>
+    <div v-for="key in commonTools" :key="key" class="form-line">
       <span>{{ labels[key] }}</span
       ><input
         v-model="(form.tools as any)[key]"
         :aria-label="labels[key]"
+        @change="refreshChecks"
       /><button @click="pickTool(key)">选择…</button
       ><span
-        v-if="
-          checks.find((c) => c.key === key)?.path === (form.tools as any)[key]
-        "
         class="pill"
-        :class="checks.find((c) => c.key === key)?.exists ? 'success' : 'warn'"
-        >{{
-          checks.find((c) => c.key === key)?.exists ? "路径存在" : "待配置"
-        }}</span
+        :class="pathStatus(key, (form.tools as any)[key]).cls"
+        >{{ pathStatus(key, (form.tools as any)[key]).text }}</span
       >
     </div>
+    <details class="section-rule">
+      <summary>进阶工具与目录</summary>
+      <div v-for="key in advancedTools" :key="key" class="form-line">
+        <span>{{ labels[key] }}</span
+        ><input
+          v-model="(form.tools as any)[key]"
+          :aria-label="labels[key]"
+          @change="refreshChecks"
+        /><button @click="pickTool(key)">选择…</button
+        ><span
+          class="pill"
+          :class="pathStatus(key, (form.tools as any)[key]).cls"
+          >{{ pathStatus(key, (form.tools as any)[key]).text }}</span
+        >
+      </div>
+    </details>
     <div class="actions">
-      <button @click="attempt(check, '检测完成')">重新检测已保存路径</button>
+      <button @click="attempt(check, '检测完成')">重新检测</button>
     </div>
   </section>
   <section v-else-if="tab === 'data'">
@@ -259,15 +295,11 @@ async function restore() {
         打开目录
       </button>
     </div>
-    <p class="small muted">
-      数据保存在当前 Windows 用户可写目录。版本
-      {{ model.version }}，未配置云同步。
-    </p>
+    <p class="small muted">版本 {{ model.version }}。数据只保存在本机。</p>
     <section class="section-rule">
       <h2>备份与恢复</h2>
       <p class="muted">
-        一致备份包含记录、配置、月报草稿、审查与 TXT
-        原文快照。恢复前会保存当前数据副本，请先结束任务并停止工作台启动的服务。
+        备份包含记录、配置、月报、审查和 TXT 快照。恢复前会先保护当前数据，并要求没有正在运行的任务。
       </p>
       <div class="actions">
         <button class="primary" :disabled="busy" @click="createBackup">
@@ -276,7 +308,7 @@ async function restore() {
           选择备份并预览
         </button>
       </div>
-      <p class="small muted">APK、源码和日志保留路径引用，不包含实际文件。</p>
+      <p class="small muted">不含 APK、源码和日志文件本身。</p>
       <table v-if="backups.length" class="table">
         <thead>
           <tr>
@@ -365,20 +397,12 @@ async function restore() {
         placeholder="使用应用内置空白模板"
       /><button @click="pickTool('template')">选择…</button>
     </div>
-    <p class="small muted">
-      自选模板需保留内置模板的五个章节槽位。首版不提供通用模板编辑器。
-    </p>
+    <p class="small muted">自选模板需保留五个章节槽位。</p>
     <div class="actions">
       <button @click="attempt(() => call('settings.template'))">
-        查看已保存的空白模板
+        查看空白模板
       </button>
     </div>
-    <details class="section-rule">
-      <summary>模板边界</summary>
-      <p class="small muted">
-        自选模板需保留内置模板的五个章节槽位。首版不提供通用模板编辑器。
-      </p>
-    </details>
   </section>
   <div v-if="dirty" class="save-bar">
     <span class="save-hint">配置有未保存的修改</span

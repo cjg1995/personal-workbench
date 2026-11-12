@@ -13,7 +13,7 @@ import {
   leaveGuard,
   setGuard,
 } from "../state";
-import Icon from "./Icon.vue";
+import CloseButton from "./CloseButton.vue";
 const dialog = ref<HTMLDialogElement>();
 const form = ref({ ...recordModal.value } as Partial<Note>);
 const busy = ref(false);
@@ -84,14 +84,7 @@ function setKind(value: "idea" | "work") {
     <form @submit.prevent="save">
       <div class="dialog-head">
         <h2 id="record-dialog-title">新建记录</h2>
-        <button
-          type="button"
-          class="dialog-close"
-          aria-label="关闭记录窗口"
-          @click="close"
-        >
-          <Icon name="close" :size="15" />
-        </button>
+        <CloseButton label="关闭记录窗口" @click="close" />
       </div>
       <div class="tabs" role="group" aria-label="记录类型">
         <button

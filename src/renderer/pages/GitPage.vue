@@ -26,6 +26,7 @@ import VirtualFiles from "../components/VirtualFiles.vue";
 import CommitGraph from "../components/CommitGraph.vue";
 import GitCommitPanel from "../components/GitCommitPanel.vue";
 import SubmitPage from "./SubmitPage.vue";
+import CloseButton from "../components/CloseButton.vue";
 const projectId = ref(context.value.projectId || "homeproject"),
   tab = ref("changes"),
   state = ref<RepositoryState>(),
@@ -428,6 +429,13 @@ function open(kind: string, values: Record<string, any> = {}) {
     ...values,
   };
   menu.value = undefined;
+  void nextTick(() =>
+    document
+      .querySelector<HTMLElement>(
+        ".git-dialog input, .git-dialog select, .git-dialog textarea",
+      )
+      ?.focus(),
+  );
 }
 async function submitDialog() {
   if (dialog.value === "compare") {
@@ -870,15 +878,14 @@ onBeforeUnmount(() => {
       }}</span>
     </div>
     <div v-if="error || statusError" class="git-error" role="alert">
-      {{ error || statusError
-      }}<button
+      <span>{{ error || statusError }}</span>
+      <CloseButton
+        label="关闭错误"
         @click="
           error = '';
           statusError = '';
         "
-      >
-        ×
-      </button>
+      />
     </div>
     <div v-if="tab === 'changes'" class="git-changes-layout">
       <section class="git-changes-panel">
@@ -1037,9 +1044,7 @@ onBeforeUnmount(() => {
               比较两个提交
             </button>
           </div>
-          <p class="git-help">
-            {{ details.files.length }} 个修改文件 · 双击 / Enter 查看
-          </p>
+          <p class="git-help">{{ details.files.length }} 个文件</p>
           <VirtualFiles
             :files="detailFiles"
             @select="selected = $event.path"
@@ -1132,8 +1137,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-else class="git-stash-panel">
       <div class="git-filterbar">
-        <span>临时保存当前修改，稍后恢复</span
-        ><button :disabled="repositoryBusy" @click="open('stash-push')">
+        <button :disabled="repositoryBusy" @click="open('stash-push')">
           Stash Push
         </button>
       </div>
@@ -1302,7 +1306,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="commitOpen" class="git-dialog-overlay" @click.self="!busy && (commitOpen = false)">
       <section class="git-dialog git-commit-modal" role="dialog" aria-modal="true" aria-label="本地提交">
-        <div class="section-head"><h2>本地提交</h2><button aria-label="关闭提交窗口" :disabled="busy" @click="commitOpen = false">×</button></div>
+        <div class="section-head"><h2>本地提交</h2><CloseButton label="关闭提交窗口" :disabled="busy" @click="commitOpen = false" /></div>
         <GitCommitPanel v-model:message="message" v-model:amend="amend"
           :staged-count="stagedCount" :busy="repositoryBusy" :upstream="state?.upstream"
           :visible-count="files.length" :checked-count="checked.length"
@@ -1312,7 +1316,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="submitOpen" class="git-dialog-overlay" @click.self="closeSubmit">
       <section class="git-dialog git-submit-dialog" role="dialog" aria-modal="true" aria-label="一键提测">
-        <div class="section-head"><h2>一键提测 · {{ model.config?.projects.find(p => p.id === projectId)?.name }}</h2><button aria-label="关闭提测窗口" @click="closeSubmit">×</button></div>
+        <div class="section-head"><h2>一键提测 · {{ model.config?.projects.find(p => p.id === projectId)?.name }}</h2><CloseButton label="关闭提测窗口" @click="closeSubmit" /></div>
         <div class="git-submit-content"><SubmitPage ref="submitPage" :key="projectId" :project-id="projectId" :task-id="submitTaskId" /></div>
       </section>
     </div>
@@ -1322,20 +1326,23 @@ onBeforeUnmount(() => {
       @click.self="!busy && (dialog = '')"
     >
       <form class="git-dialog" @submit.prevent="submitDialog">
-        <h2>
-          {{
-            {
-              push: "Push",
-              pull: "Pull",
-              "stash-push": "Stash Push",
-              "create-branch": "新建分支",
-              "rename-branch": "重命名分支",
-              merge: "Merge 到当前分支",
-              rebase: "Rebase 当前分支到…",
-              compare: "比较版本",
-            }[dialog] || dialog
-          }}
-        </h2>
+        <div class="dialog-head">
+          <h2>
+            {{
+              {
+                push: "Push",
+                pull: "Pull",
+                "stash-push": "Stash Push",
+                "create-branch": "新建分支",
+                "rename-branch": "重命名分支",
+                merge: "Merge 到当前分支",
+                rebase: "Rebase 当前分支到…",
+                compare: "比较版本",
+              }[dialog] || dialog
+            }}
+          </h2>
+          <CloseButton label="关闭" :disabled="busy" @click="dialog = ''" />
+        </div>
         <p class="git-help">
           当前项目
           {{ model.config?.projects.find((p) => p.id === projectId)?.name }} ·
@@ -1375,10 +1382,7 @@ onBeforeUnmount(() => {
               placeholder="临时保存说明" /></label
           ><label class="git-checkbox"
             ><input v-model="form.untracked" type="checkbox" />包含未跟踪文件</label
-          >
-          <p class="git-help">
-            Stash Apply 应用后保留记录；Stash Pop 成功应用后移除记录。
-          </p></template
+          ></template
         >
         <template v-else-if="dialog === 'compare'"
           ><label
@@ -1408,7 +1412,7 @@ onBeforeUnmount(() => {
             ><input v-model="form.noFF" type="checkbox" />创建合并提交（--no-ff）</label
           >
           <p v-if="dialog === 'rebase'" class="git-help">
-            Rebase 会重写历史。已推送分支需先与协作者确认。
+            Rebase 会重写提交历史。已推送的分支请先与协作者确认。
           </p></template
         >
         <template v-else

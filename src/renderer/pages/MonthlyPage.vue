@@ -360,6 +360,15 @@ async function exportFile() {
           >
         </label>
       </div>
+      <p v-if="undated" class="inline-note warn">
+        {{ undated }} 条记录日期待补充，尚未计入本月。<button
+          class="link"
+          @click="navigate('work', { tab: 'undated' })"
+        >
+          去补日期
+        </button>
+      </p>
+      <div class="material-scroll">
       <p v-if="!materials.length" class="empty compact">
         本月还没有日期明确的工作记录。
       </p>
@@ -381,9 +390,13 @@ async function exportFile() {
           ></label
         >
       </div>
+      </div>
       <div v-if="materials.length" class="material-actions">
         <label class="field-stack"
-          ><select v-model="section" aria-label="放入章节" title="放入章节">
+          ><select v-model="section" aria-label="放入章节" :title="section">
+            <button type="button">
+              <selectedcontent></selectedcontent>
+            </button>
             <option v-for="s in sections" :key="s">{{ s }}</option>
           </select></label
         ><button
@@ -394,14 +407,6 @@ async function exportFile() {
           {{ selected.length ? "加入正文 " + selected.length : "加入正文" }}
         </button>
       </div>
-      <p v-if="undated" class="inline-note warn">
-        {{ undated }} 条工作记录日期待补充，尚未计入本月。<button
-          class="link"
-          @click="navigate('work', { tab: 'undated' })"
-        >
-          去补日期 →
-        </button>
-      </p>
     </section>
     <section>
       <h2 class="doc-first">一、工作成果</h2>
@@ -434,9 +439,7 @@ async function exportFile() {
               >正在处理截图…</span
             ><span v-else>粘贴钉钉「工作内容汇总」截图</span></span
           >
-          <small class="shot-tip"
-            >页面任意位置 Ctrl+V 或拖入图片，导出 Word 会自动带上，不用再手工排版。</small
-          >
+          <small class="shot-tip">Ctrl+V 或拖入，导出 Word 时自动带上。</small>
           <button class="link small" @click="pickShots">选择图片…</button>
         </div>
         <p v-if="imageError" class="inline-note warn">{{ imageError }}</p>

@@ -30,7 +30,10 @@ import { ApkService } from "../core/apk.js";
 import { BackupService } from "../core/backup.js";
 import { ReviewService } from "../core/review.js";
 import { ProjectService } from "../core/projects.js";
+import { readLogTail } from "../core/log-tail.js";
 import { ProjectBrowser } from "../core/project-browser.js";
+import { EditorFiles, projectFile } from "../core/editor-files.js";
+import { JavaLanguageService } from "../core/java-language-service.js";
 import {
   activateClientWindow,
   clientProcesses,
@@ -121,6 +124,17 @@ if (!app.requestSingleInstanceLock()) {
       watchTimer?: ReturnType<typeof setTimeout>;
     }
   >();
+  const editorWindows = new Map<string, {
+    window: BrowserWindow;
+    projectId: string;
+    language?: JavaLanguageService;
+    watchers: Map<string, fs.FSWatcher>;
+    projectWatcher?: fs.FSWatcher;
+    projectWatchTimer?: ReturnType<typeof setTimeout>;
+  }>();
+  const editorFiles = new EditorFiles(app.isPackaged
+    ? path.join(process.resourcesPath, "editor-runtime", "rg.exe")
+    : path.resolve(here, "../../node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe"));
   let lastActivation: { taskId: string; at: number } | undefined;
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   const store = new Store(path.join(dataDir, "workbench.sqlite"));
@@ -172,6 +186,11 @@ if (!app.requestSingleInstanceLock()) {
   });
   const diffEntry = path.resolve(here, "../renderer/diff.html");
   const diffAllowed = pathToFileURL(diffEntry).href;
+  const editorEntry = path.resolve(here, "../renderer/editor.html");
+  const editorAllowed = pathToFileURL(editorEntry).href;
+  const editorRuntime = app.isPackaged
+    ? path.join(process.resourcesPath, "editor-runtime")
+    : path.resolve(here, "../../.local/editor-runtime");
   async function watchDiff(
     source: BrowserWindow | undefined,
     repo: string,
@@ -283,6 +302,103 @@ if (!app.requestSingleInstanceLock()) {
     await child.loadFile(diffEntry);
     return { opened: true };
   }
+  async function openEditor(projectId: string) {
+    const project = knownProject(projectId);
+    if (!fs.existsSync(project.path) || !fs.statSync(project.path).isDirectory())
+      throw new Error("项目目录不存在");
+    const key = path.resolve(project.path).toLowerCase();
+    const existing = editorWindows.get(key);
+    if (existing && !existing.window.isDestroyed()) {
+      if (existing.window.isMinimized()) existing.window.restore();
+      existing.window.show();
+      existing.window.focus();
+      return { reused: true };
+    }
+    const child = new BrowserWindow({
+      width: 1540,
+      height: 940,
+      minWidth: 820,
+      minHeight: 530,
+      title: `${project.name} · 代码编辑器`,
+      icon: windowIcon,
+      show: false,
+      backgroundColor: "#f7f8fa",
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(here, "../preload.cjs"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+      },
+    });
+    const item: (typeof editorWindows extends Map<string, infer T> ? T : never) = {
+      window: child, projectId, watchers: new Map(),
+    };
+    editorWindows.set(key, item);
+    if (["tomcat", "spring"].includes(project.type)) {
+      item.language = new JavaLanguageService(project, editorRuntime, dataDir,
+        (method, params) => {
+          if (!child.isDestroyed()) child.webContents.send("workbench:editor-lsp", method, params);
+        }, config.get().tools.maven);
+      void item.language.start().catch(() => {});
+      const fileEvents = new Map<string, number>();
+      try {
+        item.projectWatcher = fs.watch(project.path, { recursive: true }, (_event, filename) => {
+          if (!filename) return;
+          const relative = filename.toString().replaceAll("\\", "/");
+          if (/(?:^|\/)(?:\.git|\.idea|\.settings|node_modules|target|build|dist)(?:\/|$)/.test(relative) ||
+              !/\.(?:java|xml|gradle|kts|properties)$/.test(relative)) return;
+          const target = path.resolve(project.path, relative);
+          if (!inside(project.path, target)) return;
+          fileEvents.set(pathToFileURL(target).href, fs.existsSync(target) ? 2 : 3);
+          editorFiles.invalidate(project.path);
+          clearTimeout(item.projectWatchTimer);
+          item.projectWatchTimer = setTimeout(() => {
+            item.language?.watched([...fileEvents].map(([uri, type]) => ({ uri, type })));
+            fileEvents.clear();
+          }, 250);
+        });
+        item.projectWatcher.on("error", () => {});
+      } catch { /* Open-file watchers and save fingerprint checks remain available. */ }
+    }
+    child.removeMenu();
+    child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    child.webContents.on("will-navigate", (event, url) => {
+      if (url !== editorAllowed) event.preventDefault();
+    });
+    child.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.key === "F11") {
+        event.preventDefault();
+        child.setFullScreen(!child.isFullScreen());
+      }
+    });
+    child.once("ready-to-show", () => {
+      child.maximize();
+      child.show();
+      child.focus();
+    });
+    let closing = false;
+    child.on("close", (event) => {
+      if (exiting || closing) return;
+      event.preventDefault();
+      void child.webContents.executeJavaScript(
+        "window.__workbenchCanClose ? window.__workbenchCanClose() : true",
+      ).then((allowed) => {
+        if (allowed && !child.isDestroyed()) { closing = true; child.close(); }
+      }).catch(() => {});
+    });
+    child.once("closed", () => {
+      for (const watcher of item.watchers.values()) watcher.close();
+      item.projectWatcher?.close();
+      clearTimeout(item.projectWatchTimer);
+      editorFiles.cancelSearch(project.path);
+      void item.language?.stop();
+      editorWindows.delete(key);
+    });
+    await child.loadFile(editorEntry);
+    return { opened: true };
+  }
   const activateTask = (taskId: string) => {
     const task = store.get<import("../shared/types.js").Task>("task", taskId);
     if (!task || !["run", "wechat"].includes(task.type)) return;
@@ -389,6 +505,127 @@ if (!app.requestSingleInstanceLock()) {
   };
   async function action(name: string, p: any = {}, source?: BrowserWindow) {
     switch (name) {
+      case "editor.context": {
+        const item = [...editorWindows.values()].find((value) => value.window === source);
+        if (!item) throw new Error("代码编辑器窗口不存在");
+        const project = knownProject(item.projectId);
+        return { projectId: project.id, projectName: project.name, root: project.path,
+          java: !!item.language, status: item.language?.status || "unavailable",
+          error: item.language?.error || "" };
+      }
+      case "editor.tree":
+      case "editor.read":
+      case "editor.version":
+      case "editor.save":
+      case "editor.file-search":
+      case "editor.code-files":
+      case "editor.text-search":
+      case "editor.previews":
+      case "editor.watch":
+      case "editor.unwatch":
+      case "editor.lsp-open":
+      case "editor.lsp-change":
+      case "editor.lsp-save":
+      case "editor.lsp-close":
+      case "editor.lsp-resolve":
+      case "editor.lsp-request":
+      case "editor.lsp-classfile":
+      case "editor.confirm-save":
+      case "editor.confirm-conflict": {
+        const item = [...editorWindows.values()].find((value) => value.window === source);
+        if (!item) throw new Error("代码编辑器窗口不存在");
+        const project = knownProject(item.projectId);
+        const root = project.path;
+        if (name === "editor.tree") return editorFiles.tree(root, String(p.directory || ""));
+        if (name === "editor.file-search") return editorFiles.findFiles(root, String(p.query || ""));
+        if (name === "editor.code-files") return (await editorFiles.files(root))
+          .filter((file) => /\.(?:ts|tsx|js|jsx)$/i.test(file)).slice(0, 3000);
+        if (name === "editor.text-search") return editorFiles.search(root, String(p.query || ""));
+        if (name === "editor.previews") return editorFiles.previews(root, Array.isArray(p.locations) ? p.locations : []);
+        if (name === "editor.confirm-save") {
+          const result = await dialog.showMessageBox(source!, {
+            type: "question", title: "保存修改", message: "文件有未保存的修改",
+            detail: String(p.file || ""), buttons: ["保存", "放弃", "取消"],
+            defaultId: 0, cancelId: 2, noLink: true,
+          });
+          return ["save", "discard", "cancel"][result.response] || "cancel";
+        }
+        if (name === "editor.confirm-conflict") {
+          const result = await dialog.showMessageBox(source!, {
+            type: "warning", title: "文件已变化", message: "文件已被其他程序修改",
+            detail: `${String(p.file || "")}\n选择重新加载会放弃本编辑器中该文件的修改。`,
+            buttons: ["取消", "重新加载", "覆盖外部修改"],
+            defaultId: 0, cancelId: 0, noLink: true,
+          });
+          return ["cancel", "reload", "overwrite"][result.response] || "cancel";
+        }
+        if (name === "editor.lsp-classfile") {
+          if (!item.language || typeof p.uri !== "string" || !p.uri.startsWith("jdt://") || p.uri.length > 4000)
+            throw new Error("虚拟源文件请求无效");
+          return item.language.request("java/classFileContents", { uri: p.uri });
+        }
+        const file = projectFile(root, String(p.file || ""));
+        if (name === "editor.read") return editorFiles.read(root, String(p.file));
+        if (name === "editor.version") return editorFiles.version(root, String(p.file));
+        if (name === "editor.save") {
+          if (typeof p.text !== "string" || p.text.length > 8 * 1024 * 1024 ||
+            !/^[a-f\d]{64}$/i.test(String(p.version || ""))) throw new Error("保存参数无效");
+          const result = await editorFiles.save(root, p);
+          if (!result.conflict) item.language?.save(file, p.text);
+          return result;
+        }
+        if (name === "editor.watch") {
+          if (item.watchers.has(file)) return true;
+          const watcher = fs.watch(path.dirname(file), (_event, filename) => {
+            if (filename && filename.toString().toLowerCase() !== path.basename(file).toLowerCase()) return;
+            if (!source?.isDestroyed()) source?.webContents.send("workbench:editor-disk", p.file);
+          });
+          watcher.on("error", () => {});
+          item.watchers.set(file, watcher);
+          return true;
+        }
+        if (name === "editor.unwatch") {
+          item.watchers.get(file)?.close();
+          item.watchers.delete(file);
+          return true;
+        }
+        if (!item.language || !file.toLowerCase().endsWith(".java"))
+          throw new Error("此文件没有 Java 语义服务");
+        if (name === "editor.lsp-open") { item.language.open(file, String(p.text || "")); return true; }
+        if (name === "editor.lsp-change") { item.language.change(file, String(p.text || "")); return true; }
+        if (name === "editor.lsp-save") { item.language.save(file, String(p.text || "")); return true; }
+        if (name === "editor.lsp-close") { item.language.close(file); return true; }
+        if (name === "editor.lsp-resolve") return item.language.request("completionItem/resolve", p.item);
+        if (name === "editor.lsp-request") {
+          const position = { line: Number(p.line) - 1, character: Number(p.column) - 1 };
+          if (!Number.isInteger(position.line) || position.line < 0 ||
+            !Number.isInteger(position.character) || position.character < 0)
+            throw new Error("代码位置无效");
+          const positionParams = { textDocument: { uri: pathToFileURL(file).href }, position };
+          const methods: Record<string, string> = {
+            definition: "textDocument/definition",
+            implementation: "textDocument/implementation",
+            references: "textDocument/references",
+            completion: "textDocument/completion",
+            hover: "textDocument/hover",
+            signature: "textDocument/signatureHelp",
+            hierarchy: "textDocument/prepareTypeHierarchy",
+            super: "java/findLinks",
+            supertypes: "typeHierarchy/supertypes",
+          };
+          const method = methods[String(p.kind || "")];
+          if (!method) throw new Error("不支持的语义请求");
+          const params = p.kind === "references"
+            ? { ...positionParams, context: { includeDeclaration: false } }
+            : p.kind === "super"
+              ? { type: "superImplementation", position: positionParams }
+              : p.kind === "supertypes"
+                ? { item: p.item }
+              : positionParams;
+          return item.language.request(method, params);
+        }
+        throw new Error("不支持的代码编辑操作");
+      }
       case "git.window-context": {
         const item = [...diffWindows.values()].find((v) => v.window === source);
         if (!item) throw new Error("对比窗口不存在");
@@ -872,6 +1109,8 @@ if (!app.requestSingleInstanceLock()) {
       }
       case "projects.folder":
         return openPath(knownProject(p.projectId).path);
+      case "projects.editor":
+        return openEditor(knownProject(p.projectId).id);
       case "projects.ide": {
         const project = knownProject(p.projectId),
           exe = config.get().tools.idea;
@@ -894,17 +1133,24 @@ if (!app.requestSingleInstanceLock()) {
       }
       case "projects.log": {
         const run = store.get<RunInfo>("run", knownProject(p.projectId).id);
-        if (!run?.logPath || !fs.existsSync(run.logPath))
+        const active =
+          !!run &&
+          ["starting", "running", "watching", "stopping", "tool-open"].includes(
+            run.state,
+          );
+        if (!run?.logPath || !fs.existsSync(run.logPath)) {
+          if (active)
+            return {
+              text: "",
+              offset: 0,
+              path: run?.logPath || "",
+              reset: false,
+              active: true,
+            };
           throw new Error("没有工作台日志，请在原工具查看外部实例");
-        const bytes = fs.readFileSync(run.logPath);
-        return {
-          text: redact(
-            bytes
-              .subarray(Math.max(0, bytes.length - 1024 * 1024))
-              .toString("utf8"),
-          ),
-          path: run.logPath,
-        };
+        }
+        const tail = readLogTail(run.logPath, Number(p.offset) || 0);
+        return { ...tail, text: redact(tail.text), path: run.logPath, active };
       }
       case "review.open": {
         const project = knownProject(p.projectId);
@@ -1071,7 +1317,7 @@ if (!app.requestSingleInstanceLock()) {
         );
       }
       case "settings.check":
-        return config.check();
+        return config.check(p);
       case "settings.save": {
         if (tasks.active().length)
           throw new Error("有运行或待确认任务，完成后再修改工具与项目配置");
@@ -1163,6 +1409,26 @@ if (!app.requestSingleInstanceLock()) {
           String(p.message || "").slice(0, 4000),
           String(p.confirm || "确认").slice(0, 50),
         );
+      case "ui.choose": {
+        const buttons = (Array.isArray(p.buttons) ? p.buttons : ["取消"])
+          .map((item: unknown) => String(item).slice(0, 20))
+          .filter(Boolean)
+          .slice(0, 4);
+        if (!buttons.length) buttons.push("取消");
+        const result = await dialog.showMessageBox(win, {
+          type: "question",
+          title: String(p.title || "确认").slice(0, 100),
+          message: String(p.message || "").slice(0, 4000),
+          buttons,
+          defaultId: Math.min(
+            Math.max(0, Number(p.defaultId ?? buttons.length - 1) || 0),
+            buttons.length - 1,
+          ),
+          cancelId: 0,
+          noLink: true,
+        });
+        return result.response;
+      }
       case "clipboard.text":
         clipboard.writeText(String(p.text || ""));
         return { copied: true };
@@ -1264,7 +1530,10 @@ if (!app.requestSingleInstanceLock()) {
       const diff = [...diffWindows.values()].find(
         (item) => item.window.webContents === event.sender,
       );
-      const source = diff?.window || win;
+      const editorWindow = [...editorWindows.values()].find(
+        (item) => item.window.webContents === event.sender,
+      );
+      const source = diff?.window || editorWindow?.window || win;
       const diffActions = new Set([
         "git.window-context",
         "git.confirm-leave",
@@ -1287,10 +1556,11 @@ if (!app.requestSingleInstanceLock()) {
         diffActions.has(name) &&
         (name === "git.window-context" ||
           payload?.projectId === diff.request.projectId);
+      const validEditor = !!editorWindow && typeof name === "string" && name.startsWith("editor.");
       if (
-        (event.sender !== win.webContents && !validDiff) ||
+        (event.sender !== win.webContents && !validDiff && !validEditor) ||
         event.senderFrame !== source.webContents.mainFrame ||
-        event.senderFrame.url !== (diff ? diffAllowed : allowed)
+        event.senderFrame.url !== (diff ? diffAllowed : editorWindow ? editorAllowed : allowed)
       )
         return { ok: false, error: "请求来源无效" };
       // Bootstrap only reads synchronously; it can keep the UI current during the backup wait.
@@ -1321,6 +1591,28 @@ if (!app.requestSingleInstanceLock()) {
     win.webContents.session.setPermissionRequestHandler(
       (_webContents, _permission, callback) => callback(false),
     );
+    let runLogKeys = false;
+    ipcMain.on("workbench:run-log-keys", (event, active) => {
+      if (event.sender !== win.webContents) {
+        event.returnValue = false;
+        return;
+      }
+      runLogKeys = !!active;
+      event.returnValue = true;
+    });
+    win.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || !runLogKeys) return;
+      if (!input.control || input.alt || input.shift || input.meta) return;
+      const key = input.key.toLowerCase();
+      const command =
+        key === "f" ? "find" : key === "home" ? "top" : key === "end" ? "bottom" : "";
+      if (!command) return;
+      event.preventDefault();
+      win.webContents.send("workbench:run-log-command", command);
+    });
+    win.webContents.on("did-start-loading", () => {
+      runLogKeys = false;
+    });
     win.once("ready-to-show", () => {
       win.show();
       if (focusNotificationOnReady) {
@@ -1354,9 +1646,18 @@ if (!app.requestSingleInstanceLock()) {
               ))
             )
               return;
+          for (const item of editorWindows.values())
+            if (
+              !item.window.isDestroyed() &&
+              !(await item.window.webContents.executeJavaScript(
+                "window.__workbenchCanClose ? window.__workbenchCanClose() : true",
+              ))
+            )
+              return;
           const active = tasks.active(),
             owned = await projects.owned();
           if (!active.length && !owned.length) {
+            await Promise.all([...editorWindows.values()].map((item) => item.language?.stop()));
             exiting = true;
             win.close();
             return;
@@ -1386,6 +1687,7 @@ if (!app.requestSingleInstanceLock()) {
           await Promise.all([...tasks.running.values()]);
           if (result.response === 1)
             for (const r of owned) await projects.stop(r.projectId);
+          await Promise.all([...editorWindows.values()].map((item) => item.language?.stop()));
           exiting = true;
           win.close();
         } catch (e) {
@@ -1407,6 +1709,13 @@ if (!app.requestSingleInstanceLock()) {
     win.on("closed", () => {
       for (const item of diffWindows.values())
         if (!item.window.isDestroyed()) item.window.close();
+      for (const item of editorWindows.values())
+        if (!item.window.isDestroyed()) item.window.close();
+    });
+    app.on("before-quit", (event) => {
+      if (exiting || !win || win.isDestroyed()) return;
+      event.preventDefault();
+      win.close();
     });
   });
   app.on("window-all-closed", () => {

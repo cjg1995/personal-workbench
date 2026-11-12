@@ -170,7 +170,7 @@ async function capture(page, file) {
     for (const name of [
       "APK 打包",
       "Git 管理",
-      "项目运行",
+      "项目管理",
     ]) {
       await nav(page, name);
       await page.waitForTimeout(700);
@@ -181,13 +181,13 @@ async function capture(page, file) {
           {
             "APK 打包": "apk",
             "Git 管理": "review",
-            项目运行: "projects",
+            项目管理: "projects",
           }[name] + "-1280.png",
         ),
       );
     }
     await until(
-      async () => (await page.locator(".table .click-row").count()) === 11,
+      async () => (await page.locator(".project-item").count()) === 11,
       "all work directories",
     );
     await page.waitForTimeout(4000);

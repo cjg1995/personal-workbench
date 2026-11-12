@@ -256,4 +256,8 @@ export interface WorkbenchApi {
   onReviewProgress(callback: (message: string) => void): () => void;
   onNavigate(callback: (destination: { taskId: string }) => void): () => void;
   onGitDiff(callback: (request: import("./git-client.js").DiffWindowRequest) => void): () => void;
+  onEditorLsp(callback: (method: string, params: any) => void): () => void;
+  onEditorDisk(callback: (file: string) => void): () => void;
+  setRunLogKeys(active: boolean): void;
+  onRunLogCommand(callback: (command: "find" | "top" | "bottom") => void): () => void;
 }

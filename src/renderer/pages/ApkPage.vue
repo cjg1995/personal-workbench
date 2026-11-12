@@ -64,8 +64,7 @@ async function start() {
   <div class="module-columns">
     <section>
       <h2>打包配置</h2>
-      <div class="build-types">
-        <p class="muted small">选择应用</p>
+      <div class="build-types" role="radiogroup" aria-label="选择应用">
         <label
           v-for="p in model.config?.projects.filter((p) => p.android)"
           :key="p.id"
@@ -133,12 +132,7 @@ async function start() {
           重新检查
         </button>
       </div>
-      <details class="section-rule">
-        <summary>打包边界</summary>
-        <p class="small muted">
-          版本、签名与工具链沿用现有工程配置；资源、签名、包名和版本校验全部通过才显示成功。首版不自动安装到手机。
-        </p>
-      </details>
+      <p class="small muted">校验全部通过才算成功，不自动安装到手机。</p>
       <button
         v-if="error"
         class="link"
@@ -152,12 +146,9 @@ async function start() {
       <div v-else class="empty">
         <span class="empty-icon"><Icon name="box" :size="16" /></span>
         <p class="empty-title">尚未开始构建</p>
-        <p class="empty-hint">
-          左侧确认配置后开始构建，四个阶段的状态与耗时来自实际执行。
-        </p>
       </div>
-      <section class="section-rule">
-        <h2>历史构建记录</h2>
+      <section class="section-rule apk-history">
+        <h2>历史构建</h2>
         <p v-if="!history.length" class="empty compact">暂无构建记录。</p>
         <button
           v-for="t in history"

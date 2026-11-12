@@ -233,17 +233,14 @@ async function cancel() {
   </p>
   </section>
   <section v-if="effective" class="submit-flow">
-    <h3>{{ isBackend ? '执行流程与分支去向' : '提交流程' }}</h3>
-    <p v-if="isBackend" class="small muted">
-      本地提交 → 推送开发分支 → 更新 test → 合并 → 推送 test
+    <h3 class="visually-hidden">{{ isBackend ? '执行流程与分支去向' : '提交流程' }}</h3>
+    <p class="small">
+      {{ isBackend ? '本地提交 → 推送开发分支 → 更新 test → 合并 → 推送 test' : '更新远程 → 恢复本地改动 → 核对清单 → 提交并推送' }}
     </p>
-    <p v-else class="small muted">
-      更新远程 → 保护并恢复本地改动 → 核对提交清单 → 提交并推送
+    <p v-if="isBackend" class="path" :title="effective.testPath || '在当前目录切换到 test，完成后停留；冲突保留给 IDEA 处理'">
+      {{ effective.testPath ? 'test 目录 ' + effective.testPath : '当前目录切换到 test，完成后停留' }}
     </p>
-    <p v-if="isBackend" class="small muted">
-      {{ effective.testPath ? '使用已存在的 test 工作目录：' + effective.testPath : '在当前项目目录切换到 test，完成后停留在 test；冲突可直接在 IDEA 中处理。' }}
-    </p>
-    <p v-if="configFile" class="small muted">{{ configFile }} 始终受保护，不纳入提交。</p>
+    <p v-if="configFile" class="small">{{ configFile }} 受保护，不纳入提交</p>
   </section>
   </div>
   <template v-if="task && task.state !== 'awaiting'"
@@ -348,9 +345,7 @@ async function cancel() {
   <div v-else class="empty">
     <span class="empty-icon"><Icon name="branch" :size="16" /></span>
     <p class="empty-title">尚未检查仓库</p>
-    <p class="empty-hint">
-      选择工作目录后点击「检查仓库与预览」，查看真实分支、暂存区和文件范围。检查不会提交或推送代码。
-    </p>
+    <p class="empty-hint">检查只读取状态，不会提交或推送。</p>
   </div>
   </div>
   <footer v-if="effective && (!task || task.state === 'awaiting')" class="submit-footer">

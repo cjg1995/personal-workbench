@@ -143,7 +143,34 @@ async function save() {
   busy.value = false;
 }
 async function complete() {
-  if (!editor.value || !(await canLeave())) return;
+  if (!editor.value || busy.value) return;
+  const markingDone = !editor.value.completedAt;
+  let savedFirst = false;
+  if (dirty.value && markingDone) {
+    const canSave = !!editor.value.text?.trim();
+    const choice = await call<number>("ui.choose", {
+      title: "有未保存修改",
+      message: canSave
+        ? "可以先保存当前内容，再标记完成。"
+        : "内容为空，无法保存。可以丢弃本次修改后标记完成。",
+      buttons: canSave
+        ? ["取消", "丢弃修改", "保存并完成"]
+        : ["取消", "丢弃修改"],
+      defaultId: canSave ? 2 : 0,
+    });
+    if (!choice) return;
+    if (choice === 2) {
+      busy.value = true;
+      const updated = await attempt(() =>
+        call<Note>("record.save", editor.value),
+      );
+      busy.value = false;
+      if (!updated) return;
+      editor.value = updated;
+      baseline.value = JSON.stringify(updated);
+      savedFirst = true;
+    }
+  } else if (!(await canLeave())) return;
   await attempt(async () => {
     await call("record.complete", {
       id: editor.value!.id,
@@ -153,7 +180,11 @@ async function complete() {
     editor.value = null;
     await reload();
     loadEditor();
-    notify("状态已更新，未自动生成工作记录");
+    notify(
+      savedFirst
+        ? "已保存并标记完成，未自动生成工作记录"
+        : "状态已更新，未自动生成工作记录",
+    );
   });
 }
 async function remove() {
@@ -259,16 +290,6 @@ async function remove() {
         <p class="empty-title">
           {{ query ? "没有匹配记录" : "这里还没有记录" }}
         </p>
-        <p v-if="query" class="empty-hint">
-          换个关键词，或清除搜索查看全部记录。
-        </p>
-        <p v-else class="empty-hint">
-          {{
-            kind === "idea"
-              ? "想到什么就先记下来，之后再整理。"
-              : "记录今天真实发生的工作，方便月度整理。"
-          }}
-        </p>
         <button v-if="query" class="link" @click="query = ''">清除搜索</button>
         <button v-else class="link" @click="focusComposer">写下第一条</button>
       </div>
@@ -347,7 +368,11 @@ async function remove() {
             @click="save"
           >
             保存修改</button
-          ><button v-if="kind === 'idea'" @click="complete">
+          ><button
+            v-if="kind === 'idea'"
+            title="只改变待办状态，不会生成工作记录"
+            @click="complete"
+          >
             {{ editor.completedAt ? "重新打开" : "标记完成" }}</button
           ><button :disabled="!dirty" @click="loadEditor">取消修改</button
           ><button class="danger text-button push-right" @click="remove">
@@ -366,15 +391,12 @@ async function remove() {
           "
         >
           记一条工作 →
-        </button>
-        <p v-if="kind === 'idea'" class="inline-note">
-          完成待办只改变状态，不会自动生成工作记录。
-        </p></template
+        </button></template
       >
     </section>
     <section v-else-if="filtered.length" class="empty compact">
       <Icon name="pencil" :size="15" />
-      <p class="empty-hint">选择一条记录查看和编辑</p>
+      <p class="empty-title">选择一条记录</p>
     </section>
   </div>
 </template>
