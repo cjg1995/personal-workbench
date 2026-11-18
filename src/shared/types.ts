@@ -258,6 +258,13 @@ export interface WorkbenchApi {
   onGitDiff(callback: (request: import("./git-client.js").DiffWindowRequest) => void): () => void;
   onEditorLsp(callback: (method: string, params: any) => void): () => void;
   onEditorDisk(callback: (file: string) => void): () => void;
+  onEditorHistory(callback: (direction: number) => void): () => void;
+  onEditorSearch(callback: (payload: {
+    requestId: string;
+    hits?: { file: string; line: number; column: number; text: string }[];
+    done?: boolean;
+    error?: string;
+  }) => void): () => void;
   setRunLogKeys(active: boolean): void;
   onRunLogCommand(callback: (command: "find" | "top" | "bottom") => void): () => void;
 }

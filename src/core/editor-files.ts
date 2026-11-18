@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import iconv from "iconv-lite";
 import { assertNoLinks, hash, inside } from "./util.js";
 
@@ -21,6 +22,25 @@ const excluded = new Set([
   "build", "dist", "out", "coverage", "unpackage", ".next", ".nuxt",
 ]);
 const maxFileBytes = 4 * 1024 * 1024;
+export const searchableExtensions = [
+  "java", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "json", "jsonc",
+  "xml", "html", "htm", "css", "scss", "less", "sql", "md", "yml", "yaml",
+  "properties", "txt", "gradle", "kts", "sh", "bat", "ps1",
+];
+function selectedExtensions(extensions?: string[]) {
+  return [...new Set((extensions || [])
+    .map((ext) => String(ext).toLowerCase().replace(/^\./, ""))
+    .filter((ext) => /^[a-z0-9]{1,12}$/.test(ext)))].slice(0, 100);
+}
+function parseTextHit(line: string): TextHit | null {
+  const parts = /^\.[\\/](.*?):(\d+):(\d+):(.*)$/.exec(line);
+  return parts ? {
+    file: parts[1].replaceAll("\\", "/"),
+    line: Number(parts[2]),
+    column: Number(parts[3]),
+    text: parts[4].trim().slice(0, 240),
+  } : null;
+}
 
 export function projectFile(root: string, relative: string, allowRoot = false) {
   if (typeof relative !== "string" || relative.includes("\0") || path.isAbsolute(relative))
@@ -183,6 +203,19 @@ export class EditorFiles {
   invalidate(root: string) { this.indexes.delete(path.resolve(root).toLowerCase()); }
   cancelSearch(root: string) { this.searches.get(path.resolve(root).toLowerCase())?.abort(); }
 
+  /** 项目内实际出现的文件类型（扩展名），供全局搜索筛选。 */
+  async fileTypes(root: string): Promise<{ ext: string; count: number }[]> {
+    const counts = new Map<string, number>();
+    for (const file of await this.files(root)) {
+      const ext = path.extname(file).slice(1).toLowerCase();
+      if (!ext || ext.length > 12 || !/^[a-z0-9]+$/.test(ext)) continue;
+      counts.set(ext, (counts.get(ext) || 0) + 1);
+    }
+    return [...counts]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([ext, count]) => ({ ext, count }));
+  }
+
   async findFiles(root: string, query: string, limit = 100) {
     const q = query.toLowerCase().trim();
     if (!q) return [];
@@ -204,32 +237,33 @@ export class EditorFiles {
       .slice(0, Math.min(limit, 200)).map((item) => item.file);
   }
 
-  async search(root: string, query: string, limit = 500): Promise<TextHit[]> {
+  async search(root: string, query: string, limit = 500, extensions?: string[]): Promise<TextHit[]> {
     const key = path.resolve(root).toLowerCase();
     this.cancelSearch(root);
     const controller = new AbortController();
     this.searches.set(key, controller);
     if (!query || query.length > 200) return [];
+    const selected = selectedExtensions(extensions);
+    const globs = selected.length ? selected : searchableExtensions;
     const matched = await this.rg(root, [
       "--hidden", "--line-number", "--column", "--ignore-case", "--fixed-strings",
       "--no-heading", "--color", "never", "--max-columns", "300", "--max-columns-preview",
       "--max-filesize", "4M",
       ...this.exclusions(),
-      ...["java", "js", "jsx", "ts", "tsx", "vue", "json", "jsonc", "xml", "html", "htm", "css", "scss", "sql", "md", "yml", "yaml", "properties", "txt"]
-        .flatMap((ext) => ["-g", `*.${ext}`]),
+      ...globs.flatMap((ext) => ["-g", `*.${ext}`]),
       "--", query, ".",
     ], 4 * 1024 * 1024, limit, controller.signal);
     if (controller.signal.aborted) return [];
     if (matched !== null) return matched.split(/\r?\n/).flatMap((line) => {
-      const parts = /^\.[\\/](.*?):(\d+):(\d+):(.*)$/.exec(line);
-      return parts ? [{ file: parts[1].replaceAll("\\", "/"), line: Number(parts[2]),
-        column: Number(parts[3]), text: parts[4].trim().slice(0, 240) }] : [];
+      const hit = parseTextHit(line);
+      return hit ? [hit] : [];
     }).slice(0, limit);
     const hits: TextHit[] = [];
     const files = await this.files(root);
     for (const file of files) {
       if (hits.length >= limit || controller.signal.aborted) break;
-      if (!/\.(java|js|jsx|ts|tsx|vue|jsonc?|xml|html?|css|scss|sql|md|ya?ml|properties|txt)$/i.test(file)) continue;
+      const extension = path.extname(file).slice(1).toLowerCase();
+      if (!globs.includes(extension)) continue;
       try {
         const target = projectFile(root, file);
         const stat = await fs.promises.stat(target);
@@ -246,6 +280,70 @@ export class EditorFiles {
       } catch { /* Deleted, binary, or inaccessible files are omitted. */ }
     }
     return hits;
+  }
+
+  /** 流式搜索：边扫描边把命中批次交给调用方，缩短首屏等待。 */
+  async streamSearch(
+    root: string,
+    query: string,
+    extensions: string[] | undefined,
+    limit: number,
+    onBatch: (hits: TextHit[]) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!query || query.length > 200) return;
+    const selected = selectedExtensions(extensions);
+    const globs = selected.length ? selected : searchableExtensions;
+    if (!this.ripgrep || !fs.existsSync(this.ripgrep)) {
+      for (const hit of await this.search(root, query, limit, globs)) {
+        if (signal.aborted) return;
+        onBatch([hit]);
+      }
+      return;
+    }
+    const args = [
+      "--hidden", "--line-number", "--column", "--ignore-case", "--fixed-strings",
+      "--no-heading", "--color", "never", "--max-columns", "300", "--max-columns-preview",
+      "--max-filesize", "4M",
+      ...this.exclusions(),
+      ...globs.flatMap((ext) => ["-g", `*.${ext}`]),
+      "--", query, ".",
+    ];
+    await new Promise<void>((resolve) => {
+      const child = spawn(this.ripgrep!, args, { cwd: root, windowsHide: true, signal });
+      const decoder = new StringDecoder("utf8");
+      let buffer = "", total = 0, settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        buffer += decoder.write(chunk);
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        const hits: TextHit[] = [];
+        for (const line of lines) {
+          if (total + hits.length >= limit) break;
+          const hit = parseTextHit(line);
+          if (hit) hits.push(hit);
+        }
+        if (hits.length) {
+          total += hits.length;
+          if (!signal.aborted) onBatch(hits);
+        }
+        if (total >= limit) child.kill();
+      });
+      child.once("error", finish);
+      child.once("close", () => {
+        buffer += decoder.end();
+        if (buffer.trim()) {
+          const hit = parseTextHit(buffer);
+          if (hit && total < limit && !signal.aborted) onBatch([hit]);
+        }
+        finish();
+      });
+    });
   }
 
   async previews(root: string, locations: { file: string; line: number }[]) {

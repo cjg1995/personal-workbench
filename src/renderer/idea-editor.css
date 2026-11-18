@@ -1,0 +1,53 @@
+/* 代码编辑器 / 代码对比窗口共用：IDEA 风格配色与折叠标记 */
+.idea-java-field {
+  color: #871094 !important;
+}
+.idea-java-null {
+  color: #0033b3 !important;
+  font-weight: 700 !important;
+}
+.editor-dark .idea-java-field,
+.diff-window:not(.diff-light) .idea-java-field,
+.submit-inline-diff:not(.diff-light) .idea-java-field {
+  color: #9876aa !important;
+}
+.editor-dark .idea-java-null,
+.diff-window:not(.diff-light) .idea-java-null,
+.submit-inline-diff:not(.diff-light) .idea-java-null {
+  color: #cc7832 !important;
+}
+
+/* Ctrl 悬停可跳转代码：文字变蓝 + 手型光标 */
+.idea-ctrl-link {
+  color: #1155cc !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer !important;
+}
+.editor-window.ctrl-link-hover .monaco-editor .view-lines,
+.editor-window.ctrl-link-hover .monaco-editor .view-line,
+.editor-window.ctrl-link-hover .monaco-editor .view-line span,
+.editor-window.ctrl-link-hover .monaco-editor .cursors-layer {
+  cursor: pointer !important;
+}
+
+/* 折叠箭头：使用 codicon 细箭头（IDEA 同款 V 形）。
+   import 区常驻，其余行悬停显示；已折叠区域始终可见。 */
+.monaco-editor .margin-view-overlays .cldr[class*="folding"] {
+  opacity: 0 !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  margin-left: 0 !important;
+  width: 14px !important;
+  transition: opacity 0.12s ease;
+}
+.monaco-editor .margin-view-overlays:hover .cldr[class*="folding"],
+.monaco-editor .margin-view-overlays .cldr.codicon-folding-collapsed,
+.monaco-editor .margin-view-overlays .cldr.codicon-folding-manual-collapsed,
+.monaco-editor .margin-view-overlays > div:has(> .idea-fold-import) > .cldr[class*="folding"] {
+  opacity: 1 !important;
+}
+.monaco-editor .margin-view-overlays:hover .cldr[class*="folding"] {
+  color: #3f4a59 !important;
+}
+

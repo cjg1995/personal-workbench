@@ -39,6 +39,13 @@
   --hover: rgba(31, 35, 41, 0.045);
   --hover-strong: rgba(31, 35, 41, 0.075);
 
+  /* 按钮：与侧栏菜单选中态一致的淡蓝色 */
+  --button-bg: #eaf1ff;
+  --button-bg-hover: #dbe8ff;
+  --button-bg-active: #c9dcff;
+  --button-line: #c9dcff;
+  --button-ink: #17459e;
+
   --info: #3370ff;
   --info-soft: #eef4ff;
   --info-line: #d6e4ff;
@@ -251,10 +258,10 @@ button {
   gap: 7px;
   min-height: var(--control-h);
   padding: 0 14px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--button-line);
   border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--ink-2);
+  background: var(--button-bg);
+  color: var(--button-ink);
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
@@ -264,35 +271,35 @@ button {
     border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 button:hover:not(:disabled) {
-  background: var(--hover);
-  border-color: var(--line-3);
-  color: var(--ink-1);
+  background: var(--button-bg-hover);
+  border-color: var(--button-bg-active);
+  color: var(--button-ink);
 }
 button:active:not(:disabled) {
-  background: var(--hover-strong);
+  background: var(--button-bg-active);
 }
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 button.primary {
-  background: var(--primary-fill);
-  border-color: var(--primary-fill);
-  color: var(--primary-ink);
+  background: var(--button-bg);
+  border-color: var(--button-line);
+  color: var(--button-ink);
 }
 button.primary:hover:not(:disabled) {
-  background: var(--primary-fill-hover);
-  border-color: var(--primary-fill-hover);
-  color: var(--primary-ink);
+  background: var(--button-bg-hover);
+  border-color: var(--button-bg-active);
+  color: var(--button-ink);
 }
 button.primary:active:not(:disabled) {
-  background: var(--primary-fill-active);
-  border-color: var(--primary-fill-active);
-  color: var(--primary-ink);
+  background: var(--button-bg-active);
+  border-color: var(--button-bg-active);
+  color: var(--button-ink);
 }
 button.primary:disabled {
-  background: var(--surface-3);
-  border-color: var(--surface-3);
+  background: var(--primary-softer);
+  border-color: var(--primary-softer);
   color: var(--ink-4);
   opacity: 1;
 }
@@ -304,12 +311,12 @@ button.danger,
   color: var(--danger);
 }
 button.danger {
-  border-color: var(--danger-line);
-  background: var(--surface);
+  border-color: var(--button-line);
+  background: var(--button-bg);
 }
 button.danger:hover:not(:disabled) {
-  background: var(--danger-soft);
-  border-color: var(--danger-line);
+  background: var(--button-bg-hover);
+  border-color: var(--button-bg-active);
   color: var(--danger-strong);
 }
 button.link,
@@ -1252,7 +1259,7 @@ fieldset.review-content {
   transition: background var(--dur) var(--ease);
 }
 .note-row:hover:not(:disabled) {
-  background: var(--hover);
+  background: #eff1f3;
   border-color: var(--line);
 }
 .note-row strong {

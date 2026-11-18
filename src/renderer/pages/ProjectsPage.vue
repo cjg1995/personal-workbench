@@ -77,7 +77,7 @@ function primaryAction(id: string) {
   const info = run(id);
   if (!project) return null;
   if (project.type === "wechat")
-    return { action: "wechat", label: "打开开发者工具" };
+    return { action: "wechat", label: "打开微信开发者工具" };
   if (!info) return null;
   if (["stopped", "failed"].includes(info.state))
     return {
@@ -89,7 +89,7 @@ function primaryAction(id: string) {
     project.type === "uni-wechat" &&
     ["running", "watching", "tool-open"].includes(info.state)
   )
-    return { action: "wechat", label: "打开开发者工具" };
+    return { action: "wechat", label: "打开微信开发者工具" };
   if (info.state === "external")
     return { action: "ide", label: "在原工具中管理" };
   return null;
@@ -399,23 +399,13 @@ onBeforeUnmount(() => {
             </div>
             <div class="project-item-actions" @click.stop>
               <button
-                v-if="primaryAction(p.id)"
+                v-if="primaryAction(p.id) && primaryAction(p.id)!.action !== 'wechat'"
                 class="primary"
                 :disabled="busy === p.id"
                 :title="primaryAction(p.id)?.title"
                 @click="runAction(primaryAction(p.id)!.action, p.id)"
               >
                 {{ primaryAction(p.id)!.label }}
-              </button>
-              <button
-                v-if="
-                  p.type === 'uni-wechat' &&
-                  primaryAction(p.id)?.action !== 'wechat'
-                "
-                :disabled="busy === p.id || run(p.id)?.state === 'starting'"
-                @click="runAction('wechat', p.id)"
-              >
-                打开开发者工具
               </button>
               <button
                 v-if="run(p.id)?.canStop"
@@ -452,17 +442,17 @@ onBeforeUnmount(() => {
         {{ shownRunMessage(current) }}
       </p>
       <div class="projects-actions">
-        <button @click="runAction('editor', selected)" title="在独立窗口编辑项目代码">
-          代码编辑
-        </button>
         <button
-          v-if="primaryAction(selected)"
+          v-if="primaryAction(selected) && primaryAction(selected)!.action !== 'start'"
           class="primary"
           :disabled="busy === selected"
           :title="primaryAction(selected)?.title"
           @click="runAction(primaryAction(selected)!.action, selected)"
         >
           {{ primaryAction(selected)!.label }}
+        </button>
+        <button @click="runAction('editor', selected)" title="在独立窗口编辑项目代码">
+          代码编辑
         </button>
         <button
           v-if="
@@ -472,7 +462,7 @@ onBeforeUnmount(() => {
           :disabled="busy === selected || current?.state === 'starting'"
           @click="runAction('wechat', selected)"
         >
-          打开开发者工具
+          打开微信开发者工具
         </button>
         <button
           v-if="current?.canStop"
@@ -491,11 +481,11 @@ onBeforeUnmount(() => {
         >
           打开 IDE
         </button>
+        <button @click="runAction('log', selected)">查看日志</button>
         <button :disabled="busy === selected" @click="runAction('folder', selected)">
           打开目录
         </button>
         <button @click="runAction('rules', selected)">项目规则</button>
-        <button @click="runAction('log', selected)">查看日志</button>
       </div>
       <dl class="kv">
         <dt>工作目录</dt>

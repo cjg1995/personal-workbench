@@ -33,6 +33,16 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("workbench:editor-disk", listener);
     return () => ipcRenderer.removeListener("workbench:editor-disk", listener);
   },
+  onEditorHistory: (callback) => {
+    const listener = (_event, direction) => callback(direction);
+    ipcRenderer.on("workbench:editor-history", listener);
+    return () => ipcRenderer.removeListener("workbench:editor-history", listener);
+  },
+  onEditorSearch: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("workbench:editor-search", listener);
+    return () => ipcRenderer.removeListener("workbench:editor-search", listener);
+  },
   setRunLogKeys: (active) =>
     ipcRenderer.sendSync("workbench:run-log-keys", !!active),
   onRunLogCommand: (callback) => {

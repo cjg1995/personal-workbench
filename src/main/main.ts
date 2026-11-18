@@ -124,14 +124,17 @@ if (!app.requestSingleInstanceLock()) {
       watchTimer?: ReturnType<typeof setTimeout>;
     }
   >();
-  const editorWindows = new Map<string, {
+  interface EditorWindowEntry {
     window: BrowserWindow;
     projectId: string;
     language?: JavaLanguageService;
     watchers: Map<string, fs.FSWatcher>;
     projectWatcher?: fs.FSWatcher;
     projectWatchTimer?: ReturnType<typeof setTimeout>;
-  }>();
+    search?: AbortController;
+  }
+  // 键为窗口 ID：同一窗口可以切换项目，也允许多个窗口打开同一项目。
+  const editorWindows = new Map<string, EditorWindowEntry>();
   const editorFiles = new EditorFiles(app.isPackaged
     ? path.join(process.resourcesPath, "editor-runtime", "rg.exe")
     : path.resolve(here, "../../node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe"));
@@ -302,13 +305,52 @@ if (!app.requestSingleInstanceLock()) {
     await child.loadFile(diffEntry);
     return { opened: true };
   }
-  async function openEditor(projectId: string) {
+  function attachEditorLanguage(item: EditorWindowEntry, project: ReturnType<typeof knownProject>) {
+    if (!["tomcat", "spring"].includes(project.type)) return;
+    item.language = new JavaLanguageService(project, editorRuntime, dataDir,
+      (method, params) => {
+        if (!item.window.isDestroyed())
+          item.window.webContents.send("workbench:editor-lsp", method, params);
+      }, config.get().tools.maven);
+    void item.language.start().catch(() => {});
+    const fileEvents = new Map<string, number>();
+    try {
+      item.projectWatcher = fs.watch(project.path, { recursive: true }, (_event, filename) => {
+        if (!filename) return;
+        const relative = filename.toString().replaceAll("\\", "/");
+        if (/(?:^|\/)(?:\.git|\.idea|\.settings|node_modules|target|build|dist)(?:\/|$)/.test(relative) ||
+            !/\.(?:java|xml|gradle|kts|properties)$/.test(relative)) return;
+        const target = path.resolve(project.path, relative);
+        if (!inside(project.path, target)) return;
+        fileEvents.set(pathToFileURL(target).href, fs.existsSync(target) ? 2 : 3);
+        editorFiles.invalidate(project.path);
+        clearTimeout(item.projectWatchTimer);
+        item.projectWatchTimer = setTimeout(() => {
+          item.language?.watched([...fileEvents].map(([uri, type]) => ({ uri, type })));
+          fileEvents.clear();
+        }, 250);
+      });
+      item.projectWatcher.on("error", () => {});
+    } catch { /* Open-file watchers and save fingerprint checks remain available. */ }
+  }
+  function detachEditorLanguage(item: EditorWindowEntry) {
+    for (const watcher of item.watchers.values()) watcher.close();
+    item.watchers.clear();
+    item.projectWatcher?.close();
+    item.projectWatcher = undefined;
+    clearTimeout(item.projectWatchTimer);
+    item.projectWatchTimer = undefined;
+    void item.language?.stop();
+    item.language = undefined;
+  }
+  async function openEditor(projectId: string, forceNew = false) {
     const project = knownProject(projectId);
     if (!fs.existsSync(project.path) || !fs.statSync(project.path).isDirectory())
       throw new Error("项目目录不存在");
-    const key = path.resolve(project.path).toLowerCase();
-    const existing = editorWindows.get(key);
-    if (existing && !existing.window.isDestroyed()) {
+    const existing = forceNew ? undefined : [...editorWindows.values()].find(
+      (item) => item.projectId === project.id && !item.window.isDestroyed(),
+    );
+    if (existing) {
       if (existing.window.isMinimized()) existing.window.restore();
       existing.window.show();
       existing.window.focus();
@@ -332,41 +374,39 @@ if (!app.requestSingleInstanceLock()) {
         webSecurity: true,
       },
     });
-    const item: (typeof editorWindows extends Map<string, infer T> ? T : never) = {
+    const item: EditorWindowEntry = {
       window: child, projectId, watchers: new Map(),
     };
+    const key = String(child.id);
     editorWindows.set(key, item);
-    if (["tomcat", "spring"].includes(project.type)) {
-      item.language = new JavaLanguageService(project, editorRuntime, dataDir,
-        (method, params) => {
-          if (!child.isDestroyed()) child.webContents.send("workbench:editor-lsp", method, params);
-        }, config.get().tools.maven);
-      void item.language.start().catch(() => {});
-      const fileEvents = new Map<string, number>();
-      try {
-        item.projectWatcher = fs.watch(project.path, { recursive: true }, (_event, filename) => {
-          if (!filename) return;
-          const relative = filename.toString().replaceAll("\\", "/");
-          if (/(?:^|\/)(?:\.git|\.idea|\.settings|node_modules|target|build|dist)(?:\/|$)/.test(relative) ||
-              !/\.(?:java|xml|gradle|kts|properties)$/.test(relative)) return;
-          const target = path.resolve(project.path, relative);
-          if (!inside(project.path, target)) return;
-          fileEvents.set(pathToFileURL(target).href, fs.existsSync(target) ? 2 : 3);
-          editorFiles.invalidate(project.path);
-          clearTimeout(item.projectWatchTimer);
-          item.projectWatchTimer = setTimeout(() => {
-            item.language?.watched([...fileEvents].map(([uri, type]) => ({ uri, type })));
-            fileEvents.clear();
-          }, 250);
-        });
-        item.projectWatcher.on("error", () => {});
-      } catch { /* Open-file watchers and save fingerprint checks remain available. */ }
-    }
+    attachEditorLanguage(item, project);
     child.removeMenu();
     child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     child.webContents.on("will-navigate", (event, url) => {
       if (url !== editorAllowed) event.preventDefault();
     });
+    // 鼠标侧键：app-command（Windows 消息）+ WM_XBUTTONDOWN 双通道，避免不同鼠标/驱动下漏事件
+    let historyAt = 0, historyDirection = 0;
+    const sendHistory = (direction: number) => {
+      const now = Date.now();
+      if (direction === historyDirection && now - historyAt < 120) return;
+      historyDirection = direction;
+      historyAt = now;
+      if (!child.isDestroyed()) child.webContents.send("workbench:editor-history", direction);
+    };
+    child.on("app-command", (_event, command) => {
+      if (command === "browser-backward") sendHistory(-1);
+      else if (command === "browser-forward") sendHistory(1);
+    });
+    if (process.platform === "win32") {
+      try {
+        child.hookWindowMessage(0x020b, (wParam) => {
+          const button = (wParam.readUInt32LE(0) >>> 16) & 0xffff;
+          if (button === 1) sendHistory(-1);
+          else if (button === 2) sendHistory(1);
+        });
+      } catch { /* 不支持窗口消息钩子时仅依赖 app-command */ }
+    }
     child.webContents.on("before-input-event", (event, input) => {
       if (input.type === "keyDown" && input.key === "F11") {
         event.preventDefault();
@@ -393,6 +433,7 @@ if (!app.requestSingleInstanceLock()) {
       item.projectWatcher?.close();
       clearTimeout(item.projectWatchTimer);
       editorFiles.cancelSearch(project.path);
+      item.search?.abort();
       void item.language?.stop();
       editorWindows.delete(key);
     });
@@ -513,6 +554,8 @@ if (!app.requestSingleInstanceLock()) {
           java: !!item.language, status: item.language?.status || "unavailable",
           error: item.language?.error || "" };
       }
+      case "editor.projects":
+      case "editor.switch-project":
       case "editor.tree":
       case "editor.read":
       case "editor.version":
@@ -520,6 +563,9 @@ if (!app.requestSingleInstanceLock()) {
       case "editor.file-search":
       case "editor.code-files":
       case "editor.text-search":
+      case "editor.search-start":
+      case "editor.search-cancel":
+      case "editor.file-types":
       case "editor.previews":
       case "editor.watch":
       case "editor.unwatch":
@@ -531,16 +577,59 @@ if (!app.requestSingleInstanceLock()) {
       case "editor.lsp-request":
       case "editor.lsp-classfile":
       case "editor.confirm-save":
-      case "editor.confirm-conflict": {
+      case "editor.confirm-conflict":
+      case "editor.blame":
+      case "editor.blame-diff": {
         const item = [...editorWindows.values()].find((value) => value.window === source);
         if (!item) throw new Error("代码编辑器窗口不存在");
         const project = knownProject(item.projectId);
         const root = project.path;
+        if (name === "editor.projects") return config.get().projects.map(
+          ({ id, name: label, type, path: dir }) => ({ id, name: label, type, path: dir }));
+        if (name === "editor.switch-project") {
+          const target = knownProject(String(p.projectId || ""));
+          if (!fs.existsSync(target.path) || !fs.statSync(target.path).isDirectory())
+            throw new Error("项目目录不存在");
+          if (String(p.mode) === "new") return openEditor(target.id, true);
+          detachEditorLanguage(item);
+          editorFiles.cancelSearch(root);
+          editorFiles.invalidate(root);
+          editorFiles.invalidate(target.path);
+          item.projectId = target.id;
+          item.window.setTitle(`${target.name} · 代码编辑器`);
+          attachEditorLanguage(item, target);
+          return { switched: true, projectId: target.id, projectName: target.name };
+        }
         if (name === "editor.tree") return editorFiles.tree(root, String(p.directory || ""));
         if (name === "editor.file-search") return editorFiles.findFiles(root, String(p.query || ""));
         if (name === "editor.code-files") return (await editorFiles.files(root))
           .filter((file) => /\.(?:ts|tsx|js|jsx)$/i.test(file)).slice(0, 3000);
-        if (name === "editor.text-search") return editorFiles.search(root, String(p.query || ""));
+        if (name === "editor.text-search") return editorFiles.search(root, String(p.query || ""), 500,
+          Array.isArray(p.extensions) ? p.extensions.slice(0, 100).map(String) : undefined);
+        if (name === "editor.file-types") return editorFiles.fileTypes(root);
+        if (name === "editor.search-start") {
+          const requestId = String(p.requestId || "");
+          if (!/^[A-Za-z0-9_-]{1,64}$/.test(requestId)) throw new Error("搜索请求无效");
+          item.search?.abort();
+          const controller = new AbortController();
+          item.search = controller;
+          const query = String(p.query || "").slice(0, 200);
+          const extensions = Array.isArray(p.extensions) ? p.extensions.slice(0, 100).map(String) : undefined;
+          const send = (payload: Record<string, unknown>) => {
+            if (controller.signal.aborted || !source || source.isDestroyed()) return;
+            source.webContents.send("workbench:editor-search", { requestId, ...payload });
+          };
+          void editorFiles.streamSearch(root, query, extensions, 500,
+            (hits) => send({ hits }), controller.signal)
+            .then(() => send({ done: true }))
+            .catch((error) => send({ error: redact(errorText(error)) }));
+          return { started: true };
+        }
+        if (name === "editor.search-cancel") {
+          item.search?.abort();
+          item.search = undefined;
+          return true;
+        }
         if (name === "editor.previews") return editorFiles.previews(root, Array.isArray(p.locations) ? p.locations : []);
         if (name === "editor.confirm-save") {
           const result = await dialog.showMessageBox(source!, {
@@ -567,6 +656,27 @@ if (!app.requestSingleInstanceLock()) {
         const file = projectFile(root, String(p.file || ""));
         if (name === "editor.read") return editorFiles.read(root, String(p.file));
         if (name === "editor.version") return editorFiles.version(root, String(p.file));
+        if (name === "editor.blame") {
+          const relative = path.relative(root, file).split(path.sep).join("/");
+          return git.blame(root, relative);
+        }
+        if (name === "editor.blame-diff") {
+          const hash = String(p.hash || "");
+          const relative = path.relative(root, file).split(path.sep).join("/");
+          if (!/^[0-9a-f]{7,40}$/i.test(hash) || /^0+$/.test(hash))
+            throw new Error("提交记录无效");
+          const parent = await git.run(
+            root,
+            ["rev-parse", "--verify", "--end-of-options", `${hash}^`],
+            { allowFailure: true },
+          );
+          const base = parent.code === 0 ? parent.stdout.trim() : "__empty__";
+          return openDiff({
+            projectId: project.id,
+            comparison: { mode: "versions", base, target: hash, file: relative },
+            file: relative,
+          });
+        }
         if (name === "editor.save") {
           if (typeof p.text !== "string" || p.text.length > 8 * 1024 * 1024 ||
             !/^[a-f\d]{64}$/i.test(String(p.version || ""))) throw new Error("保存参数无效");

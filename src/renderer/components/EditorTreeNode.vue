@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import Icon from "./Icon.vue";
+import FileTypeIcon from "./FileTypeIcon.vue";
 export interface TreeNode {
   name: string;
   file: string;
@@ -17,7 +17,7 @@ const emit = defineEmits<{ toggle: [node: TreeNode]; open: [file: string] }>();
     :style="{ paddingLeft: `${depth * 15 + 8}px` }" :title="node.file"
     :data-file="node.file" @click="node.directory ? emit('toggle', node) : emit('open', node.file)">
     <span class="editor-tree-arrow" :class="{ expanded: node.expanded, invisible: !node.directory }">▸</span>
-    <Icon :name="node.directory ? 'folder' : 'file'" :size="15" />
+    <FileTypeIcon :name="node.name" :directory="node.directory" :size="14" />
     <span class="editor-tree-name">{{ node.name }}</span>
   </div>
   <template v-if="node.directory && node.expanded">

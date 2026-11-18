@@ -9,6 +9,26 @@ import {
 import { command, type CommandOptions } from "./process.js";
 import { hash } from "./util.js";
 export const protectedFile = "store/index.js";
+export interface GitBlameLine {
+  line: number;
+  hash: string;
+  author: string;
+  date: string;
+  summary: string;
+  uncommitted?: boolean;
+}
+/** 按作者时区把 blame 时间戳格式化为 YYYY/MM/DD。 */
+function blameDate(stamp: number, zone: string) {
+  if (!stamp) return "";
+  const match = /^([+-])(\d{2})(\d{2})$/.exec(zone || "");
+  const offset = match
+    ? (match[1] === "-" ? -1 : 1) *
+      (Number(match[2]) * 3600 + Number(match[3]) * 60)
+    : 0;
+  const date = new Date((stamp + offset) * 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}/${pad(date.getUTCMonth() + 1)}/${pad(date.getUTCDate())}`;
+}
 export function trackedDirectoryTree(files: string[]) {
   const directories = new Set<string>();
   for (const file of files) {
@@ -149,6 +169,58 @@ export class Git {
       });
     }
     return files;
+  }
+  /** 逐行提交信息（git blame），用于编辑器内的提交历史标注。 */
+  async blame(repo: string, file: string): Promise<GitBlameLine[]> {
+    const result = await this.run(
+      repo,
+      ["blame", "--line-porcelain", "--no-textconv", "--", file],
+      { allowFailure: true, maxBytes: 32 * 1024 * 1024, timeoutMs: 30000 },
+    );
+    if (result.code)
+      throw new Error(
+        result.stderr.trim().split("\n").pop() ||
+          "该文件没有可读取的提交历史（可能尚未纳入 Git 版本管理）",
+      );
+    const lines: GitBlameLine[] = [];
+    let hash = "",
+      lineNumber = 0,
+      author = "",
+      stamp = 0,
+      zone = "",
+      summary = "";
+    for (const raw of result.stdout.split("\n")) {
+      if (!raw) continue;
+      const header = /^([0-9a-f]{40}) \d+ (\d+)(?: \d+)?$/.exec(raw);
+      if (header) {
+        hash = header[1];
+        lineNumber = Number(header[2]);
+        author = "";
+        stamp = 0;
+        zone = "";
+        summary = "";
+        continue;
+      }
+      if (raw.startsWith("\t")) {
+        if (!lineNumber) continue;
+        const uncommitted = /^0+$/.test(hash);
+        lines.push({
+          line: lineNumber,
+          hash: uncommitted ? "" : hash,
+          author: uncommitted ? "本地修改" : author || "未知作者",
+          date: uncommitted ? "" : blameDate(stamp, zone),
+          summary: uncommitted ? "本地未提交的修改" : summary,
+          uncommitted,
+        });
+        lineNumber = 0;
+        continue;
+      }
+      if (raw.startsWith("author ")) author = raw.slice(7);
+      else if (raw.startsWith("author-time ")) stamp = Number(raw.slice(12)) || 0;
+      else if (raw.startsWith("author-tz ")) zone = raw.slice(10);
+      else if (raw.startsWith("summary ")) summary = raw.slice(8);
+    }
+    return lines;
   }
   async fingerprint(
     repo: string,

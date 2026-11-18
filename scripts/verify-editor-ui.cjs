@@ -11,6 +11,8 @@ const dataDir = path.join(root, ".local", "editor-ui-data-" + Date.now());
 fs.mkdirSync(path.join(fixture, "src"), { recursive: true });
 fs.writeFileSync(path.join(fixture, "src", "Alpha.java"), "package sample;\r\nclass Alpha { int marker = 7; }\r\n");
 fs.writeFileSync(path.join(fixture, "src", "Beta.java"), "package sample;\nclass Beta { Alpha value; }\n");
+const alphaFile = path.join(fixture, "src", "Alpha.java");
+const betaFile = path.join(fixture, "src", "Beta.java");
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
@@ -90,26 +92,18 @@ async function until(fn, label, attempts = 60) {
     await editor.locator(".monaco-editor .view-line").first().click();
     await editor.keyboard.press("Control+End");
     await editor.keyboard.type("// unsaved");
-    await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 2 }); });
+    // 自动保存：不再弹出保存确认框，关闭标签前内容已落盘
+    await until(() => fs.readFileSync(betaFile, "utf8").includes("// unsaved"), "auto save before close");
     await editor.locator(".editor-tab.active .close-button").click();
-    assert.equal(await editor.locator(".editor-tab").count(), 2);
-    await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
-    await editor.locator(".editor-tab.active .close-button").click();
-    await until(async () => await editor.locator(".editor-tab").count() === 1, "discard unsaved tab");
+    await until(async () => await editor.locator(".editor-tab").count() === 1, "close auto-saved tab");
     await editor.locator(".monaco-editor .view-line").first().click();
     await editor.keyboard.press("Control+End");
     await editor.keyboard.type("// exit guard");
-    await application.evaluate(({ dialog }) => {
-      globalThis.__editorExitPrompts = 0;
-      dialog.showMessageBox = async () => { globalThis.__editorExitPrompts++; return { response: 2 }; };
-    });
-    await api(main, "window.close");
-    await until(async () => await application.evaluate(() => globalThis.__editorExitPrompts > 0), "main-window unsaved guard");
+    await until(() => fs.readFileSync(alphaFile, "utf8").includes("// exit guard"), "auto save before exit");
+    // 自动保存后关闭窗口不再需要保存确认：直接核验窗口仍可用且内容已落盘
     assert.equal((await application.windows()).length, 2);
-    assert.equal(await editor.locator(".editor-dirty").count(), 1);
-    await editor.locator(".monaco-editor .view-line").first().click();
-    await editor.keyboard.press("Control+s");
-    await until(async () => await editor.locator(".editor-dirty").count() === 0, "save after cancelled exit");
+    assert.equal(await editor.locator(".editor-dirty").count(), 0);
+    assert.equal(await editor.locator(".editor-header-actions button").count(), 2);
     await application.evaluate(({ dialog }) => { dialog.showMessageBox = globalThis.__editorOriginalDialog; });
     await editor.screenshot({ path: path.join(root, ".local", "editor-ui.png") });
     assert.deepEqual(errors, []);

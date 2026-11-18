@@ -6,7 +6,7 @@ Windows 本地桌面应用，使用 Electron、Vue 3、TypeScript、Vite 和 Ele
 
 ## 启动与安装
 
-当前源码版本为 0.1.60。安装包为 `release/PersonalWorkbench-0.1.60-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机默认安装到 `%LOCALAPPDATA%\Programs\PersonalWorkbench\个人工作台.exe`；切换版本前先保存并退出已运行的工作台，旧运行目录暂留以继续管理其已经启动的后台服务。
+当前源码版本为 0.1.69。安装包为 `release/PersonalWorkbench-0.1.69-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机默认安装到 `%LOCALAPPDATA%\Programs\PersonalWorkbench\个人工作台.exe`；切换版本前先保存并退出已运行的工作台，旧运行目录暂留以继续管理其已经启动的后台服务。
 
 「项目管理」保留项目运行操作，并新增独立 Monaco 代码编辑器。编辑器支持多文件、保存与外部冲突保护、项目搜索、跳转历史；Java 使用随安装包提供的 Eclipse JDT LS 做项目级语义导航、补全和诊断。功能、快捷键、验证结果及语言限制见 [代码编辑器交付记录](docs/代码编辑器-2026-11-12.md)。首次从源码打包会下载并校验固定版本的 Java 语言服务和运行时，后续使用本地缓存。
 

@@ -39,19 +39,37 @@ async function openFile(editor, query) {
 async function caret(editor, line, column) {
   await editor.locator(".monaco-editor .view-line").first().click();
   await editor.keyboard.press("Control+Home");
-  for (let i = 1; i < line; i++) await editor.keyboard.press("ArrowDown");
   const read = async () => {
     const value = await editor.locator(".editor-statusbar span:last-child").textContent();
     const match = /^(\d+):(\d+)/.exec(value);
     return match ? { line: Number(match[1]), column: Number(match[2]) } : null;
   };
+  // import 默认折叠，隐藏行会被跳过，因此按状态栏实际行号逐步下移
   let actual = await read();
-  assert.equal(actual?.line, line);
+  for (let i = 0; i < 80 && actual.line < line; i++) {
+    await editor.keyboard.press("ArrowDown");
+    const next = await read();
+    if (!next || next.line === actual.line) break;
+    actual = next;
+  }
+  assert.equal(actual.line, line);
   while (actual.column < column) { await editor.keyboard.press("ArrowRight"); actual = await read(); }
   while (actual.column > column) { await editor.keyboard.press("ArrowLeft"); actual = await read(); }
 }
 async function clickSymbol(page, line, symbol, modifiers) {
-  const point = await page.locator(".monaco-editor .view-line").nth(line - 1).evaluate((element, name) => {
+  const point = await page.evaluate(({ line: wanted, symbol: name }) => {
+    const host = document.querySelector(".monaco-editor");
+    const numbers = [...host.querySelectorAll(".margin-view-overlays .line-numbers")];
+    const label = numbers.find((item) => item.textContent.trim() === String(wanted));
+    if (!label) return null;
+    const box = label.getBoundingClientRect();
+    const middle = (box.top + box.bottom) / 2;
+    const lines = [...host.querySelectorAll(".view-lines .view-line")];
+    const element = lines.find((item) => {
+      const rect = item.getBoundingClientRect();
+      return Math.abs((rect.top + rect.bottom) / 2 - middle) < 4;
+    });
+    if (!element) return null;
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     const nodes = [];
     let node, text = "";
@@ -64,9 +82,9 @@ async function clickSymbol(page, line, symbol, modifiers) {
     const range = document.createRange();
     range.setStart(start.node, index - start.start);
     range.setEnd(end.node, index + name.length - end.start);
-    const box = range.getBoundingClientRect();
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  }, symbol);
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  }, { line, symbol });
   assert(point, `symbol ${symbol} not visible`);
   for (const modifier of modifiers) await page.keyboard.down(modifier);
   try { await page.mouse.click(point.x, point.y); }
@@ -120,11 +138,13 @@ async function clickSymbol(page, line, symbol, modifiers) {
     assert((await editor.locator(".monaco-editor .view-lines").textContent()).includes("String"));
     await editor.keyboard.press("Alt+ArrowLeft");
     await until(async () => (await editor.locator(".editor-tab.active .editor-tab-name").textContent()) === "Gateway.java", "return from library");
+    await caret(editor, 3, 14);
     await clickSymbol(editor, 3, "send", ["Control", "Shift"]);
     await editor.locator(".editor-palette-list button").first().waitFor({ timeout: 20000 });
     assert.equal(await editor.locator(".editor-palette-list button").count(), 2);
     await editor.keyboard.press("Escape");
     await editor.locator(".editor-tab").filter({ hasText: "Caller.java" }).click();
+    await caret(editor, 6, 18);
     await clickSymbol(editor, 6, "send", ["Control"]);
     await until(async () => (await editor.locator(".editor-tab.active .editor-tab-name").textContent()) === "Gateway.java", "Ctrl+Click definition");
     const firstFile = path.join(fixture, "impl/src/main/java/sample/impl/FirstGateway.java");
