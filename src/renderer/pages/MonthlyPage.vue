@@ -485,11 +485,6 @@ const majorSections = [
     <div class="page-head">
       <div>
         <h1>月度总结</h1>
-        <div class="h-meta">
-          <span>{{ materials.length }} 条工作素材</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ linkedInMonthCount }} 条已加入正文</span>
-        </div>
       </div>
 
       <div class="h-actions month-actions">
@@ -618,13 +613,12 @@ const majorSections = [
           </button>
         </div>
 
-        <div v-if="materials.length" class="all-materials">
+        <div v-if="selectableMaterials.length" class="all-materials">
           <label>
             <input
               type="checkbox"
               :checked="allSelected"
               :indeterminate="someSelected"
-              :disabled="!selectableMaterials.length"
               aria-label="全选可用素材"
               @change="toggleAll"
             />
@@ -648,8 +642,14 @@ const majorSections = [
         <div class="material-list">
           <div v-if="!materials.length" class="empty" style="margin: auto">
             <span class="empty-icon"><Icon name="stack" :size="16" /></span>
-            <p class="empty-title">{{ monthTitle.label }}暂无可用素材</p>
-            <p class="empty-hint">带有发生日期的工作记录会自动汇总到这里。</p>
+            <p class="empty-title">{{ monthTitle.label }}暂无素材</p>
+            <button
+              type="button"
+              class="link"
+              @click="navigate('work')"
+            >
+              去添加工作记录 →
+            </button>
           </div>
 
           <div
@@ -767,7 +767,7 @@ const majorSections = [
                   <b>{{
                     imageBusy ? "正在处理截图…" : "钉钉「工作内容汇总」截图"
                   }}</b>
-                  <small>按 Ctrl + V 粘贴或拖入，导出 Word 时随正文附上。</small>
+                  <small>Ctrl + V 粘贴或拖入图片</small>
                 </div>
                 <span class="push" />
                 <button
@@ -815,7 +815,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="s + '正文'"
-                    placeholder="在此人工编辑正文…"
+                    placeholder="输入正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">
@@ -865,7 +865,11 @@ const majorSections = [
                 </template>
 
                 <template v-else>
-                  <p class="doc-entry-text" @click="startEditEntry(e.id)">
+                  <p
+                    class="doc-entry-text"
+                    title="点击编辑"
+                    @click="startEditEntry(e.id)"
+                  >
                     {{ e.text }}
                   </p>
                 </template>
@@ -873,14 +877,18 @@ const majorSections = [
                 <div class="source-note">
                   <Icon :name="e.manual ? 'penbox' : 'link'" :size="11" />
                   <span>{{ entrySourceLabel(e) }}</span>
-                  <span class="entry-tools" @click.stop>
+                  <span
+                    v-if="editingEntryId !== e.id && e.text.trim()"
+                    class="entry-tools"
+                    @click.stop
+                  >
                     <button
                       type="button"
                       class="text-action"
                       @click="toggleEditEntry(e.id)"
                     >
                       <Icon name="penbox" :size="11" />
-                      {{ editingEntryId === e.id ? "收起编辑" : "编辑条目" }}
+                      编辑条目
                     </button>
                     <button
                       type="button"
@@ -981,7 +989,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="sec.key + '正文'"
-                    placeholder="在此人工编辑正文…"
+                    placeholder="输入正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">
@@ -1030,7 +1038,11 @@ const majorSections = [
                   </div>
                 </template>
                 <template v-else>
-                  <p class="doc-entry-text" @click="startEditEntry(e.id)">
+                  <p
+                    class="doc-entry-text"
+                    title="点击编辑"
+                    @click="startEditEntry(e.id)"
+                  >
                     {{ e.text }}
                   </p>
                 </template>
@@ -1038,14 +1050,18 @@ const majorSections = [
                 <div class="source-note">
                   <Icon :name="e.manual ? 'penbox' : 'link'" :size="11" />
                   <span>{{ entrySourceLabel(e) }}</span>
-                  <span class="entry-tools" @click.stop>
+                  <span
+                    v-if="editingEntryId !== e.id && e.text.trim()"
+                    class="entry-tools"
+                    @click.stop
+                  >
                     <button
                       type="button"
                       class="text-action"
                       @click="toggleEditEntry(e.id)"
                     >
                       <Icon name="penbox" :size="11" />
-                      {{ editingEntryId === e.id ? "收起编辑" : "编辑条目" }}
+                      编辑条目
                     </button>
                     <button
                       type="button"
@@ -1114,8 +1130,7 @@ const majorSections = [
     <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
     <div v-else class="card empty" style="flex: 1">
       <span class="empty-icon"><Icon name="report" :size="16" /></span>
-      <p class="empty-title">暂时没有月报草稿</p>
-      <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
+      <p class="empty-title">暂无月报草稿</p>
       <button type="button" class="link" @click="load()">重新读取</button>
     </div>
   </div>

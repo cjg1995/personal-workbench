@@ -175,16 +175,9 @@ async function restore() {
 <template>
   <div class="subpage-wrap">
     <div class="page-head">
-      <div>
+      <div class="page-head-inline">
         <h1>设置</h1>
-        <div class="h-meta">
-          <span>版本 {{ model.version }}</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>工作目录、工具路径与本地数据备份</span>
-        </div>
-      </div>
-      <div v-if="dirty" class="h-actions">
-        <span class="badge pending"><i class="dot" />有未保存修改</span>
+        <span class="badge neutral">v{{ model.version }}</span>
       </div>
     </div>
 
@@ -230,10 +223,6 @@ async function restore() {
 
       <div class="settings-body">
         <section v-if="tab === 'projects'">
-          <h2>工作目录 · {{ form.projects.length }} 个</h2>
-          <p class="small muted" style="margin-bottom: 12px">
-            未填写的高级字段沿用项目和 IDEA 配置。
-          </p>
           <details
             v-for="p in form.projects"
             :key="p.id"
@@ -269,38 +258,38 @@ async function restore() {
               v-if="['tomcat', 'spring'].includes(p.type)"
               class="form-line"
             >
-              <span>Java（空为原配置）</span>
-              <input v-model="p.java" />
+              <span>Java</span>
+              <input v-model="p.java" placeholder="留空沿用项目 / IDEA 配置" />
             </label>
             <label v-if="p.type === 'tomcat'" class="form-line">
               <span>Tomcat home</span>
               <input
                 v-model="p.catalinaHome"
-                placeholder="空为 IDEA 中的工具路径"
+                placeholder="留空沿用 IDEA 工具路径"
               />
             </label>
             <label v-if="p.type === 'tomcat'" class="form-line">
               <span>Tomcat base</span>
               <input
                 v-model="p.catalinaBase"
-                placeholder="空为该项目独立 base"
+                placeholder="留空沿用项目独立 base"
               />
             </label>
             <label v-if="p.type === 'tomcat'" class="form-line">
               <span>部署目录</span>
               <input
                 v-model="p.deployment"
-                placeholder="空为现有 exploded 部署"
+                placeholder="留空沿用现有 exploded 部署"
               />
             </label>
             <label v-if="p.type !== 'wechat'" class="form-line">
-              <span>实际配置端口</span>
+              <span>端口</span>
               <input
                 :value="p.expectedPort"
                 type="number"
                 min="1"
                 max="65535"
-                placeholder="空为实际项目配置"
+                placeholder="留空沿用项目配置"
                 @input="
                   p.expectedPort = ($event.target as HTMLInputElement).value
                     ? Number(($event.target as HTMLInputElement).value)
@@ -312,19 +301,19 @@ async function restore() {
               v-if="['tomcat', 'spring'].includes(p.type)"
               class="form-line"
             >
-              <span>上下文（空为原配置）</span>
-              <input v-model="p.context" />
+              <span>上下文</span>
+              <input v-model="p.context" placeholder="留空沿用项目配置" />
             </label>
             <label
               v-if="['tomcat', 'spring'].includes(p.type)"
               class="form-line"
             >
-              <span>VM 参数（空为原配置）</span>
-              <input v-model="p.vmArgs" />
+              <span>VM 参数</span>
+              <input v-model="p.vmArgs" placeholder="留空沿用项目配置" />
             </label>
             <label v-if="p.type === 'spring'" class="form-line">
               <span>Spring Profile</span>
-              <input v-model="p.springProfile" placeholder="空为原运行配置" />
+              <input v-model="p.springProfile" placeholder="留空沿用原运行配置" />
             </label>
           </details>
         </section>
@@ -372,8 +361,7 @@ async function restore() {
         </section>
 
         <section v-else-if="tab === 'data'" class="form-section">
-          <h2>本地数据</h2>
-          <div class="form-line">
+          <div class="form-line" style="margin-top: 0">
             <span>当前数据目录</span>
             <input
               :value="model.dataDir"
@@ -387,15 +375,11 @@ async function restore() {
               <Icon name="folder" :size="14" />打开目录
             </button>
           </div>
-          <p class="small muted">
-            版本 {{ model.version }}。数据只保存在本机。
-          </p>
 
           <section class="section-rule">
             <h2>备份与恢复</h2>
             <p class="muted small" style="margin-bottom: 12px">
-              备份包含记录、提示词、配置、月报、审查和 TXT
-              快照。恢复前会先保护当前数据，并要求没有正在运行的任务。
+              包含记录、提示词、配置、月报与快照
             </p>
             <div class="actions">
               <button
@@ -415,9 +399,6 @@ async function restore() {
                 选择备份并预览
               </button>
             </div>
-            <p class="small muted" style="margin-bottom: 12px">
-              不含 APK、源码和日志文件本身。
-            </p>
 
             <table v-if="backups.length" class="table">
               <thead>
@@ -510,27 +491,20 @@ async function restore() {
         </section>
 
         <section v-else class="form-section">
-          <h2>固定月报模板</h2>
-          <p class="small muted" style="margin-bottom: 12px">
-            沿用现有月报章节与排版，旧业务正文已清除。「一、工作成果」下的截图在月报页粘贴后自动插入。
-          </p>
-          <label class="form-line">
-            <span>默认姓名</span>
-            <input v-model="form.name" />
+          <label class="form-line" style="margin-top: 0">
+            <span>导出默认姓名</span>
+            <input
+              v-model="form.name"
+              placeholder="用于月报导出文件名"
+            />
           </label>
-          <p class="small muted" style="margin-bottom: 12px">
-            默认姓名用于月报导出文件名，月报页不再单独输入。
-          </p>
           <div class="form-line">
             <span>模板路径</span>
             <input
               v-model="form.tools.template"
-              placeholder="使用应用内置空白模板"
+              placeholder="留空使用内置空白模板（需保留五个章节槽位）"
             />
             <button type="button" @click="pickTool('template')">选择…</button>
-          </div>
-          <p class="small muted">自选模板需保留五个章节槽位。</p>
-          <div class="actions">
             <button
               type="button"
               @click="attempt(() => call('settings.template'))"

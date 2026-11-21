@@ -701,7 +701,7 @@ if (!app.requestSingleInstanceLock()) {
         const project = knownProject(item.projectId);
         const root = project.path;
         if (name === "editor.projects") return config.get().projects.map(
-          ({ id, name: label, type, path: dir }) => ({ id, name: label, type, path: dir }));
+          ({ id, name: label, group, type, path: dir }) => ({ id, name: label, group, type, path: dir }));
         if (name === "editor.switch-project") {
           const target = knownProject(String(p.projectId || ""));
           if (!fs.existsSync(target.path) || !fs.statSync(target.path).isDirectory())

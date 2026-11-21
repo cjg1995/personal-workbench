@@ -309,7 +309,7 @@ small {
   transition: opacity 0.16s var(--ease), transform 0.2s var(--ease);
 }
 
-.brand {
+.rail .brand {
   height: 80px;
   flex: none;
   display: flex;
@@ -319,14 +319,14 @@ small {
   -webkit-app-region: drag;
 }
 
-.brand img {
+.rail .brand img {
   width: 33px;
   height: 33px;
   object-fit: contain;
   display: block;
 }
 
-.brand strong {
+.rail .brand strong {
   font-size: 19px;
   font-weight: 640;
   color: var(--ink);
@@ -663,17 +663,23 @@ small {
   align-items: center;
   justify-content: space-between;
   flex: none;
-  margin-bottom: 20px;
-  min-height: 62px;
+  margin-bottom: 16px;
+  min-height: 44px;
   gap: 20px;
 }
 
 .page-head h1 {
-  font-size: 31px;
-  line-height: 1.28;
-  letter-spacing: -0.9px;
-  font-weight: 710;
+  font-size: 27px;
+  line-height: 1.24;
+  letter-spacing: -0.6px;
+  font-weight: 700;
   color: var(--ink);
+}
+
+.page-head-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .h-meta {
@@ -1802,6 +1808,17 @@ label:not(.search-box):not(.form-line):not(.detail-edit-row):not(.inline-label):
   color: var(--soft);
 }
 
+.empty.empty-subtle {
+  color: #8b96a6;
+  font-size: 13px;
+  padding: 24px 20px;
+}
+
+.tasks-empty-card {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 .empty.compact {
   padding: 12px 16px;
   flex-direction: row;
@@ -2060,6 +2077,11 @@ details > summary:hover {
   margin-bottom: 14px;
 }
 
+.record-dialog-actions {
+  justify-content: flex-end;
+  margin: 14px 0 0;
+}
+
 .dialog-hint {
   display: inline-flex;
   align-items: center;
@@ -2094,14 +2116,15 @@ details > summary:hover {
    ========================================================================== */
 
 .page-head.notes-head {
-  align-items: flex-start;
+  align-items: center;
   gap: 24px;
   margin-bottom: 16px;
+  min-height: 52px;
 }
 
 .page-head.notes-head .page-head-title {
   flex: 0 0 auto;
-  padding-top: 4px;
+  padding-top: 0;
 }
 
 .quick-entry {
@@ -2119,6 +2142,13 @@ details > summary:hover {
     box-shadow var(--dur) var(--ease);
 }
 
+.quick-entry.quick-entry-inline {
+  flex-direction: row;
+  align-items: flex-end;
+  padding: 3px 8px 3px 4px;
+  gap: 8px;
+}
+
 .quick-entry:hover {
   border-color: var(--control-line-hover);
 }
@@ -2133,20 +2163,35 @@ details > summary:hover {
 
 .quick-entry .entry-input {
   width: 100%;
-  min-height: 64px;
-  max-height: 180px;
+  min-height: 44px;
+  max-height: 160px;
   margin: 0;
-  padding: 11px 15px 8px;
+  padding: 10px 8px 10px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-size: 14px;
   font-weight: 450;
-  line-height: 1.65;
+  line-height: 1.55;
   resize: none;
   box-shadow: none;
   overflow-y: hidden;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.quick-entry .entry-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 0 0 6px;
+}
+
+.quick-entry .entry-date-chip .ico {
+  color: var(--icon);
+  flex: none;
 }
 
 .quick-entry .entry-input:focus {
@@ -2844,6 +2889,15 @@ button.month-chip:hover:not(:disabled) {
   border: 1px solid #dce6f3;
   border-radius: 8px;
   padding: 19px 20px 22px;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.record-sheet.editable {
+  cursor: text;
+}
+
+.record-sheet.editable:hover {
+  border-color: #b7cef0;
 }
 
 .record-sheet::after {
@@ -2928,7 +2982,7 @@ button.month-chip:hover:not(:disabled) {
 }
 
 .detail-edit-form textarea {
-  min-height: 148px;
+  min-height: 180px;
   font-size: 13.5px;
   line-height: 1.7;
 }
@@ -3059,6 +3113,15 @@ button.month-chip:hover:not(:disabled) {
   font-weight: 520;
 }
 
+.tabs .tab-ratio {
+  margin-left: auto;
+  align-self: center;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
 .radio-btn {
   display: inline-flex;
   align-items: center;
@@ -3071,19 +3134,27 @@ button.month-chip:hover:not(:disabled) {
   border-radius: 50%;
   border: 1.6px solid #98a4b5;
   background: var(--paper);
-  color: transparent;
+  color: rgba(145, 160, 180, 0.25);
   box-shadow: none;
   flex: none;
+  transition: border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 
 .idea-line.selected .radio-btn {
   border-color: #699ada;
 }
 
+.idea-line:hover .radio-btn:not(.checked):not(:disabled) {
+  border-color: #699ada;
+  background: var(--blue-wash);
+  color: #6c9ad6;
+}
+
 .radio-btn:hover:not(:disabled) {
   border-color: var(--progress-done);
-  background: var(--blue-wash);
-  color: #7ea8de;
+  background: var(--tint);
+  color: var(--progress-done);
 }
 
 .radio-btn.checked {
@@ -3219,6 +3290,10 @@ button.month-chip:hover:not(:disabled) {
   margin: 12px 0 10px;
   letter-spacing: -0.4px;
   word-break: break-word;
+}
+
+.idea-article h3.editable {
+  cursor: text;
 }
 
 .idea-article h3.long-single {
@@ -3383,11 +3458,6 @@ button.month-chip:hover:not(:disabled) {
   flex: none;
 }
 
-.tech-icon.phone {
-  background: #eff3f9;
-  color: #627792;
-}
-
 .tech-icon.web {
   background: #edf5f1;
   color: #4c7a72;
@@ -3424,6 +3494,16 @@ button.month-chip:hover:not(:disabled) {
   font-size: inherit;
   color: var(--success-ink);
   font-weight: 600;
+}
+
+.project-item small .sep-inline {
+  margin: 0 4px;
+  color: #b4bfce;
+}
+
+.project-item small .state-word {
+  color: var(--warning-ink);
+  font-weight: 560;
 }
 
 .project-item .run-action {
@@ -3683,6 +3763,12 @@ button.month-chip:hover:not(:disabled) {
 
 .term-head .live-light.idle {
   background: #b5c0cf;
+}
+
+.term-head .term-host {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--soft);
 }
 
 .term-find {
@@ -4301,6 +4387,13 @@ button.month-chip:hover:not(:disabled) {
   margin-left: auto;
   color: #5c6e83;
   position: relative;
+  opacity: 0.72;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.doc-entry:hover .source-note .entry-tools,
+.source-note .entry-tools:focus-within {
+  opacity: 1;
 }
 
 .entry-tools .text-action {
@@ -4630,13 +4723,14 @@ button.month-chip:hover:not(:disabled) {
 .settings-card {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 100%;
   overflow: hidden;
 }
 
 .settings-body {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 24px;

@@ -113,48 +113,36 @@ function setKind(value: "idea" | "work") {
         </button>
       </div>
       <p v-if="existing.length" class="notice">
-        此来源已有 {{ existing.length }} 条工作记录。请核对，避免重复录入。
+        已存在 {{ existing.length }} 条同来源记录。
       </p>
-      <label>
-        内容
-        <textarea
-          v-model="form.text"
-          required
-          rows="5"
-          :placeholder="
-            form.kind === 'idea'
-              ? '想到的事，先记下来…'
-              : '记录实际发生的工作，保存前可以修改…'
-          "
-        />
-      </label>
-      <div class="actions spaced">
-        <span class="dialog-hint">
-          <span class="mini-key">Ctrl</span>
-          <span>+</span>
-          <span class="mini-key">Enter</span>
-          <span>保存</span>
-          <span class="sep-dot" aria-hidden="true" />
-          <span class="mini-key">Esc</span>
-          <span>关闭</span>
-        </span>
-        <div class="row">
-          <button type="button" :disabled="busy" @click="close">取消</button>
-          <button
-            type="submit"
-            class="primary"
-            :disabled="busy || !form.text?.trim()"
-            :aria-busy="busy"
-          >
-            {{
-              busy
-                ? "保存中…"
-                : form.kind === "idea"
-                  ? "添加待办"
-                  : "保存记录"
-            }}
-          </button>
-        </div>
+      <textarea
+        v-model="form.text"
+        required
+        rows="5"
+        aria-label="记录内容"
+        :placeholder="
+          form.kind === 'idea'
+            ? '记个想法…'
+            : '输入工作内容…'
+        "
+      />
+      <div class="actions record-dialog-actions">
+        <button type="button" :disabled="busy" @click="close">取消</button>
+        <button
+          type="submit"
+          class="primary"
+          :disabled="busy || !form.text?.trim()"
+          :aria-busy="busy"
+          title="快捷键 Ctrl+Enter"
+        >
+          {{
+            busy
+              ? "保存中…"
+              : form.kind === "idea"
+                ? "添加待办"
+                : "保存记录"
+          }}
+        </button>
       </div>
     </form>
   </dialog>
