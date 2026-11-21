@@ -164,7 +164,6 @@ html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
   background: #f0f3f7;
   color: #5c6c82;
 }
-.editor-project-icon.phone { background: #eff3f9; color: #627792; }
 .editor-project-icon.web { background: #edf5f1; color: #4c7a72; }
 .editor-project-row.current .editor-project-icon { background: #d4e5ff; color: #2b60a3; }
 .editor-project-info { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -264,7 +263,6 @@ html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .editor-dark .editor-project-row.current:hover,
 .editor-dark .editor-project-row.current.highlighted { background: rgba(53, 88, 128, 0.62); border-color: #5480b3; }
 .editor-dark .editor-project-icon { background: #2d3038; color: #9aa5b5; }
-.editor-dark .editor-project-icon.phone { background: #2c3240; color: #9ab0cc; }
 .editor-dark .editor-project-icon.web { background: #263634; color: #8ec2b7; }
 .editor-dark .editor-project-row.current .editor-project-icon { background: #2e4c73; color: #cfe0ff; }
 .editor-dark .editor-project-btn { background: #2b2d33; border-color: #464a54; color: var(--editor-text); }

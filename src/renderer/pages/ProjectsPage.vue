@@ -112,12 +112,10 @@ const types: Record<string, string> = {
   "uni-wechat": "UniApp 小程序",
 };
 
-function techIcon(project: { id: string; type: string }) {
+function techIcon(project: { type: string }) {
   if (project.type === "spring" || project.type === "tomcat")
     return { icon: "server", cls: "server" };
-  if (project.type === "vue" || project.id === "wecom")
-    return { icon: "web", cls: "web" };
-  return { icon: "phone", cls: "phone" };
+  return { icon: "web", cls: "web" };
 }
 
 function shortEnvLabel(type: string, description?: string) {

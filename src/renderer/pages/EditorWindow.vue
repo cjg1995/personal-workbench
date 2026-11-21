@@ -165,9 +165,7 @@ const orderedFilteredProjects = computed(() =>
 function projectIcon(project: ProjectOption) {
   if (project.type === "spring" || project.type === "tomcat")
     return { icon: "server", cls: "server" };
-  if (project.type === "vue" || project.id === "wecom")
-    return { icon: "web", cls: "web" };
-  return { icon: "phone", cls: "phone" };
+  return { icon: "web", cls: "web" };
 }
 watch(projectQuery, () => {
   const list = orderedFilteredProjects.value;

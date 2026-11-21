@@ -3458,11 +3458,6 @@ button.month-chip:hover:not(:disabled) {
   flex: none;
 }
 
-.tech-icon.phone {
-  background: #eff3f9;
-  color: #627792;
-}
-
 .tech-icon.web {
   background: #edf5f1;
   color: #4c7a72;
