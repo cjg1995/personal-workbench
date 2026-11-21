@@ -80,8 +80,7 @@ watch(context, (value) => {
 
         <div class="task-list-scroll">
           <div v-if="!tasks.length" class="empty">
-            <span class="empty-icon"><Icon name="tasks" :size="16" /></span>
-            <p class="empty-title">没有执行记录</p>
+            <span>没有执行记录</span>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清空搜索
             </button>
@@ -134,11 +133,7 @@ watch(context, (value) => {
         </div>
         <div class="pane-scroll">
           <TaskDetail v-if="active" :task="active" />
-          <div v-else class="empty" style="margin-top: 40px">
-            <span class="empty-icon"><Icon name="tasks" :size="16" /></span>
-            <p class="empty-title">选择一个任务</p>
-            <p class="empty-hint">点击左侧任务查看执行阶段、产物信息与详细日志。</p>
-          </div>
+          <div v-else class="empty" style="margin-top: 40px">未选择</div>
         </div>
       </section>
     </div>

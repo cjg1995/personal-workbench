@@ -714,21 +714,17 @@ onBeforeUnmount(() => {
             </template>
 
             <div v-else class="empty-panel">
-              <Icon name="prompt-collection" :size="24" />
-              <strong>
+              <span>
                 {{
                   isFiltering
                     ? "没有匹配的提示词"
                     : tab === "deleted"
                       ? "已删除列表为空"
                       : tab === "favorites"
-                        ? "还没有收藏的提示词"
+                        ? "暂无收藏的提示词"
                         : "还没有提示词"
                 }}
-              </strong>
-              <p v-if="!isFiltering && tab === 'all'">
-                把平时常用的提示词保存在本机，随时搜索、填写变量并复制。
-              </p>
+              </span>
               <button
                 v-if="isFiltering"
                 type="button"
@@ -736,15 +732,6 @@ onBeforeUnmount(() => {
                 @click="clearFilters"
               >
                 清除筛选
-              </button>
-              <button
-                v-else-if="tab === 'all'"
-                type="button"
-                class="btn compact light-brand"
-                @click="openCreate"
-              >
-                <Icon name="plus" :size="14" />
-                <span>新建第一条</span>
               </button>
             </div>
           </div>
@@ -898,17 +885,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <div v-else class="empty-panel">
-            <Icon name="prompt-collection" :size="26" />
-            <strong>{{
-              counts.all === 0 && tab === "all" && !isFiltering
-                ? "创建你的第一条提示词"
-                : "选择一条提示词查看正文"
-            }}</strong>
-            <p v-if="counts.all === 0 && tab === 'all' && !isFiltering">
-              支持普通提示词和带 &#123;&#123;变量名&#125;&#125; 的可复用模板。
-            </p>
-          </div>
+          <div v-else class="empty-panel">未选择</div>
         </section>
       </div>
     </template>

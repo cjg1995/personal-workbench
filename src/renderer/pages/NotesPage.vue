@@ -210,7 +210,7 @@ const activeDay = computed(() =>
     : "",
 );
 
-/* 灵感待办统计与进度环 */
+/* 灵感待办统计 */
 const openIdeas = computed(() => activeAll.value.filter((n) => !n.completedAt));
 const completedIdeas = computed(() =>
   activeAll.value.filter((n) => !!n.completedAt),
@@ -218,35 +218,6 @@ const completedIdeas = computed(() =>
 const ideaTotal = computed(
   () => openIdeas.value.length + completedIdeas.value.length,
 );
-const ideaPercent = computed(() =>
-  ideaTotal.value === 0
-    ? 0
-    : Math.round((completedIdeas.value.length / ideaTotal.value) * 100),
-);
-const progressSegments = computed(() => {
-  const total = ideaTotal.value;
-  const done = completedIdeas.value.length;
-  let lit = 0;
-  if (total > 0 && done > 0) {
-    lit = Math.round((done / total) * 12);
-    if (lit === 0) lit = 1;
-    if (done < total && lit === 12) lit = 11;
-  }
-  const r = 41.5,
-    c = 50;
-  return Array.from({ length: 12 }, (_, i) => {
-    const start = ((-90 + i * 30 + 2.8) * Math.PI) / 180;
-    const end = ((-90 + (i + 1) * 30 - 2.8) * Math.PI) / 180;
-    const x1 = (c + r * Math.cos(start)).toFixed(3);
-    const y1 = (c + r * Math.sin(start)).toFixed(3);
-    const x2 = (c + r * Math.cos(end)).toFixed(3);
-    const y2 = (c + r * Math.sin(end)).toFixed(3);
-    return {
-      d: `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`,
-      done: i < lit,
-    };
-  });
-});
 
 /* 过滤后的列表 */
 const filtered = computed(() => {
@@ -320,10 +291,6 @@ const ideaGroups = computed(() => {
 });
 
 const editorParts = computed(() => splitNoteText(editor.value?.text || ""));
-
-function focusComposer() {
-  composer.value?.focus();
-}
 
 async function canLeave() {
   return (
@@ -973,30 +940,19 @@ async function restore() {
 
         <div ref="workListRef" class="work-list">
           <div v-if="!filtered.length" class="empty">
-            <span class="empty-icon">
-              <Icon :name="query ? 'search' : 'note'" :size="16" />
-            </span>
-            <p class="empty-title">
+            <span class="empty-title">
               {{
                 query
                   ? "没有匹配的工作记录"
                   : tab === "deleted"
                     ? "没有已删除记录"
                     : month
-                      ? `${monthTitle.label}还没有工作记录`
-                      : "还没有工作记录"
+                      ? `${monthTitle.label}暂无工作记录`
+                      : "暂无工作记录"
               }}
-            </p>
+            </span>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
-            </button>
-            <button
-              v-else-if="tab === 'active'"
-              type="button"
-              class="link"
-              @click="focusComposer"
-            >
-              在顶部写下第一条
             </button>
           </div>
 
@@ -1244,13 +1200,7 @@ async function restore() {
           </div>
         </template>
 
-        <div v-else class="empty" style="margin: auto">
-          <span class="empty-icon"><Icon name="document" :size="16" /></span>
-          <p class="empty-title">
-            {{ filtered.length ? "选择一条工作记录" : "暂无可展示的记录详情" }}
-          </p>
-          <p class="empty-hint">点击左侧列表中的记录，在此查看或编辑完整正文。</p>
-        </div>
+        <div v-else class="empty" style="margin: auto">未选择</div>
       </section>
     </div>
   </template>
@@ -1372,30 +1322,19 @@ async function restore() {
 
         <div class="idea-groups">
           <div v-if="!filtered.length" class="empty" style="margin: auto">
-            <span class="empty-icon">
-              <Icon :name="query ? 'search' : 'idea'" :size="16" />
-            </span>
-            <p class="empty-title">
+            <span class="empty-title">
               {{
                 query
                   ? "没有匹配的待办"
                   : tab === "completed"
-                    ? "还没有已完成的待办"
+                    ? "暂无已完成待办"
                     : tab === "deleted"
                       ? "没有已删除待办"
-                      : "待办清单目前为空"
+                      : "暂无待办"
               }}
-            </p>
+            </span>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
-            </button>
-            <button
-              v-else-if="tab === 'active'"
-              type="button"
-              class="link"
-              @click="focusComposer"
-            >
-              记下第一条想法
             </button>
           </div>
 
@@ -1454,56 +1393,12 @@ async function restore() {
         </div>
 
         <div class="footnote">
-          <Icon name="check-circle" :size="14" />
-          <span>{{
-            tab === "completed"
-              ? "点击条目前的圆圈可重新打开待办"
-              : tab === "deleted"
-                ? "已删除待办可在右侧详情中恢复"
-                : "点击条目前的圆圈可标记完成"
-          }}</span>
+          <span>已完成 {{ completedIdeas.length }} / 共 {{ ideaTotal }}</span>
         </div>
       </section>
 
-      <!-- 右栏：完成进度 + 待办详情 -->
-      <div class="inbox-col">
-        <section class="card goal-card">
-          <div class="goal-copy">
-            <h2>完成进度</h2>
-            <div class="goal-stat">
-              <i class="dot" style="color: var(--progress-done)" />
-              <span>已完成 <b>{{ completedIdeas.length }}</b> 项</span>
-            </div>
-            <div class="goal-stat">
-              <i class="dot" style="color: var(--progress-open)" />
-              <span>未完成 <b>{{ openIdeas.length }}</b> 项</span>
-            </div>
-          </div>
-          <div
-            class="goal-visual"
-            role="img"
-            :aria-label="`待办完成进度 ${ideaPercent}%，已完成 ${completedIdeas.length} 项，未完成 ${openIdeas.length} 项`"
-          >
-            <svg viewBox="0 0 100 100" width="99" height="99" aria-hidden="true">
-              <path
-                v-for="(seg, idx) in progressSegments"
-                :key="idx"
-                :d="seg.d"
-                :stroke="
-                  seg.done ? 'var(--progress-done)' : 'var(--progress-open)'
-                "
-                stroke-width="8"
-                fill="none"
-              />
-            </svg>
-            <div class="goal-center">
-              <strong>{{ ideaPercent }}</strong>
-              <small>%</small>
-            </div>
-          </div>
-        </section>
-
-        <section class="card pane idea-detail note-detail">
+      <!-- 右栏：待办详情 -->
+      <section class="card pane idea-detail note-detail">
           <div class="panel-head spaced-head">
             <div class="head-title">
               <Icon name="idea" :size="17" />
@@ -1674,15 +1569,8 @@ async function restore() {
             </div>
           </template>
 
-          <div v-else class="empty" style="margin: auto">
-            <span class="empty-icon"><Icon name="idea" :size="16" /></span>
-            <p class="empty-title">
-              {{ filtered.length ? "选择一条待办" : "暂无可展示的待办详情" }}
-            </p>
-            <p class="empty-hint">点击左侧待办可查看详情、编辑或转为工作记录。</p>
-          </div>
-        </section>
-      </div>
+          <div v-else class="empty" style="margin: auto">未选择</div>
+      </section>
     </div>
   </template>
 </template>

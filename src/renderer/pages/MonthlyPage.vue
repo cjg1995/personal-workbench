@@ -647,9 +647,7 @@ const majorSections = [
 
         <div class="material-list">
           <div v-if="!materials.length" class="empty" style="margin: auto">
-            <span class="empty-icon"><Icon name="stack" :size="16" /></span>
-            <p class="empty-title">{{ monthTitle.label }}暂无可用素材</p>
-            <p class="empty-hint">带有发生日期的工作记录会自动汇总到这里。</p>
+            {{ monthTitle.label }}暂无素材
           </div>
 
           <div
@@ -1113,9 +1111,7 @@ const majorSections = [
 
     <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
     <div v-else class="card empty" style="flex: 1">
-      <span class="empty-icon"><Icon name="report" :size="16" /></span>
-      <p class="empty-title">暂时没有月报草稿</p>
-      <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
+      <span class="empty-title">暂无月报草稿</span>
       <button type="button" class="link" @click="load()">重新读取</button>
     </div>
   </div>

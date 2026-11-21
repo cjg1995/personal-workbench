@@ -96,7 +96,7 @@
   --danger: var(--danger-ink);
   --danger-soft: var(--danger-bg);
 
-  --overlay: rgba(23, 28, 38, 0.38);
+  --overlay: rgba(15, 20, 30, 0.32);
   --toast-ok: #b7e6cc;
   --toast-error: #f4b7b1;
   --shadow-xs: 0 1px 2px rgba(31, 35, 41, 0.04);
@@ -1772,32 +1772,21 @@ label:not(.search-box):not(.form-line):not(.detail-edit-row):not(.inline-label):
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 32px 20px;
+  gap: 8px;
+  padding: 28px 20px;
   color: var(--soft);
   font-size: 13px;
+  font-weight: 400;
   text-align: center;
 }
 
-.empty .empty-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: var(--quiet-surface);
-  color: var(--icon);
-}
-
 .empty .empty-title {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--soft);
 }
 
 .empty .empty-hint {
-  max-width: 40ch;
   font-size: 12px;
   color: var(--soft);
 }
@@ -2031,7 +2020,6 @@ details > summary:hover {
 .record-dialog::backdrop,
 .rules-dialog::backdrop {
   background: var(--overlay);
-  backdrop-filter: blur(2px);
 }
 
 @keyframes dialog-in {
@@ -2309,8 +2297,8 @@ details > summary:hover {
   flex: none;
   padding: 13px 18px;
   margin-bottom: 16px;
-  background: linear-gradient(105deg, #eff5ff 0%, #f8fbff 28%, #ffffff 78%);
-  border-color: #dbe5f3;
+  background: var(--paper);
+  border-color: var(--line);
   position: relative;
 }
 
@@ -2840,21 +2828,10 @@ button.month-chip:hover:not(:disabled) {
 
 .record-sheet {
   position: relative;
-  background: linear-gradient(115deg, #f4f8ff, #fbfdff);
-  border: 1px solid #dce6f3;
-  border-radius: 8px;
-  padding: 19px 20px 22px;
-}
-
-.record-sheet::after {
-  content: "";
-  position: absolute;
-  top: -1px;
-  right: 22px;
-  background: #90b5e5;
-  width: 12px;
-  height: 15px;
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 73%, 0 100%);
+  background: var(--back);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px 18px 18px;
 }
 
 .sheet-kind {
@@ -3125,79 +3102,6 @@ button.month-chip:hover:not(:disabled) {
 
 .idea-line.selected > .ico {
   color: var(--brand);
-}
-
-.inbox-col {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: 18px;
-}
-
-.goal-card {
-  flex: 0 0 156px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 0 28px 0 23px;
-  background: linear-gradient(105deg, #f8fbff, #edf4ff);
-  border-color: #dbe5f3;
-}
-
-.goal-visual {
-  position: relative;
-  height: 99px;
-  width: 99px;
-  flex: none;
-}
-
-.goal-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  color: #2d4867;
-}
-
-.goal-center strong {
-  font: 650 29px/1 var(--sans);
-  letter-spacing: -1.3px;
-  color: inherit;
-}
-
-.goal-center small {
-  font-size: 13px;
-  margin: 7px 0 0 1px;
-}
-
-.goal-copy {
-  min-width: 0;
-}
-
-.goal-copy h2 {
-  font-size: 16px;
-  font-weight: 660;
-  margin-bottom: 9px;
-}
-
-.goal-stat {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: #526173;
-  margin-top: 5px;
-}
-
-.goal-stat b {
-  color: #26394e;
-}
-
-.goal-stat .dot {
-  width: 7px;
-  height: 7px;
 }
 
 .idea-detail {
@@ -3755,14 +3659,7 @@ button.month-chip:hover:not(:disabled) {
   min-height: 0;
   overflow: auto;
   padding: 8px 12px 10px 0;
-  background: linear-gradient(
-    90deg,
-    #f1f4f8 40px,
-    #e1e6ee 40px,
-    #e1e6ee 41px,
-    #f9fafc 41px
-  );
-  background-attachment: local;
+  background: var(--back);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -3788,7 +3685,9 @@ button.month-chip:hover:not(:disabled) {
 .logline .n {
   color: #606e80;
   text-align: right;
-  padding-right: 12px;
+  padding-right: 8px;
+  margin-right: 6px;
+  border-right: 1px solid var(--line);
   user-select: none;
   font-size: 11px;
 }
@@ -4934,10 +4833,6 @@ button.month-chip:hover:not(:disabled) {
   }
   .pane {
     min-height: 320px;
-  }
-  .goal-card {
-    flex: none;
-    min-height: 136px;
   }
   .terminal {
     min-height: 300px;

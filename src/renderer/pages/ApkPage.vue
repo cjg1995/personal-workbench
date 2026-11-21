@@ -202,13 +202,7 @@ async function start() {
         </div>
         <div class="pane-scroll">
           <TaskDetail v-if="task" :task="task" compact />
-          <div v-else class="empty">
-            <span class="empty-icon"><Icon name="box" :size="16" /></span>
-            <p class="empty-title">尚未开始构建</p>
-            <p class="empty-hint">
-              在左侧确认应用与构建类型后点击“开始打包”，或从下方选择历史构建查看详情。
-            </p>
-          </div>
+          <div v-else class="empty">未开始构建</div>
 
           <section class="section-rule">
             <div class="section-head">

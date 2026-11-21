@@ -198,8 +198,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 .ui-msg-dialog::backdrop {
-  background: rgba(23, 28, 38, 0.36);
-  backdrop-filter: blur(2.5px);
+  background: var(--overlay, rgba(15, 20, 30, 0.32));
 }
 
 @keyframes ui-msg-in {
