@@ -342,7 +342,11 @@ async function cancel() {
         </section>
     </div></template
   >
-  <div v-else class="empty">未检查仓库</div>
+  <div v-else class="empty">
+    <span class="empty-icon"><Icon name="branch" :size="16" /></span>
+    <p class="empty-title">尚未检查仓库</p>
+    <p class="empty-hint">检查只读取状态，不会提交或推送。</p>
+  </div>
   </div>
   <footer v-if="effective && (!task || task.state === 'awaiting')" class="submit-footer">
     <label class="submit-footer-message">

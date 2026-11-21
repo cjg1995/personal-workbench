@@ -500,6 +500,7 @@ onBeforeUnmount(() => {
     @focusout="onFocusOut"
   >
     <div class="term-head">
+      <Icon name="term" :size="16" />
       <h3>运行日志</h3>
       <span class="live-light" :class="{ idle: !active }" />
       <div class="term-find" role="search">
@@ -584,7 +585,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <div v-else class="term-empty">
-        <span>暂无日志输出</span>
+        <span>暂无日志输出，等待进程写入…</span>
       </div>
     </div>
 

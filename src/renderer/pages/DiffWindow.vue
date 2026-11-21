@@ -1287,7 +1287,7 @@ onBeforeUnmount(disposeViewer);
       ><span v-if="isConflict"
         >以 Git 暂存区三个阶段为准 · 在 Git 管理中 Continue / Abort</span
       ><span class="diff-status-result">{{ result.slice(-200) }}</span
-      ><span>F7 / Shift+F7 跨文件 · F11 全屏</span>
+      ><span>F7 / Shift+F7 跨文件 · F11 沉浸查看</span>
     </footer>
     <MessageDialog :dark="settings.dark" />
   </div>

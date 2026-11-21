@@ -178,7 +178,7 @@ onBeforeUnmount(() => observer?.disconnect());
           :style="{ top: (start + index) * rowHeight + 'px' }"
           role="option"
           :aria-selected="file.path === selected"
-          :title="(file.oldPath ? file.oldPath + ' → ' : '') + file.path + '（双击或按 Enter 打开对比）'"
+          :title="(file.oldPath ? file.oldPath + ' → ' : '') + file.path"
           @click="emit('select', file)"
           @dblclick="emit('show', file)"
           @contextmenu.prevent="emit('menu', file, $event)"
@@ -208,13 +208,9 @@ onBeforeUnmount(() => observer?.disconnect());
               <strong>{{ splitFilePath(file.path).name }}</strong>
             </span>
           </div>
-          <span
-            class="git-status-pill"
-            :class="statusMeta(file).tone"
-            :title="statusMeta(file).label"
-            :aria-label="statusMeta(file).label"
-          >
+          <span class="git-status-pill" :class="statusMeta(file).tone">
             <b>{{ statusMeta(file).code }}</b>
+            <span>{{ statusMeta(file).label }}</span>
           </span>
           <button
             v-if="file.staged && !file.unstaged && !file.untracked"
@@ -254,7 +250,7 @@ onBeforeUnmount(() => observer?.disconnect());
           :style="{ top: (start + index) * rowHeight + 'px' }"
           role="option"
           :aria-selected="file.path === selected"
-          :title="(file.oldPath ? file.oldPath + ' → ' : '') + file.path + '（双击或按 Enter 打开对比）'"
+          :title="(file.oldPath ? file.oldPath + ' → ' : '') + file.path"
           @click="emit('select', file)"
           @dblclick="emit('show', file)"
           @contextmenu.prevent="emit('menu', file, $event)"

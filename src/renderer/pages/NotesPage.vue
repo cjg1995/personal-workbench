@@ -19,6 +19,7 @@ import {
   formatDateTime,
   formatFullDate,
   formatGroupDate,
+  formatMonthDay,
   formatMonthTitle,
   formatTimeHM,
   getMonthDays,
@@ -140,10 +141,25 @@ const monthRecords = computed(() =>
         b.createdAt.localeCompare(a.createdAt),
     ),
 );
+const latestRecordLabel = computed(() => {
+  const inMonth = monthRecords.value.find((n) => !!n.happenedOn);
+  if (inMonth?.happenedOn) return formatMonthDay(inMonth.happenedOn, false);
+  const anyDated = activeAll.value
+    .filter((n) => !!n.happenedOn)
+    .sort((a, b) => (b.happenedOn || "").localeCompare(a.happenedOn || ""))[0];
+  return anyDated?.happenedOn ? formatMonthDay(anyDated.happenedOn, false) : "";
+});
+
 const monthTitle = computed(() => formatMonthTitle(month.value));
 const monthDays = computed(() =>
   month.value ? getMonthDays(month.value) : [],
 );
+const workMetaCountLabel = computed(() => {
+  if (!month.value) return `共 ${monthRecords.value.length} 条记录`;
+  if (month.value === currentMonth.value)
+    return `本月 ${monthRecords.value.length} 条记录`;
+  return `${monthTitle.value.label} ${monthRecords.value.length} 条记录`;
+});
 const workActiveTabLabel = computed(() => {
   if (!month.value) return "全部记录";
   if (month.value === currentMonth.value) return "本月记录";
@@ -194,7 +210,7 @@ const activeDay = computed(() =>
     : "",
 );
 
-/* 灵感待办统计 */
+/* 灵感待办统计与进度环 */
 const openIdeas = computed(() => activeAll.value.filter((n) => !n.completedAt));
 const completedIdeas = computed(() =>
   activeAll.value.filter((n) => !!n.completedAt),
@@ -202,6 +218,35 @@ const completedIdeas = computed(() =>
 const ideaTotal = computed(
   () => openIdeas.value.length + completedIdeas.value.length,
 );
+const ideaPercent = computed(() =>
+  ideaTotal.value === 0
+    ? 0
+    : Math.round((completedIdeas.value.length / ideaTotal.value) * 100),
+);
+const progressSegments = computed(() => {
+  const total = ideaTotal.value;
+  const done = completedIdeas.value.length;
+  let lit = 0;
+  if (total > 0 && done > 0) {
+    lit = Math.round((done / total) * 12);
+    if (lit === 0) lit = 1;
+    if (done < total && lit === 12) lit = 11;
+  }
+  const r = 41.5,
+    c = 50;
+  return Array.from({ length: 12 }, (_, i) => {
+    const start = ((-90 + i * 30 + 2.8) * Math.PI) / 180;
+    const end = ((-90 + (i + 1) * 30 - 2.8) * Math.PI) / 180;
+    const x1 = (c + r * Math.cos(start)).toFixed(3);
+    const y1 = (c + r * Math.sin(start)).toFixed(3);
+    const x2 = (c + r * Math.cos(end)).toFixed(3);
+    const y2 = (c + r * Math.sin(end)).toFixed(3);
+    return {
+      d: `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`,
+      done: i < lit,
+    };
+  });
+});
 
 /* 过滤后的列表 */
 const filtered = computed(() => {
@@ -275,6 +320,10 @@ const ideaGroups = computed(() => {
 });
 
 const editorParts = computed(() => splitNoteText(editor.value?.text || ""));
+
+function focusComposer() {
+  composer.value?.focus();
+}
 
 async function canLeave() {
   return (
@@ -525,8 +574,8 @@ async function toggleComplete(target?: Note) {
       tone: "question",
       title: "有未保存修改",
       message: canSave
-        ? "保存当前内容后再标记完成？"
-        : "内容为空，无法保存。丢弃修改并标记完成？",
+        ? "可以先保存当前内容，再标记完成。"
+        : "内容为空，无法保存。可以丢弃本次修改后标记完成。",
       buttons: canSave
         ? [
             { label: "取消", variant: "default" },
@@ -620,11 +669,20 @@ async function restore() {
 </script>
 
 <template>
-  <!-- 工作记录视图 -->
+  <!-- ======================================================================
+       工作记录页（01-工作记录.png）
+       ====================================================================== -->
   <template v-if="kind === 'work'">
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>工作记录</h1>
+        <div class="h-meta">
+          <span>{{ workMetaCountLabel }}</span>
+          <template v-if="latestRecordLabel">
+            <i class="sep-dot" aria-hidden="true" />
+            <span>最近记录于 {{ latestRecordLabel }}</span>
+          </template>
+        </div>
       </div>
       <form
         class="quick-entry"
@@ -636,7 +694,7 @@ async function restore() {
           v-model="text"
           class="entry-input"
           rows="2"
-          placeholder="记点什么…（首行作为标题）"
+          placeholder="记录今天处理的工作，支持多行输入，首行将作为列表标题…"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
@@ -673,13 +731,17 @@ async function restore() {
             >
               清空
             </button>
+            <span class="key-pair" aria-hidden="true">
+              <span class="mini-key">Ctrl</span>
+              <span class="key-plus">+</span>
+              <span class="mini-key">Enter</span>
+            </span>
             <button
               type="submit"
-              class="btn compact"
-              :class="{ primary: !editing }"
+              class="btn primary compact"
               :disabled="busy || !text.trim() || !validComposerDate"
               :aria-busy="busy"
-              title="保存记录（Ctrl+Enter）"
+              title="Ctrl+Enter 快捷保存"
             >
               保存记录
             </button>
@@ -689,7 +751,7 @@ async function restore() {
     </div>
 
     <!-- 月份日期带 -->
-    <div class="month-index" :class="{ 'all-months': !month }">
+    <div class="month-index card" :class="{ 'all-months': !month }">
       <div class="month-picker-wrap" @click.stop>
         <button
           type="button"
@@ -874,6 +936,7 @@ async function restore() {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
+            <Icon name="list" :size="17" />
             <h2>记录列表</h2>
           </div>
           <label class="search-box" style="margin: 0">
@@ -910,19 +973,30 @@ async function restore() {
 
         <div ref="workListRef" class="work-list">
           <div v-if="!filtered.length" class="empty">
-            <span class="empty-title">
+            <span class="empty-icon">
+              <Icon :name="query ? 'search' : 'note'" :size="16" />
+            </span>
+            <p class="empty-title">
               {{
                 query
                   ? "没有匹配的工作记录"
                   : tab === "deleted"
                     ? "没有已删除记录"
                     : month
-                      ? `${monthTitle.label}暂无工作记录`
-                      : "暂无工作记录"
+                      ? `${monthTitle.label}还没有工作记录`
+                      : "还没有工作记录"
               }}
-            </span>
+            </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
+            </button>
+            <button
+              v-else-if="tab === 'active'"
+              type="button"
+              class="link"
+              @click="focusComposer"
+            >
+              在顶部写下第一条
             </button>
           </div>
 
@@ -1004,17 +1078,22 @@ async function restore() {
         </div>
 
         <div class="footnote">
-          <span v-if="month && activeAll.length > monthRecords.length">
-            全部月份共 {{ activeAll.length }} 条
-          </span>
+          <Icon name="note" :size="13" />
+          <span>{{
+            month
+              ? `所有月份共 ${activeAll.length} 条工作记录`
+              : `已显示全部 ${activeAll.length} 条工作记录`
+          }}</span>
           <span class="push" />
           <span>按发生日期降序</span>
+          <Icon name="sort" :size="13" />
         </div>
       </section>
 
       <section class="card pane note-detail">
         <div class="panel-head spaced-head">
           <div class="head-title">
+            <Icon name="document" :size="17" />
             <h2>记录详情</h2>
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
@@ -1053,7 +1132,7 @@ async function restore() {
                     ref="editTextarea"
                     v-model="editor.text"
                     rows="6"
-                    placeholder="工作内容…"
+                    placeholder="填写工作内容，第一行将作为摘要标题…"
                     required
                   />
                 </label>
@@ -1075,7 +1154,7 @@ async function restore() {
                 <div class="actions" style="margin: 4px 0 0">
                   <button
                     type="button"
-                    class="btn"
+                    class="btn primary"
                     :disabled="!canSaveEdit"
                     @click="save"
                   >
@@ -1147,7 +1226,7 @@ async function restore() {
             <button
               v-if="editor.deletedAt"
               type="button"
-              class="btn compact"
+              class="btn primary compact"
               :disabled="busy"
               @click="restore"
             >
@@ -1165,16 +1244,29 @@ async function restore() {
           </div>
         </template>
 
-        <div v-else class="empty" style="margin: auto">未选择</div>
+        <div v-else class="empty" style="margin: auto">
+          <span class="empty-icon"><Icon name="document" :size="16" /></span>
+          <p class="empty-title">
+            {{ filtered.length ? "选择一条工作记录" : "暂无可展示的记录详情" }}
+          </p>
+          <p class="empty-hint">点击左侧列表中的记录，在此查看或编辑完整正文。</p>
+        </div>
       </section>
     </div>
   </template>
 
-  <!-- 灵感待办视图 -->
+  <!-- ======================================================================
+       灵感待办页（02-灵感待办.png）
+       ====================================================================== -->
   <template v-else>
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>灵感待办</h1>
+        <div class="h-meta">
+          <span>共 {{ ideaTotal }} 项待办</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ openIdeas.length }} 项待完成</span>
+        </div>
       </div>
       <form
         class="quick-entry"
@@ -1186,7 +1278,7 @@ async function restore() {
           v-model="text"
           class="entry-input"
           rows="2"
-          placeholder="记个想法…"
+          placeholder="想到的事，先记下来，支持多行输入…"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
@@ -1210,13 +1302,17 @@ async function restore() {
             >
               清空
             </button>
+            <span class="key-pair" aria-hidden="true">
+              <span class="mini-key">Ctrl</span>
+              <span class="key-plus">+</span>
+              <span class="mini-key">Enter</span>
+            </span>
             <button
               type="submit"
-              class="btn compact"
-              :class="{ primary: !editing }"
+              class="btn primary compact"
               :disabled="busy || !text.trim()"
               :aria-busy="busy"
-              title="添加待办（Ctrl+Enter）"
+              title="Ctrl+Enter 快捷添加"
             >
               添加待办
             </button>
@@ -1230,6 +1326,7 @@ async function restore() {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
+            <Icon name="checklist" :size="17" />
             <h2>待办清单</h2>
           </div>
           <label class="search-box" style="margin: 0">
@@ -1275,19 +1372,30 @@ async function restore() {
 
         <div class="idea-groups">
           <div v-if="!filtered.length" class="empty" style="margin: auto">
-            <span class="empty-title">
+            <span class="empty-icon">
+              <Icon :name="query ? 'search' : 'idea'" :size="16" />
+            </span>
+            <p class="empty-title">
               {{
                 query
                   ? "没有匹配的待办"
                   : tab === "completed"
-                    ? "暂无已完成待办"
+                    ? "还没有已完成的待办"
                     : tab === "deleted"
                       ? "没有已删除待办"
-                      : "暂无待办"
+                      : "待办清单目前为空"
               }}
-            </span>
+            </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
+            </button>
+            <button
+              v-else-if="tab === 'active'"
+              type="button"
+              class="link"
+              @click="focusComposer"
+            >
+              记下第一条想法
             </button>
           </div>
 
@@ -1324,8 +1432,8 @@ async function restore() {
                   n.deletedAt
                     ? '已删除'
                     : n.completedAt
-                      ? '点击重新打开待办'
-                      : '点击标记完成（不自动生成工作记录）'
+                      ? '重新打开待办'
+                      : '标记完成（不自动生成工作记录）'
                 "
                 @click.stop="toggleComplete(n)"
               >
@@ -1346,17 +1454,62 @@ async function restore() {
         </div>
 
         <div class="footnote">
-          <span>已完成 {{ completedIdeas.length }} / 共 {{ ideaTotal }}</span>
+          <Icon name="check-circle" :size="14" />
+          <span>{{
+            tab === "completed"
+              ? "点击条目前的圆圈可重新打开待办"
+              : tab === "deleted"
+                ? "已删除待办可在右侧详情中恢复"
+                : "点击条目前的圆圈可标记完成"
+          }}</span>
         </div>
       </section>
 
-      <!-- 右栏：待办详情 -->
-      <section class="card pane idea-detail note-detail">
-        <div class="panel-head spaced-head">
-          <div class="head-title">
-            <h2>待办详情</h2>
-            <span v-if="dirty" class="badge pending">未保存</span>
+      <!-- 右栏：完成进度 + 待办详情 -->
+      <div class="inbox-col">
+        <section class="card goal-card">
+          <div class="goal-copy">
+            <h2>完成进度</h2>
+            <div class="goal-stat">
+              <i class="dot" style="color: var(--progress-done)" />
+              <span>已完成 <b>{{ completedIdeas.length }}</b> 项</span>
+            </div>
+            <div class="goal-stat">
+              <i class="dot" style="color: var(--progress-open)" />
+              <span>未完成 <b>{{ openIdeas.length }}</b> 项</span>
+            </div>
           </div>
+          <div
+            class="goal-visual"
+            role="img"
+            :aria-label="`待办完成进度 ${ideaPercent}%，已完成 ${completedIdeas.length} 项，未完成 ${openIdeas.length} 项`"
+          >
+            <svg viewBox="0 0 100 100" width="99" height="99" aria-hidden="true">
+              <path
+                v-for="(seg, idx) in progressSegments"
+                :key="idx"
+                :d="seg.d"
+                :stroke="
+                  seg.done ? 'var(--progress-done)' : 'var(--progress-open)'
+                "
+                stroke-width="8"
+                fill="none"
+              />
+            </svg>
+            <div class="goal-center">
+              <strong>{{ ideaPercent }}</strong>
+              <small>%</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="card pane idea-detail note-detail">
+          <div class="panel-head spaced-head">
+            <div class="head-title">
+              <Icon name="idea" :size="17" />
+              <h2>待办详情</h2>
+              <span v-if="dirty" class="badge pending">未保存</span>
+            </div>
             <template v-if="editor && !editor.deletedAt">
               <button
                 v-if="!editing"
@@ -1399,7 +1552,7 @@ async function restore() {
                   <div class="actions" style="margin: 4px 0 0">
                     <button
                       type="button"
-                      class="btn"
+                      class="btn primary"
                       :disabled="busy || !dirty || !editor.text.trim()"
                       @click="save"
                     >
@@ -1469,7 +1622,7 @@ async function restore() {
                 <button
                   v-if="editor.deletedAt"
                   type="button"
-                  class="btn"
+                  class="btn primary"
                   :disabled="busy"
                   @click="restore"
                 >
@@ -1479,6 +1632,7 @@ async function restore() {
                   v-else
                   type="button"
                   class="btn"
+                  :class="editor.completedAt ? '' : 'primary'"
                   :disabled="busy"
                   title="只改变待办状态，不会自动生成工作记录"
                   @click="toggleComplete()"
@@ -1520,8 +1674,15 @@ async function restore() {
             </div>
           </template>
 
-          <div v-else class="empty" style="margin: auto">未选择</div>
-      </section>
+          <div v-else class="empty" style="margin: auto">
+            <span class="empty-icon"><Icon name="idea" :size="16" /></span>
+            <p class="empty-title">
+              {{ filtered.length ? "选择一条待办" : "暂无可展示的待办详情" }}
+            </p>
+            <p class="empty-hint">点击左侧待办可查看详情、编辑或转为工作记录。</p>
+          </div>
+        </section>
+      </div>
     </div>
   </template>
 </template>

@@ -170,7 +170,7 @@ function primaryAction(id: string) {
 }
 
 function shownRunMessage(info?: { state?: string; message?: string } | null) {
-  const message = (info?.message?.trim() || "").replace(/已核实/g, "");
+  const message = info?.message?.trim() || "";
   if (!message) return "";
   if (
     ["failed", "unconfigured", "unknown", "external"].includes(
@@ -185,21 +185,6 @@ function shownRunMessage(info?: { state?: string; message?: string } | null) {
   )
     return message;
   return "";
-}
-
-function shortEnvLabel(type: string, description?: string) {
-  const desc = description || "";
-  if (type === "spring") return "Maven · RuoYiApplication";
-  if (type === "tomcat") {
-    return /JRebel/i.test(desc)
-      ? "Tomcat · Exploded · JRebel"
-      : "Tomcat · Exploded";
-  }
-  if (type === "vue") return "Vue CLI · serve";
-  if (type === "wechat") return "微信开发者工具";
-  if (type === "uni-wechat") return "HBuilderX CLI · 微信小程序";
-  if (type === "h5") return "HBuilderX CLI · H5";
-  return types[type] || desc || "—";
 }
 
 function stopLabel(id: string) {
@@ -408,11 +393,11 @@ async function act(action: string, id: string) {
     await refresh();
     notify(
       action === "stop"
-        ? "已停止"
+        ? "停止结果已核实"
         : action === "start"
-          ? "已启动，日志会持续更新"
+          ? "已检查并启动，日志会持续更新"
           : action === "restart"
-            ? "已重启，日志会持续更新"
+            ? "已重新启动，日志会持续更新"
             : "操作已执行",
     );
     return true;
@@ -487,11 +472,21 @@ onBeforeUnmount(() => {
 <template>
   <div ref="pageRoot" class="projects-page">
     <div class="page-head">
-      <h1>项目管理</h1>
-      <div v-if="runningCount" class="h-actions">
-        <span class="badge live">
-          <i class="dot" />
-          {{ runningCount }} 个运行中
+      <div>
+        <h1>项目管理</h1>
+        <div class="h-meta">
+          <span>{{ allProjects.length }} 个项目</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ groupNames.length }} 个分组</span>
+        </div>
+      </div>
+      <div class="h-actions">
+        <span
+          class="badge"
+          :class="runningCount ? 'live' : 'neutral'"
+        >
+          <i v-if="runningCount" class="dot" />
+          {{ runningCount ? `${runningCount} 个项目运行中` : "暂无运行中项目" }}
         </span>
       </div>
     </div>
@@ -501,6 +496,7 @@ onBeforeUnmount(() => {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
+            <Icon name="folders" :size="17" />
             <h2>项目列表</h2>
             <span class="count">{{ allProjects.length }}</span>
           </div>
@@ -557,14 +553,20 @@ onBeforeUnmount(() => {
                   <strong class="project-name" :title="p.name">{{
                     p.name
                   }}</strong>
-                  <small class="project-sub">
-                    <span>{{ types[p.type] }}</span>
-                    <span
-                      v-if="run(p.id) && run(p.id)!.state !== 'stopped'"
-                      class="badge project-state-badge"
-                      :class="badgeClass(run(p.id)!.state)"
-                      >{{ runLabels[run(p.id)!.state] }}</span
+                  <small>
+                    {{ types[p.type] }} ·
+                    <strong
+                      v-if="run(p.id) && isLiveState(run(p.id)!.state)"
+                      class="live-word"
+                      >{{ runLabels[run(p.id)!.state] }}</strong
                     >
+                    <span v-else>{{
+                      run(p.id)
+                        ? runLabels[run(p.id)!.state]
+                        : loading
+                          ? "检测中…"
+                          : "状态未知"
+                    }}</span>
                   </small>
                 </div>
                 <div @click.stop>
@@ -611,22 +613,29 @@ onBeforeUnmount(() => {
             </template>
           </template>
         </div>
+
+        <div class="footnote">
+          <Icon name="play-mini" :size="12" />
+          <span>启动项目</span>
+          <span class="push" />
+          <Icon name="stop" :size="12" />
+          <span>停止项目</span>
+        </div>
       </section>
 
       <!-- 右侧服务详情 + 浅色运行日志 -->
       <div v-if="selectedProject" class="project-col">
         <section class="card service-info">
           <div class="service-header">
+            <div class="service-mark">
+              <Icon name="stack" :size="24" />
+            </div>
             <div class="grow">
               <div class="service-name">
                 <h2>{{ selectedProject.name }}</h2>
-                <span
-                  v-if="current && current.state !== 'stopped'"
-                  class="badge"
-                  :class="badgeClass(current.state)"
-                >
+                <span class="badge" :class="badgeClass(current?.state)">
                   <i class="dot" />
-                  {{ runLabels[current.state] }}
+                  {{ runLabels[current?.state || "unknown"] }}
                 </span>
               </div>
               <div class="service-trace">
@@ -660,7 +669,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="primaryAction(selectedProject.id)?.action === 'start'"
                 type="button"
-                class="btn"
+                class="btn light-brand"
                 :disabled="busy === selectedProject.id"
                 :title="primaryAction(selectedProject.id)?.title"
                 @click="runAction('start', selectedProject.id)"
@@ -669,7 +678,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="button"
-                class="btn"
+                class="btn primary"
                 title="在独立窗口编辑项目代码"
                 @click="runAction('editor', selectedProject.id)"
               >
@@ -764,7 +773,7 @@ onBeforeUnmount(() => {
                     <Icon name="copy" :size="12" />
                   </button>
                 </template>
-                <span v-else class="muted">—</span>
+                <span v-else class="muted">尚无经过核实的可用地址</span>
               </div>
             </div>
 
@@ -774,7 +783,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="fact-value">
                 <span class="mono" :title="current?.branch">{{
-                  current?.branch || "—"
+                  current?.branch || "尚未核实 / 非 Git 目录"
                 }}</span>
               </div>
             </div>
@@ -786,10 +795,10 @@ onBeforeUnmount(() => {
               <div class="fact-value">
                 <span>{{
                   current?.canStop
-                    ? "工作台托管"
+                    ? "工作台托管，身份已核实"
                     : current?.state === "external"
-                      ? "外部实例"
-                      : "—"
+                      ? "外部实例，请用原工具管理"
+                      : "未核实为工作台运行实例"
                 }}</span>
               </div>
             </div>
@@ -810,8 +819,8 @@ onBeforeUnmount(() => {
                 <Icon name="server" :size="12" />运行环境
               </div>
               <div class="fact-value">
-                <span :title="current?.description || types[selectedProject.type]">{{
-                  shortEnvLabel(selectedProject.type, current?.description)
+                <span>{{
+                  current?.description || types[selectedProject.type]
                 }}</span>
               </div>
             </div>
@@ -840,6 +849,9 @@ onBeforeUnmount(() => {
             >
               <Icon name="external" :size="13" />查看日志
             </button>
+            <span v-if="selectedProject.group === '推荐官'" class="dep">
+              依赖 HomeProject API，需单独启动。
+            </span>
           </div>
         </section>
 
@@ -852,16 +864,21 @@ onBeforeUnmount(() => {
         />
         <section v-else class="terminal">
           <div class="term-head">
+            <Icon name="term" :size="16" />
             <h3>运行日志</h3>
             <span class="live-light idle" />
           </div>
           <div class="term-empty">
-            <span>未加载日志</span>
+            <span
+              >当前项目{{
+                runLabels[current?.state || "stopped"]
+              }}，尚未加载运行日志。</span
+            >
             <div class="row" style="gap: 8px">
               <button
                 v-if="primaryAction(selectedProject.id)?.action === 'start'"
                 type="button"
-                class="btn compact"
+                class="btn primary compact"
                 :disabled="busy === selectedProject.id"
                 @click="runAction('start', selectedProject.id)"
               >

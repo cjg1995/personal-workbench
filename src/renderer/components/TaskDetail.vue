@@ -150,6 +150,7 @@ function openOperation() {
       </p>
       <div class="actions wrap">
         <button
+          class="primary"
           @click="attempt(() => call('apk.folder', { taskId: task.id }))"
         >
           <Icon name="folder" />打开产物目录</button
@@ -188,7 +189,7 @@ function openOperation() {
       <dt>
         {{ task.result.commitSkipped ? "跳过提交，当前 HEAD" : "本地提交" }}
       </dt>
-      <dd class="path">{{ task.result.localCommit || "—" }}</dd>
+      <dd class="path">{{ task.result.localCommit || "尚未生成" }}</dd>
       <dt>
         {{ task.type === 'app' ? task.params.target + ' 推送' : '开发分支推送' }}
       </dt>
@@ -200,7 +201,7 @@ function openOperation() {
               ? "推送命令已完成"
               : task.result.pushSkipped
                 ? "没有领先提交，已跳过"
-                : "未完成"
+                : "尚未完成"
         }}
       </dd>
       <dt v-if="task.result.testPath">test 工作目录</dt>
@@ -211,14 +212,14 @@ function openOperation() {
       <dd v-if="task.result.finalBranch">{{ task.result.finalBranch }}</dd>
       <dt v-if="task.type === 'app'">远端核对</dt>
       <dd v-if="task.type === 'app'">
-        {{ task.result.verified ? "与本地 HEAD 一致" : "不一致" }}
+        {{ task.result.verified ? "已核实与本地 HEAD 一致" : "尚未核实成功" }}
       </dd>
     </dl>
     <p v-if="task.result.stashId" class="notice warning">
       本次 stash 保留 {{ task.result.stashId }}。{{
         task.result.stashApplying
           ? "恢复时发生冲突，请在原工具处理，不能反复 apply/pop。"
-          : "先处理失败原因，再在原工具恢复。"
+          : "先处理失败原因，再在原工具核实恢复。"
       }}
     </p>
     <p v-if="task.result.recoveryDir" class="path">
@@ -267,6 +268,7 @@ function openOperation() {
         v-if="
           !compact && ['app', 'erp', 'apk', 'run', 'wechat'].includes(task.type)
         "
+        class="primary"
         @click="openOperation"
       >
         {{
@@ -333,7 +335,7 @@ function openOperation() {
         <p class="small">
           <template v-if="r.protectedFile !== ''">
             {{ r.protectedFile || 'store/index.js' }}
-            {{ r.restored ? "已恢复" : "待确认" }} · </template
+            {{ r.restored ? "已经恢复" : "待核实" }} · </template
           >阶段 {{ r.phase }}
         </p>
         <p class="path">{{ r.directory }}</p>
@@ -351,7 +353,7 @@ function openOperation() {
                     projectId: task.projectId,
                     id: r.id,
                   }),
-                '配置保护已恢复',
+                '配置保护已核实恢复',
               )
             "
           >

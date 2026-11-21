@@ -108,10 +108,10 @@ async function readClipboard() {
       "fresh DB must start with 0 prompts",
     );
     await page.getByText("还没有提示词").waitFor();
-    await page.getByRole("button", { name: "新建提示词" }).waitFor();
+    await page.getByRole("button", { name: "新建第一条" }).waitFor();
 
     // 1. Validation: blank title / blank body cannot save + IME Enter safety
-    await page.getByRole("button", { name: "新建提示词" }).click();
+    await page.getByRole("button", { name: "新建第一条" }).click();
     await page.locator("#prompt-edit-title").waitFor();
     const saveBtn = page.getByRole("button", { name: "保存提示词" });
     assert.equal(await saveBtn.isDisabled(), true, "empty form disables save");

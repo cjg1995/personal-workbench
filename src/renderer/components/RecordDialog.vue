@@ -123,13 +123,21 @@ function setKind(value: "idea" | "work") {
           rows="5"
           :placeholder="
             form.kind === 'idea'
-              ? '记个想法…'
-              : '记点什么…'
+              ? '想到的事，先记下来…'
+              : '记录实际发生的工作，保存前可以修改…'
           "
         />
       </label>
       <div class="actions spaced">
-        <span class="dialog-hint">Ctrl+Enter 保存 · Esc 关闭</span>
+        <span class="dialog-hint">
+          <span class="mini-key">Ctrl</span>
+          <span>+</span>
+          <span class="mini-key">Enter</span>
+          <span>保存</span>
+          <span class="sep-dot" aria-hidden="true" />
+          <span class="mini-key">Esc</span>
+          <span>关闭</span>
+        </span>
         <div class="row">
           <button type="button" :disabled="busy" @click="close">取消</button>
           <button

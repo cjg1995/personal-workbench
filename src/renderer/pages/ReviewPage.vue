@@ -293,5 +293,11 @@ onBeforeUnmount(() => {
   <p v-else-if="busy && !progress" class="progress-line" role="status">
     <span class="spinner" />正在读取 Git 差异…
   </p>
-  <div v-else class="empty">未读取差异</div>
+  <div v-else class="empty">
+    <span class="empty-icon"><Icon name="search" :size="16" /></span>
+    <p class="empty-title">尚未读取差异</p>
+    <p class="empty-hint">
+      选择仓库与比较范围后读取 Git 差异。读取不会切换分支或修改暂存区。
+    </p>
+  </div>
 </template>

@@ -1,25 +1,25 @@
-/* 代码编辑器 / 代码对比窗口共用：IDEA 风格语法着色与折叠标记（语法高亮原色保留） */
+/* 代码编辑器 / 代码对比窗口共用：IDEA 风格配色与折叠标记 */
 .idea-java-field {
-  color: #871094 !important; /* IDEA Java 字段语法高亮色 */
+  color: #871094 !important;
 }
 .idea-java-null {
-  color: #0033b3 !important; /* IDEA Java 关键字语法高亮色 */
-  font-weight: 600 !important;
+  color: #0033b3 !important;
+  font-weight: 700 !important;
 }
 .editor-dark .idea-java-field,
 .diff-window:not(.diff-light) .idea-java-field,
 .submit-inline-diff:not(.diff-light) .idea-java-field {
-  color: #9876aa !important; /* IDEA Darcula 字段语法高亮色 */
+  color: #9876aa !important;
 }
 .editor-dark .idea-java-null,
 .diff-window:not(.diff-light) .idea-java-null,
 .submit-inline-diff:not(.diff-light) .idea-java-null {
-  color: #cc7832 !important; /* IDEA Darcula 关键字语法高亮色 */
+  color: #cc7832 !important;
 }
 
 /* Ctrl 悬停可跳转代码：文字变蓝 + 手型光标 */
 .idea-ctrl-link {
-  color: var(--brand-hover) !important;
+  color: #1155cc !important;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer !important;
@@ -48,6 +48,6 @@
   opacity: 1 !important;
 }
 .monaco-editor .margin-view-overlays:hover .cldr[class*="folding"] {
-  color: var(--soft) !important;
+  color: #3f4a59 !important;
 }
 

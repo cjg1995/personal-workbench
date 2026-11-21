@@ -588,7 +588,14 @@ onBeforeUnmount(() => {
     <!-- 列表与详情模式 -->
     <template v-if="!editor">
       <div class="page-head">
-        <h1>提示词库</h1>
+        <div>
+          <h1>提示词库</h1>
+          <div class="h-meta">
+            <span>共 {{ counts.all }} 条提示词</span>
+            <i class="sep-dot" aria-hidden="true" />
+            <span>已收藏 {{ counts.favorites }} 条</span>
+          </div>
+        </div>
         <div class="h-actions">
           <button
             type="button"
@@ -605,7 +612,10 @@ onBeforeUnmount(() => {
         <!-- 左侧提示词列表卡片 -->
         <section class="card library-panel" aria-label="提示词列表">
           <div class="lib-head">
-            <h2>我的提示词</h2>
+            <h2>
+              <Icon name="library-lines" :size="16" />
+              我的提示词
+            </h2>
             <label class="compact-select inline-label">
               <Icon name="tag" :size="12" />
               <select v-model="selectedTag" aria-label="按标签筛选">
@@ -704,17 +714,21 @@ onBeforeUnmount(() => {
             </template>
 
             <div v-else class="empty-panel">
-              <span>
+              <Icon name="prompt-collection" :size="24" />
+              <strong>
                 {{
                   isFiltering
                     ? "没有匹配的提示词"
                     : tab === "deleted"
                       ? "已删除列表为空"
                       : tab === "favorites"
-                        ? "暂无收藏的提示词"
+                        ? "还没有收藏的提示词"
                         : "还没有提示词"
                 }}
-              </span>
+              </strong>
+              <p v-if="!isFiltering && tab === 'all'">
+                把平时常用的提示词保存在本机，随时搜索、填写变量并复制。
+              </p>
               <button
                 v-if="isFiltering"
                 type="button"
@@ -723,15 +737,25 @@ onBeforeUnmount(() => {
               >
                 清除筛选
               </button>
+              <button
+                v-else-if="tab === 'all'"
+                type="button"
+                class="btn compact light-brand"
+                @click="openCreate"
+              >
+                <Icon name="plus" :size="14" />
+                <span>新建第一条</span>
+              </button>
             </div>
           </div>
 
           <div class="list-foot">
+            <Icon name="sort" :size="14" />
             <span>{{
               tab === "deleted" ? "按删除时间排列" : "按最近修改排列"
             }}</span>
             <span class="push" />
-            <span v-if="isFiltering">匹配 {{ visiblePrompts.length }} 条</span>
+            <span>显示 {{ visiblePrompts.length }} 条</span>
           </div>
         </section>
 
@@ -822,7 +846,7 @@ onBeforeUnmount(() => {
                 <div class="toolbar-actions">
                   <button
                     type="button"
-                    class="btn"
+                    class="btn primary"
                     :disabled="busyAction"
                     @click="restorePrompt(selectedPrompt)"
                   >
@@ -853,7 +877,7 @@ onBeforeUnmount(() => {
                     </button>
                     <button
                       type="button"
-                      class="btn"
+                      class="btn primary"
                       @click="openFillDialog(selectedPrompt)"
                     >
                       <Icon name="braces" :size="15" />
@@ -863,7 +887,7 @@ onBeforeUnmount(() => {
                   <button
                     v-else
                     type="button"
-                    class="btn"
+                    class="btn primary"
                     @click="copyText(selectedPrompt.body, false)"
                   >
                     <Icon name="copy-p" :size="15" />
@@ -874,7 +898,17 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <div v-else class="empty-panel">未选择</div>
+          <div v-else class="empty-panel">
+            <Icon name="prompt-collection" :size="26" />
+            <strong>{{
+              counts.all === 0 && tab === "all" && !isFiltering
+                ? "创建你的第一条提示词"
+                : "选择一条提示词查看正文"
+            }}</strong>
+            <p v-if="counts.all === 0 && tab === 'all' && !isFiltering">
+              支持普通提示词和带 &#123;&#123;变量名&#125;&#125; 的可复用模板。
+            </p>
+          </div>
         </section>
       </div>
     </template>
@@ -882,7 +916,13 @@ onBeforeUnmount(() => {
     <!-- 新建与编辑模式 -->
     <template v-else>
       <div class="page-head">
-        <h1>{{ editor.id ? "编辑提示词" : "新建提示词" }}</h1>
+        <div>
+          <h1>{{ editor.id ? "编辑提示词" : "新建提示词" }}</h1>
+          <div class="h-meta">
+            <Icon name="prompt-collection" :size="13" />
+            <span>提示词库</span>
+          </div>
+        </div>
         <div class="h-actions">
           <button type="button" class="btn" :disabled="saving" @click="cancelEdit">
             <span>取消</span>
@@ -891,7 +931,6 @@ onBeforeUnmount(() => {
             type="button"
             class="btn primary"
             :disabled="!canSaveEditor"
-            title="保存提示词（Ctrl+Enter）"
             @click="saveDraft"
           >
             <Icon name="check" :size="15" />
@@ -904,7 +943,10 @@ onBeforeUnmount(() => {
         <!-- 左侧表单卡片 -->
         <section class="card form-panel" aria-label="编辑提示词表单">
           <div class="form-head">
-            <h2>编辑内容</h2>
+            <h2>
+              <Icon name="penbox" :size="17" />
+              编辑内容
+            </h2>
             <span class="form-status" :class="{ clean: !editorDirty }">
               {{
                 editorDirty
@@ -981,13 +1023,17 @@ onBeforeUnmount(() => {
                 spellcheck="false"
               />
               <p class="inline-note-p">
-                用 &#123;&#123;变量名&#125;&#125; 标记变量
+                把每次需要替换的内容写成 &#123;&#123;变量名&#125;&#125;，复制时可以填写。
               </p>
             </div>
           </div>
 
           <div class="form-bottom">
-            <span>Ctrl+Enter 保存</span>
+            <Icon name="keyboard" :size="14" />
+            <span class="mini-key">Ctrl</span>
+            <span>+</span>
+            <span class="mini-key">Enter</span>
+            <span>保存</span>
             <span class="push" />
             <span>{{ promptCharCount(editor.body) }} 字符</span>
           </div>
@@ -996,7 +1042,10 @@ onBeforeUnmount(() => {
         <!-- 右侧实时预览卡片 -->
         <section class="card preview-panel" aria-label="实时预览">
           <div class="preview-head">
-            <h2>实时预览</h2>
+            <h2>
+              <Icon name="eye" :size="17" />
+              实时预览
+            </h2>
           </div>
 
           <div class="preview-body">
@@ -1122,7 +1171,10 @@ onBeforeUnmount(() => {
 
           <section class="fill-preview">
             <div class="fill-subhead">
-              <h3>复制内容预览</h3>
+              <h3>
+                <Icon name="eye" :size="14" />
+                <span>复制内容预览</span>
+              </h3>
             </div>
             <div class="prompt-text" data-fill-preview>
               <template
@@ -1144,7 +1196,10 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="dialog-footer">
-          <span class="inline-caption">仅用于本次复制</span>
+          <span class="inline-caption">
+            <Icon name="info" :size="13" />
+            <span>填写的内容仅用于本次复制。</span>
+          </span>
           <div class="toolbar-actions">
             <button type="button" class="btn" @click="closeFillDialog">
               取消
@@ -1197,7 +1252,7 @@ onBeforeUnmount(() => {
             {{ copyError.error }}
           </div>
           <p class="copy-error-desc">
-            内容已保留，重试或手动复制：
+            已保留本次内容，未清空输入。你可以直接重试写入剪贴板，或手动复制以下纯文本：
           </p>
           <textarea
             ref="manualCopyAreaRef"

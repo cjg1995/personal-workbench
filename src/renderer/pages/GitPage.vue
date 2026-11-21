@@ -81,7 +81,7 @@ async function guard(reason?: "navigate" | "close") {
   if (submitOpen.value && !(await submitPage.value?.canLeave())) return false;
   if (reason !== "close" || !message.value.trim()) return true;
   return confirm(
-    "提交说明未提交",
+    "提交说明尚未提交",
     "关闭工作台会丢弃此处提交说明，确认关闭？",
     "丢弃并关闭",
     { tone: "warning", danger: true },
@@ -778,7 +778,14 @@ onBeforeUnmount(() => {
   <div ref="pageRoot" class="git-page">
     <!-- 顶部标题与远程同步操作 -->
     <div class="page-head">
-      <h1>Git 管理</h1>
+      <div>
+        <h1>Git 管理</h1>
+        <div class="h-meta">
+          <span>{{ totalVisibleChanges }} 个本地变更</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ stagedCount }} 个已暂存文件</span>
+        </div>
+      </div>
       <div class="h-actions">
         <span class="button-group">
           <button
@@ -805,12 +812,12 @@ onBeforeUnmount(() => {
         </span>
         <button
           type="button"
-          class="btn"
+          class="btn primary"
           :disabled="
             !canSubmit || busy || (repositoryBusy && !activeSubmitTask)
           "
           :title="
-            canSubmit ? '提交已暂存内容与已跟踪修改' : '未配置提测流程'
+            canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'
           "
           @click="openSubmit()"
         >
@@ -822,6 +829,9 @@ onBeforeUnmount(() => {
     <!-- 仓库 / 分支 / 上游同步上下文条 -->
     <div class="repo-bar card">
       <div class="repo-block">
+        <div class="service-mark">
+          <Icon name="repo" :size="20" />
+        </div>
         <div>
           <div class="context-label">仓库</div>
           <ProjectSelect
@@ -852,7 +862,7 @@ onBeforeUnmount(() => {
         >
           <Icon name="branch2" :size="15" />
           <span class="git-current-branch" :title="state?.branch">{{
-            state?.branch || (state?.detached ? "游离 HEAD" : "—")
+            state?.branch || (state?.detached ? "游离 HEAD" : "尚未读取")
           }}</span>
           <Icon name="down" :size="13" />
         </button>
@@ -947,7 +957,7 @@ onBeforeUnmount(() => {
 
       <div class="vdiv" aria-hidden="true" />
 
-      <div :title="state?.upstream || '未配置上游分支'">
+      <div :title="state?.upstream || '尚未配置上游分支'">
         <div class="context-label">与上游同步</div>
         <div class="sync-count">
           <Icon name="arrow-up" :size="13" />
@@ -1020,7 +1030,7 @@ onBeforeUnmount(() => {
       <button
         v-if="state?.operation"
         type="button"
-        class="btn compact"
+        class="btn primary compact"
         :disabled="repositoryBusy || !!conflicts"
         @click="execute('continue')"
       >
@@ -1099,11 +1109,13 @@ onBeforeUnmount(() => {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
+            <Icon name="changes" :size="17" />
             <h2>变更文件</h2>
+            <span class="count">{{ files.length }}</span>
           </div>
           <button
             type="button"
-            class="btn compact"
+            class="btn light-brand compact"
             :disabled="repositoryBusy || !hasSelection"
             @click="stage('stage')"
           >
@@ -1145,7 +1157,7 @@ onBeforeUnmount(() => {
             @change="toggleAllFiles"
           />
           <span>文件路径</span>
-          <span>状态</span>
+          <span>文件状态</span>
           <span />
         </div>
 
@@ -1165,8 +1177,13 @@ onBeforeUnmount(() => {
         />
 
         <div class="selection-row" @click.stop>
-          <span v-if="checked.length">已勾选 {{ checked.length }} 项</span>
-          <span v-else-if="!files.length">工作区无变更</span>
+          <span>{{
+            checked.length
+              ? `已勾选 ${checked.length} 项`
+              : files.length
+                ? `共 ${files.length} 项变更 · 勾选后可暂存`
+                : "工作区暂无匹配变更"
+          }}</span>
           <span class="push" />
           <div class="git-ops-wrap">
             <button
@@ -1227,13 +1244,22 @@ onBeforeUnmount(() => {
             {{ hiddenUntrackedCount.toLocaleString() }} 个未跟踪文件</span
           >
         </div>
+
+        <div class="footnote git-file-footer">
+          <Icon name="external" :size="13" />
+          <span>双击文件或按</span>
+          <span class="mini-key">Enter</span>
+          <span>打开独立差异对比窗口</span>
+        </div>
       </section>
 
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
+            <Icon name="git-commit" :size="17" />
             <h2>提交变更</h2>
           </div>
+          <span class="mini-key">Ctrl + Enter</span>
         </div>
         <GitCommitPanel
           v-model:message="message"
@@ -1267,7 +1293,7 @@ onBeforeUnmount(() => {
           <label class="git-checkbox">
             <input v-model="logAll" type="checkbox" />全部分支
           </label>
-          <button type="submit" class="btn compact">筛选</button>
+          <button type="submit" class="btn primary compact">筛选</button>
           <button
             type="button"
             class="btn compact"
@@ -1336,7 +1362,7 @@ onBeforeUnmount(() => {
             <button
               v-if="compareCommit"
               type="button"
-              class="btn compact"
+              class="btn light-brand compact"
               @click="
                 open('compare', {
                   base: compareCommit,
@@ -1517,7 +1543,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="btn compact"
+              class="btn light-brand compact"
               :disabled="repositoryBusy"
               title="成功应用后移除记录"
               @click="execute('stash-pop', stash)"

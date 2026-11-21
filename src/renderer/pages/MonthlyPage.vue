@@ -61,6 +61,9 @@ let pending: Promise<void> | null = null,
 const linked = computed(
   () => new Set(draft.value?.entries.flatMap((e) => e.sourceIds) || []),
 );
+const linkedInMonthCount = computed(
+  () => materials.value.filter((n) => linked.value.has(n.id)).length,
+);
 
 const stateClass = computed(() =>
   saveState.value.includes("失败")
@@ -158,7 +161,7 @@ async function guard() {
     return (
       !dirty.value ||
       (await confirm(
-        "月报未保存",
+        "月报尚未保存",
         "正文仍有修改，离开会丢弃当前页面未保存内容。",
         "丢弃并离开",
       ))
@@ -480,19 +483,34 @@ const majorSections = [
 <template>
   <div class="monthly-page">
     <div class="page-head">
-      <div class="page-head-main">
+      <div>
         <h1>月度总结</h1>
-        <span
-          v-if="saveState"
-          class="head-status"
-          :class="stateClass"
-          role="status"
-        >
-          {{ saveState }}
-        </span>
+        <div class="h-meta">
+          <span>{{ materials.length }} 条工作素材</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ linkedInMonthCount }} 条已加入正文</span>
+        </div>
       </div>
 
       <div class="h-actions month-actions">
+        <span
+          v-if="saveState"
+          class="saved"
+          :class="stateClass"
+          role="status"
+        >
+          <Icon
+            :name="
+              stateClass === 'error'
+                ? 'warning'
+                : stateClass === 'pending'
+                  ? 'clock'
+                  : 'check-circle'
+            "
+            :size="14"
+          />
+          <span>{{ saveState }}</span>
+        </span>
 
         <div class="month-btn-wrap" @click.stop>
           <button
@@ -585,6 +603,7 @@ const majorSections = [
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
+            <Icon name="stack" :size="17" />
             <h2>本月素材</h2>
             <span class="count">{{ materials.length }}</span>
           </div>
@@ -612,7 +631,7 @@ const majorSections = [
             <span>全选可用素材</span>
           </label>
           <span class="push" />
-          <span v-if="selected.length">已选 {{ selected.length }} 项</span>
+          <span>已选 {{ selected.length }} / {{ selectableMaterials.length }}</span>
         </div>
 
         <div v-if="undated" class="material-undated">
@@ -628,7 +647,9 @@ const majorSections = [
 
         <div class="material-list">
           <div v-if="!materials.length" class="empty" style="margin: auto">
-            {{ monthTitle.label }}暂无素材
+            <span class="empty-icon"><Icon name="stack" :size="16" /></span>
+            <p class="empty-title">{{ monthTitle.label }}暂无可用素材</p>
+            <p class="empty-hint">带有发生日期的工作记录会自动汇总到这里。</p>
           </div>
 
           <div
@@ -684,7 +705,7 @@ const majorSections = [
             </select>
             <button
               type="button"
-              class="btn"
+              class="btn light-brand"
               :disabled="!selected.length"
               @click="addSources"
             >
@@ -698,13 +719,14 @@ const majorSections = [
       </section>
 
       <!-- 右栏：文档式正文纸面编辑区 -->
-      <div class="paper-desk">
+      <div class="card paper-desk">
         <article class="paper">
           <div class="doc-heading">
             <div>
               <div class="doc-date">{{ monthTitle.label }}</div>
               <h2>工作总结</h2>
             </div>
+            <Icon name="document" :size="29" />
           </div>
 
           <!-- 一、工作成果 -->
@@ -745,7 +767,7 @@ const majorSections = [
                   <b>{{
                     imageBusy ? "正在处理截图…" : "钉钉「工作内容汇总」截图"
                   }}</b>
-                  <small>Ctrl+V 粘贴或拖入</small>
+                  <small>按 Ctrl + V 粘贴或拖入，导出 Word 时随正文附上。</small>
                 </div>
                 <span class="push" />
                 <button
@@ -793,7 +815,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="s + '正文'"
-                    placeholder="编辑正文…"
+                    placeholder="在此人工编辑正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">
@@ -834,7 +856,7 @@ const majorSections = [
                     <button
                       v-if="e.text.trim()"
                       type="button"
-                      class="btn compact push"
+                      class="btn light-brand compact push"
                       @click="editingEntryId = null"
                     >
                       完成编辑
@@ -959,7 +981,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="sec.key + '正文'"
-                    placeholder="编辑正文…"
+                    placeholder="在此人工编辑正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">
@@ -1000,7 +1022,7 @@ const majorSections = [
                     <button
                       v-if="e.text.trim()"
                       type="button"
-                      class="btn compact push"
+                      class="btn light-brand compact push"
                       @click="editingEntryId = null"
                     >
                       完成编辑
@@ -1091,7 +1113,9 @@ const majorSections = [
 
     <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
     <div v-else class="card empty" style="flex: 1">
-      <span class="empty-title">暂无月报草稿</span>
+      <span class="empty-icon"><Icon name="report" :size="16" /></span>
+      <p class="empty-title">暂时没有月报草稿</p>
+      <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
       <button type="button" class="link" @click="load()">重新读取</button>
     </div>
   </div>
