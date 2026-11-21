@@ -584,7 +584,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <div v-else class="term-empty">
-        <span>暂无日志输出，等待进程写入…</span>
+        <span>暂无日志输出</span>
       </div>
     </div>
 

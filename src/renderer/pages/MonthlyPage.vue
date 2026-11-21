@@ -158,7 +158,7 @@ async function guard() {
     return (
       !dirty.value ||
       (await confirm(
-        "月报尚未保存",
+        "月报未保存",
         "正文仍有修改，离开会丢弃当前页面未保存内容。",
         "丢弃并离开",
       ))
@@ -745,7 +745,7 @@ const majorSections = [
                   <b>{{
                     imageBusy ? "正在处理截图…" : "钉钉「工作内容汇总」截图"
                   }}</b>
-                  <small>按 Ctrl + V 粘贴或拖入，导出 Word 时随正文附上。</small>
+                  <small>Ctrl+V 粘贴或拖入</small>
                 </div>
                 <span class="push" />
                 <button
@@ -793,7 +793,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="s + '正文'"
-                    placeholder="在此人工编辑正文…"
+                    placeholder="编辑正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">
@@ -959,7 +959,7 @@ const majorSections = [
                     v-model="e.text"
                     rows="2"
                     :aria-label="sec.key + '正文'"
-                    placeholder="在此人工编辑正文…"
+                    placeholder="编辑正文…"
                     @input="edited"
                   />
                   <div class="entry-inline-controls">

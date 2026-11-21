@@ -24,8 +24,7 @@ defineEmits<{
     <div class="stage-well">
       <div class="grow">
         <strong>已暂存 {{ stagedCount }} 个文件</strong>
-        <p v-if="!stagedCount">暂存文件后即可提交。</p>
-        <p v-else>
+        <p v-if="stagedCount">
           <button
             type="button"
             class="text-action"
@@ -76,7 +75,7 @@ defineEmits<{
         type="button"
         class="btn primary"
         :disabled="busy || !message.trim() || (!stagedCount && !amend)"
-        title="提交全部已暂存内容（Ctrl+Enter）"
+        title="提交（Ctrl+Enter）"
         @click="$emit('commit', false)"
       >
         <Icon name="git-commit" :size="15" />提交

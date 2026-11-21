@@ -891,6 +891,7 @@ onBeforeUnmount(() => {
             type="button"
             class="btn primary"
             :disabled="!canSaveEditor"
+            title="保存提示词（Ctrl+Enter）"
             @click="saveDraft"
           >
             <Icon name="check" :size="15" />
@@ -980,17 +981,13 @@ onBeforeUnmount(() => {
                 spellcheck="false"
               />
               <p class="inline-note-p">
-                把每次需要替换的内容写成 &#123;&#123;变量名&#125;&#125;，复制时可以填写。
+                用 &#123;&#123;变量名&#125;&#125; 标记变量
               </p>
             </div>
           </div>
 
           <div class="form-bottom">
-            <Icon name="keyboard" :size="14" />
-            <span class="mini-key">Ctrl</span>
-            <span>+</span>
-            <span class="mini-key">Enter</span>
-            <span>保存</span>
+            <span>Ctrl+Enter 保存</span>
             <span class="push" />
             <span>{{ promptCharCount(editor.body) }} 字符</span>
           </div>
@@ -1147,10 +1144,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="dialog-footer">
-          <span class="inline-caption">
-            <Icon name="info" :size="13" />
-            <span>填写的内容仅用于本次复制。</span>
-          </span>
+          <span class="inline-caption">仅用于本次复制</span>
           <div class="toolbar-actions">
             <button type="button" class="btn" @click="closeFillDialog">
               取消
@@ -1203,7 +1197,7 @@ onBeforeUnmount(() => {
             {{ copyError.error }}
           </div>
           <p class="copy-error-desc">
-            已保留本次内容，未清空输入。你可以直接重试写入剪贴板，或手动复制以下纯文本：
+            内容已保留，重试或手动复制：
           </p>
           <textarea
             ref="manualCopyAreaRef"

@@ -170,7 +170,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       >
         <Icon name="penbox" :size="16" />
         <span class="nav-label">快速记录</span>
-        <kbd>Ctrl N</kbd>
       </button>
       <nav aria-label="主导航">
         <div v-for="group in groups" :key="group.name" class="navgroup">

@@ -369,16 +369,6 @@ small {
   color: #4072ae;
 }
 
-.quick kbd {
-  margin-left: auto;
-  color: #5d6b7e;
-  background: var(--nav);
-  border: 1px solid #dfe4ec;
-  border-radius: 4px;
-  padding: 0 5px 1px;
-  font: 10px/15px var(--sans);
-}
-
 .rail nav {
   flex: 1 1 auto;
   min-height: 0;
@@ -1332,22 +1322,6 @@ label:not(.search-box):not(.form-line):not(.detail-edit-row):not(.inline-label):
   font-weight: 400;
 }
 
-/* 键盘提示键帽 */
-.mini-key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font: 10.5px/16px var(--sans);
-  background: var(--paper);
-  border: 1px solid #dce1e8;
-  border-bottom: 2px solid #d2d9e3;
-  min-width: 19px;
-  border-radius: 4px;
-  padding: 0 5px;
-  color: #5d6a7b;
-  white-space: nowrap;
-}
-
 /* 卡片与分栏面板 */
 .card {
   background: var(--paper);
@@ -2222,18 +2196,6 @@ details > summary:hover {
 .quick-entry .entry-clear:hover:not(:disabled) {
   color: var(--ink);
   background: var(--hover);
-}
-
-.quick-entry .key-pair {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
-
-.quick-entry .key-plus {
-  color: #647083;
-  font-size: 9px;
 }
 
 .quick-entry .btn {
@@ -3478,12 +3440,6 @@ button.month-chip:hover:not(:disabled) {
 
 .service-tools .text-action:hover:not(:disabled) {
   color: var(--brand-dark);
-}
-
-.service-tools .dep {
-  margin-left: auto;
-  color: var(--soft);
-  font-size: 10.5px;
 }
 
 /* 浅色运行日志终端（RunLog.vue） */

@@ -122,7 +122,7 @@ async function main() {
     await nav("Git 管理");
     await until(
       async () =>
-        (await page.locator(".git-file-footer").count()) &&
+        (await page.locator(".selection-row").count()) &&
         (await page.locator(".git-tabs").textContent()).includes("3"),
       "10k status",
     );

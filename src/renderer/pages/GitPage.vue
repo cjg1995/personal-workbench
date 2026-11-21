@@ -81,7 +81,7 @@ async function guard(reason?: "navigate" | "close") {
   if (submitOpen.value && !(await submitPage.value?.canLeave())) return false;
   if (reason !== "close" || !message.value.trim()) return true;
   return confirm(
-    "提交说明尚未提交",
+    "提交说明未提交",
     "关闭工作台会丢弃此处提交说明，确认关闭？",
     "丢弃并关闭",
     { tone: "warning", danger: true },
@@ -810,7 +810,7 @@ onBeforeUnmount(() => {
             !canSubmit || busy || (repositoryBusy && !activeSubmitTask)
           "
           :title="
-            canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'
+            canSubmit ? '提交已暂存内容与已跟踪修改' : '未配置提测流程'
           "
           @click="openSubmit()"
         >
@@ -852,7 +852,7 @@ onBeforeUnmount(() => {
         >
           <Icon name="branch2" :size="15" />
           <span class="git-current-branch" :title="state?.branch">{{
-            state?.branch || (state?.detached ? "游离 HEAD" : "尚未读取")
+            state?.branch || (state?.detached ? "游离 HEAD" : "—")
           }}</span>
           <Icon name="down" :size="13" />
         </button>
@@ -947,7 +947,7 @@ onBeforeUnmount(() => {
 
       <div class="vdiv" aria-hidden="true" />
 
-      <div :title="state?.upstream || '尚未配置上游分支'">
+      <div :title="state?.upstream || '未配置上游分支'">
         <div class="context-label">与上游同步</div>
         <div class="sync-count">
           <Icon name="arrow-up" :size="13" />
@@ -1227,13 +1227,6 @@ onBeforeUnmount(() => {
             {{ hiddenUntrackedCount.toLocaleString() }} 个未跟踪文件</span
           >
         </div>
-
-        <div class="footnote git-file-footer">
-          <Icon name="external" :size="13" />
-          <span>双击文件或按</span>
-          <span class="mini-key">Enter</span>
-          <span>打开独立差异对比窗口</span>
-        </div>
       </section>
 
       <section class="card pane">
@@ -1241,7 +1234,6 @@ onBeforeUnmount(() => {
           <div class="head-title">
             <h2>提交变更</h2>
           </div>
-          <span class="mini-key">Ctrl + Enter</span>
         </div>
         <GitCommitPanel
           v-model:message="message"

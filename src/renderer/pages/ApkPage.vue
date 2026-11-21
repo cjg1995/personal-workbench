@@ -169,7 +169,6 @@ async function start() {
             <span v-if="config" class="badge live">预检查通过</span>
           </div>
 
-          <p class="small muted">校验全部通过才算成功，不自动安装到手机。</p>
           <button
             v-if="error"
             type="button"

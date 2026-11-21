@@ -525,8 +525,8 @@ async function toggleComplete(target?: Note) {
       tone: "question",
       title: "有未保存修改",
       message: canSave
-        ? "可以先保存当前内容，再标记完成。"
-        : "内容为空，无法保存。可以丢弃本次修改后标记完成。",
+        ? "保存当前内容后再标记完成？"
+        : "内容为空，无法保存。丢弃修改并标记完成？",
       buttons: canSave
         ? [
             { label: "取消", variant: "default" },
@@ -638,7 +638,7 @@ async function restore() {
           v-model="text"
           class="entry-input"
           rows="2"
-          placeholder="记录今天处理的工作，支持多行输入，首行将作为列表标题…"
+          placeholder="记点什么…（首行作为标题）"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
@@ -675,17 +675,12 @@ async function restore() {
             >
               清空
             </button>
-            <span class="key-pair" aria-hidden="true">
-              <span class="mini-key">Ctrl</span>
-              <span class="key-plus">+</span>
-              <span class="mini-key">Enter</span>
-            </span>
             <button
               type="submit"
               class="btn primary compact"
               :disabled="busy || !text.trim() || !validComposerDate"
               :aria-busy="busy"
-              title="Ctrl+Enter 快捷保存"
+              title="保存记录（Ctrl+Enter）"
             >
               保存记录
             </button>
@@ -1059,7 +1054,7 @@ async function restore() {
                     ref="editTextarea"
                     v-model="editor.text"
                     rows="6"
-                    placeholder="填写工作内容，第一行将作为摘要标题…"
+                    placeholder="工作内容…"
                     required
                   />
                 </label>
@@ -1194,7 +1189,7 @@ async function restore() {
           v-model="text"
           class="entry-input"
           rows="2"
-          placeholder="想到的事，先记下来，支持多行输入…"
+          placeholder="记个想法…"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
@@ -1218,17 +1213,12 @@ async function restore() {
             >
               清空
             </button>
-            <span class="key-pair" aria-hidden="true">
-              <span class="mini-key">Ctrl</span>
-              <span class="key-plus">+</span>
-              <span class="mini-key">Enter</span>
-            </span>
             <button
               type="submit"
               class="btn primary compact"
               :disabled="busy || !text.trim()"
               :aria-busy="busy"
-              title="Ctrl+Enter 快捷添加"
+              title="添加待办（Ctrl+Enter）"
             >
               添加待办
             </button>
@@ -1336,8 +1326,8 @@ async function restore() {
                   n.deletedAt
                     ? '已删除'
                     : n.completedAt
-                      ? '重新打开待办'
-                      : '标记完成（不自动生成工作记录）'
+                      ? '点击重新打开待办'
+                      : '点击标记完成（不自动生成工作记录）'
                 "
                 @click.stop="toggleComplete(n)"
               >

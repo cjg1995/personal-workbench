@@ -170,7 +170,7 @@ function primaryAction(id: string) {
 }
 
 function shownRunMessage(info?: { state?: string; message?: string } | null) {
-  const message = info?.message?.trim() || "";
+  const message = (info?.message?.trim() || "").replace(/已核实/g, "");
   if (!message) return "";
   if (
     ["failed", "unconfigured", "unknown", "external"].includes(
@@ -185,6 +185,21 @@ function shownRunMessage(info?: { state?: string; message?: string } | null) {
   )
     return message;
   return "";
+}
+
+function shortEnvLabel(type: string, description?: string) {
+  const desc = description || "";
+  if (type === "spring") return "Maven · RuoYiApplication";
+  if (type === "tomcat") {
+    return /JRebel/i.test(desc)
+      ? "Tomcat · Exploded · JRebel"
+      : "Tomcat · Exploded";
+  }
+  if (type === "vue") return "Vue CLI · serve";
+  if (type === "wechat") return "微信开发者工具";
+  if (type === "uni-wechat") return "HBuilderX CLI · 微信小程序";
+  if (type === "h5") return "HBuilderX CLI · H5";
+  return types[type] || desc || "—";
 }
 
 function stopLabel(id: string) {
@@ -393,11 +408,11 @@ async function act(action: string, id: string) {
     await refresh();
     notify(
       action === "stop"
-        ? "停止结果已核实"
+        ? "已停止"
         : action === "start"
-          ? "已检查并启动，日志会持续更新"
+          ? "已启动，日志会持续更新"
           : action === "restart"
-            ? "已重新启动，日志会持续更新"
+            ? "已重启，日志会持续更新"
             : "操作已执行",
     );
     return true;
@@ -749,7 +764,7 @@ onBeforeUnmount(() => {
                     <Icon name="copy" :size="12" />
                   </button>
                 </template>
-                <span v-else class="muted">尚无经过核实的可用地址</span>
+                <span v-else class="muted">—</span>
               </div>
             </div>
 
@@ -759,7 +774,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="fact-value">
                 <span class="mono" :title="current?.branch">{{
-                  current?.branch || "尚未核实 / 非 Git 目录"
+                  current?.branch || "—"
                 }}</span>
               </div>
             </div>
@@ -771,10 +786,10 @@ onBeforeUnmount(() => {
               <div class="fact-value">
                 <span>{{
                   current?.canStop
-                    ? "工作台托管，身份已核实"
+                    ? "工作台托管"
                     : current?.state === "external"
-                      ? "外部实例，请用原工具管理"
-                      : "未核实为工作台运行实例"
+                      ? "外部实例"
+                      : "—"
                 }}</span>
               </div>
             </div>
@@ -795,8 +810,8 @@ onBeforeUnmount(() => {
                 <Icon name="server" :size="12" />运行环境
               </div>
               <div class="fact-value">
-                <span>{{
-                  current?.description || types[selectedProject.type]
+                <span :title="current?.description || types[selectedProject.type]">{{
+                  shortEnvLabel(selectedProject.type, current?.description)
                 }}</span>
               </div>
             </div>
@@ -825,9 +840,6 @@ onBeforeUnmount(() => {
             >
               <Icon name="external" :size="13" />查看日志
             </button>
-            <span v-if="selectedProject.group === '推荐官'" class="dep">
-              依赖 HomeProject API，需单独启动。
-            </span>
           </div>
         </section>
 
@@ -844,11 +856,7 @@ onBeforeUnmount(() => {
             <span class="live-light idle" />
           </div>
           <div class="term-empty">
-            <span
-              >当前项目{{
-                runLabels[current?.state || "stopped"]
-              }}，尚未加载运行日志。</span
-            >
+            <span>未加载日志</span>
             <div class="row" style="gap: 8px">
               <button
                 v-if="primaryAction(selectedProject.id)?.action === 'start'"

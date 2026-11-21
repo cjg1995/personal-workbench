@@ -152,7 +152,7 @@ export const taskLabels: Record<string, string> = {
   partial: "部分完成",
   failed: "失败",
   cancelled: "已取消",
-  interrupted: "已中断 / 待核实",
+  interrupted: "已中断",
 };
 export const runLabels: Record<string, string> = {
   unconfigured: "需要配置",

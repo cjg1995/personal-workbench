@@ -48,7 +48,7 @@ setGuard(
   async () =>
     JSON.stringify(form.value) === saved.value ||
     (await confirm(
-      "配置尚未保存",
+      "配置未保存",
       "离开后未保存的项目和工具配置将丢弃。",
       "丢弃配置",
     )),
@@ -383,15 +383,11 @@ async function restore() {
               <Icon name="folder" :size="14" />打开目录
             </button>
           </div>
-          <p class="small muted">
-            版本 {{ model.version }}。数据只保存在本机。
-          </p>
 
           <section class="section-rule">
             <h2>备份与恢复</h2>
             <p class="muted small" style="margin-bottom: 12px">
-              备份包含记录、提示词、配置、月报、审查和 TXT
-              快照。恢复前会先保护当前数据，并要求没有正在运行的任务。
+              包含记录、提示词、配置、月报
             </p>
             <div class="actions">
               <button
@@ -411,9 +407,6 @@ async function restore() {
                 选择备份并预览
               </button>
             </div>
-            <p class="small muted" style="margin-bottom: 12px">
-              不含 APK、源码和日志文件本身。
-            </p>
 
             <table v-if="backups.length" class="table">
               <thead>
