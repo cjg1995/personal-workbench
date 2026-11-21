@@ -55,7 +55,7 @@ interface Position { file: string; line: number; column: number; uri?: string }
 interface LspRange { start: { line: number; character: number }; end: { line: number; character: number } }
 interface Target extends Position { uri: string; label: string; snippet?: string; range?: LspRange }
 interface SearchHit { file: string; line: number; column: number; text: string }
-interface ProjectOption { id: string; name: string; type: string; path: string }
+interface ProjectOption { id: string; name: string; group?: string; type: string; path: string }
 interface BlameLine { line: number; hash: string; author: string; date: string; summary: string; uncommitted?: boolean }
 interface BlameRow { key: string; top: number; height: number; date: string; author: string; hash: string; summary: string; uncommitted?: boolean; bg: string; fg: string }
 const blamePalette = [
@@ -122,6 +122,9 @@ const projectPickerOpen = ref(false);
 const projectOptions = ref<ProjectOption[]>([]);
 const projectQuery = ref("");
 const projectBusy = ref(false);
+const projectActiveId = ref("");
+const projectFilterInput = ref<HTMLInputElement>();
+const projectListHost = ref<HTMLElement>();
 const tabMenu = ref<{ x: number; y: number; file: string } | null>(null);
 const blameMenu = ref<{ x: number; y: number } | null>(null);
 const tabStrip = ref<HTMLElement>();
@@ -137,7 +140,40 @@ const ctrlLink = ref(false);
 const filteredProjects = computed(() => {
   const q = projectQuery.value.trim().toLowerCase();
   return q ? projectOptions.value.filter((item) =>
-    item.name.toLowerCase().includes(q) || item.path.toLowerCase().includes(q)) : projectOptions.value;
+    item.name.toLowerCase().includes(q) ||
+    item.path.toLowerCase().includes(q) ||
+    (item.group || "").toLowerCase().includes(q)) : projectOptions.value;
+});
+const groupedProjects = computed(() => {
+  const ordered = ["推荐官", "HomeProject"];
+  const names: string[] = [];
+  for (const name of ordered) {
+    if (filteredProjects.value.some((p) => (p.group || "其他") === name)) names.push(name);
+  }
+  for (const p of filteredProjects.value) {
+    const g = p.group || "其他";
+    if (!names.includes(g)) names.push(g);
+  }
+  return names.map((name) => ({
+    name,
+    items: filteredProjects.value.filter((p) => (p.group || "其他") === name),
+  }));
+});
+const orderedFilteredProjects = computed(() =>
+  groupedProjects.value.flatMap((group) => group.items),
+);
+function projectIcon(project: ProjectOption) {
+  if (project.type === "spring" || project.type === "tomcat")
+    return { icon: "server", cls: "server" };
+  if (project.type === "vue" || project.id === "wecom")
+    return { icon: "web", cls: "web" };
+  return { icon: "phone", cls: "phone" };
+}
+watch(projectQuery, () => {
+  const list = orderedFilteredProjects.value;
+  if (!list.some((p) => p.id === projectActiveId.value)) {
+    projectActiveId.value = list[0]?.id || "";
+  }
 });
 const searchGroups = computed(() => {
   const groups = new Map<string, SearchHit[]>();
@@ -530,8 +566,39 @@ async function toggleProjectPicker() {
   try {
     projectOptions.value = await call<ProjectOption[]>("editor.projects");
     projectQuery.value = "";
+    projectActiveId.value = "";
     projectPickerOpen.value = true;
+    await nextTick();
+    projectFilterInput.value?.focus();
+    const cur = projectListHost.value?.querySelector<HTMLElement>(".editor-project-row.current");
+    cur?.scrollIntoView({ block: "nearest" });
   } catch (error) { message(String(error)); }
+}
+function onProjectPickerKeydown(event: KeyboardEvent) {
+  const list = orderedFilteredProjects.value;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (!list.length) return;
+    event.preventDefault();
+    const idx = list.findIndex((p) => p.id === projectActiveId.value);
+    const nextIdx = idx < 0
+      ? (event.key === "ArrowDown" ? 0 : list.length - 1)
+      : (idx + (event.key === "ArrowDown" ? 1 : list.length - 1)) % list.length;
+    const next = list[nextIdx];
+    projectActiveId.value = next.id;
+    void nextTick(() => {
+      projectListHost.value
+        ?.querySelector<HTMLElement>(`[data-project-id="${CSS.escape(next.id)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  } else if (event.key === "Enter") {
+    const el = event.target as HTMLElement | null;
+    if (el?.closest("button")) return;
+    const focusedId = el?.closest<HTMLElement>(".editor-project-row")?.dataset.projectId;
+    const target = list.find((p) => p.id === (focusedId || projectActiveId.value)) || list[0];
+    if (!target) return;
+    event.preventDefault();
+    void switchProject(target, event.ctrlKey || event.metaKey || event.shiftKey ? "new" : "window");
+  }
 }
 async function switchProject(project: ProjectOption, mode: "window" | "new") {
   if (projectBusy.value) return;
@@ -1680,8 +1747,14 @@ onBeforeUnmount(() => {
 <template>
   <div class="editor-window" :class="{ 'editor-dark': dark, 'ctrl-link-hover': ctrlLink }">
     <header class="editor-header">
-      <button class="editor-project-title" title="切换项目（本窗口 / 新窗口）" @click="toggleProjectPicker">
-        <Icon name="code" :size="16" /><strong>{{ context?.projectName || '代码编辑器' }}</strong><span class="editor-project-caret">▾</span>
+      <button
+        class="editor-project-title"
+        :class="{ open: projectPickerOpen }"
+        title="切换项目"
+        :aria-expanded="projectPickerOpen"
+        @click="toggleProjectPicker"
+      >
+        <Icon name="code" :size="16" /><strong>{{ context?.projectName || '代码编辑器' }}</strong><Icon name="down" :size="12" class="editor-project-caret" />
       </button>
       <div class="editor-header-actions">
         <button title="打开项目文件（Ctrl+Shift+R）" @click="showFiles"><Icon name="file" :size="15" /></button>
@@ -1689,23 +1762,82 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div v-if="projectPickerOpen" class="editor-project-backdrop" @click="projectPickerOpen = false"></div>
-    <section v-if="projectPickerOpen" class="editor-project-picker" role="dialog" aria-label="切换项目">
-      <div class="editor-project-picker-head">
-        <strong>切换项目</strong>
-        <CloseButton label="关闭" :size="13" @click="projectPickerOpen = false" />
+    <section
+      v-if="projectPickerOpen"
+      class="editor-project-picker"
+      role="dialog"
+      aria-label="切换项目"
+      @keydown="onProjectPickerKeydown"
+    >
+      <div class="editor-project-search">
+        <Icon name="search" :size="14" class="editor-project-search-icon" />
+        <input
+          ref="projectFilterInput"
+          v-model="projectQuery"
+          class="editor-project-filter"
+          placeholder="搜索项目名、分组或路径…"
+          aria-label="筛选项目"
+          autocomplete="off"
+        />
+        <CloseButton
+          v-if="projectQuery"
+          label="清空搜索"
+          :size="12"
+          @click="projectQuery = ''; projectFilterInput?.focus()"
+        />
+        <span class="editor-project-count">{{ orderedFilteredProjects.length }}</span>
       </div>
-      <input v-model="projectQuery" class="editor-project-filter" placeholder="筛选项目名或路径" aria-label="筛选项目" />
-      <div class="editor-project-list">
-        <div v-for="project in filteredProjects" :key="project.id" class="editor-project-row"
-          :class="{ current: project.id === context?.projectId }">
-          <div class="editor-project-info">
-            <strong>{{ project.name }}<span v-if="project.id === context?.projectId" class="editor-project-current">当前</span></strong>
-            <code :title="project.path">{{ project.path }}</code>
+      <div ref="projectListHost" class="editor-project-list">
+        <template v-for="group in groupedProjects" :key="group.name">
+          <div v-if="groupedProjects.length > 1" class="editor-project-group">{{ group.name }}</div>
+          <div
+            v-for="project in group.items"
+            :key="project.id"
+            :data-project-id="project.id"
+            class="editor-project-row"
+            :class="{
+              current: project.id === context?.projectId,
+              highlighted: project.id === projectActiveId,
+            }"
+            role="button"
+            tabindex="0"
+            @mouseenter="projectActiveId = ''"
+            @click="switchProject(project, 'window')"
+          >
+            <span class="editor-project-icon" :class="projectIcon(project).cls" aria-hidden="true">
+              <Icon :name="projectIcon(project).icon" :size="15" />
+            </span>
+            <div class="editor-project-info">
+              <strong>
+                <span>{{ project.name }}</span>
+                <span v-if="project.id === context?.projectId" class="editor-project-current">当前</span>
+              </strong>
+              <code :title="project.path">{{ project.path }}</code>
+            </div>
+            <div class="editor-project-actions" @click.stop>
+              <button
+                v-if="project.id !== context?.projectId"
+                type="button"
+                class="editor-project-btn primary"
+                :disabled="projectBusy"
+                title="在本窗口切换到此项目（Enter）"
+                @click="switchProject(project, 'window')"
+              >
+                本窗口切换
+              </button>
+              <button
+                type="button"
+                class="editor-project-btn"
+                :disabled="projectBusy"
+                title="在新窗口打开此项目（Ctrl+Enter）"
+                @click="switchProject(project, 'new')"
+              >
+                <Icon name="external" :size="11" />新窗口打开
+              </button>
+            </div>
           </div>
-          <button :disabled="projectBusy || project.id === context?.projectId" @click="switchProject(project, 'window')">本窗口切换</button>
-          <button :disabled="projectBusy" @click="switchProject(project, 'new')">新窗口打开</button>
-        </div>
-        <p v-if="!filteredProjects.length" class="editor-project-empty">没有匹配的项目</p>
+        </template>
+        <p v-if="!orderedFilteredProjects.length" class="editor-project-empty">没有匹配的项目</p>
       </div>
     </section>
     <div class="editor-workspace">
