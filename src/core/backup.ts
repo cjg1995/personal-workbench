@@ -150,7 +150,7 @@ export class BackupService {
         n.endsWith("/source.txt"),
       ).length,
       impact:
-        "替换工作台内的记录、配置、月报、审查和任务历史；先保留当前完整备份。源码、远端、APK 和原 TXT 不在替换范围。",
+        "替换工作台内的记录、提示词、配置、月报、审查和任务历史；先保留当前完整备份。源码、远端、APK 和原 TXT 不在替换范围。",
     };
   }
   async restore(token: string) {

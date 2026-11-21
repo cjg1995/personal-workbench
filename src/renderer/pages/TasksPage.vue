@@ -3,7 +3,14 @@ import { computed, ref, watch } from "vue";
 import { context, dateLabel, model, taskLabels } from "../state";
 import TaskDetail from "../components/TaskDetail.vue";
 import Icon from "../components/Icon.vue";
-const attentionStates = ["running", "cancelling", "awaiting", "failed", "partial"];
+
+const attentionStates = [
+  "running",
+  "cancelling",
+  "awaiting",
+  "failed",
+  "partial",
+];
 const query = ref(""),
   selected = ref(
     context.value.taskId ||
@@ -11,12 +18,15 @@ const query = ref(""),
       model.tasks[0]?.id ||
       "",
   );
+
 const tasks = computed(() =>
   model.tasks.filter(
     (t) =>
       !query.value ||
-      t.title.includes(query.value) ||
-      String(t.params.repo || "").includes(query.value),
+      t.title.toLowerCase().includes(query.value.toLowerCase()) ||
+      String(t.params.repo || "")
+        .toLowerCase()
+        .includes(query.value.toLowerCase()),
   ),
 );
 const attention = computed(() =>
@@ -25,7 +35,10 @@ const attention = computed(() =>
 const history = computed(() =>
   tasks.value.filter((task) => !attentionStates.includes(task.state)),
 );
-const active = computed(() => model.tasks.find((t) => t.id === selected.value));
+const active = computed(() =>
+  model.tasks.find((t) => t.id === selected.value),
+);
+
 watch(context, (value) => {
   if (value.taskId) {
     selected.value = value.taskId;
@@ -34,58 +47,100 @@ watch(context, (value) => {
 });
 </script>
 <template>
-  <div class="tasks-layout">
-    <section>
-      <div class="section-head">
-        <h2>任务记录</h2>
-        <input
-          v-model="query"
-          type="search"
-          placeholder="搜索任务"
-          aria-label="搜索任务"
-          class="task-search"
-        />
+  <div class="subpage-wrap">
+    <div class="page-head">
+      <div>
+        <h1>任务中心</h1>
+        <div class="h-meta">
+          <span>共 {{ model.tasks.length }} 条任务记录</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ attention.length }} 项待处理或执行中</span>
+        </div>
       </div>
-      <div v-if="!tasks.length" class="empty">
-        <span class="empty-icon"><Icon name="list" :size="16" /></span>
-        <p class="empty-title">没有执行记录</p>
-        <button v-if="query" class="link" @click="query = ''">清空搜索</button>
-      </div>
-      <template v-if="attention.length">
-        <p class="list-label">需要处理</p>
-        <button
-          v-for="t in attention"
-          :key="t.id"
-          class="task-select"
-          :class="{ selected: t.id === selected }"
-          @click="selected = t.id"
-        >
-          <strong>{{ t.title }}</strong
-          ><span class="status" :class="t.state">{{ taskLabels[t.state] }}</span
-          ><small>{{ dateLabel(t.startedAt) }}</small>
-        </button>
-      </template>
-      <template v-if="history.length">
-        <p class="list-label">历史</p>
-        <button
-          v-for="t in history"
-          :key="t.id"
-          class="task-select"
-          :class="{ selected: t.id === selected }"
-          @click="selected = t.id"
-        >
-          <strong>{{ t.title }}</strong
-          ><span class="status" :class="t.state">{{ taskLabels[t.state] }}</span
-          ><small>{{ dateLabel(t.startedAt) }}</small>
-        </button>
-      </template>
-    </section>
-    <section>
-      <TaskDetail v-if="active" :task="active" />
-      <div v-else class="empty">
-        <span class="empty-icon"><Icon name="list" :size="16" /></span>
-        <p class="empty-title">选择一个任务</p>
-      </div>
-    </section>
+    </div>
+
+    <div class="duo tasks-layout">
+      <section class="card pane">
+        <div class="panel-head spaced-head">
+          <div class="head-title">
+            <Icon name="tasks" :size="17" />
+            <h2>任务记录</h2>
+            <span class="count">{{ tasks.length }}</span>
+          </div>
+          <label class="search-box" style="margin: 0; width: 138px">
+            <Icon name="search" :size="13" />
+            <input
+              v-model="query"
+              type="search"
+              placeholder="搜索任务"
+              aria-label="搜索任务"
+            />
+          </label>
+        </div>
+
+        <div class="task-list-scroll">
+          <div v-if="!tasks.length" class="empty">
+            <span class="empty-icon"><Icon name="tasks" :size="16" /></span>
+            <p class="empty-title">没有执行记录</p>
+            <button v-if="query" type="button" class="link" @click="query = ''">
+              清空搜索
+            </button>
+          </div>
+
+          <template v-if="attention.length">
+            <p class="list-label">需要处理</p>
+            <button
+              v-for="t in attention"
+              :key="t.id"
+              type="button"
+              class="task-select"
+              :class="{ selected: t.id === selected }"
+              @click="selected = t.id"
+            >
+              <strong>{{ t.title }}</strong>
+              <span class="status" :class="t.state">{{
+                taskLabels[t.state]
+              }}</span>
+              <small>{{ dateLabel(t.startedAt) }}</small>
+            </button>
+          </template>
+
+          <template v-if="history.length">
+            <p class="list-label">历史</p>
+            <button
+              v-for="t in history"
+              :key="t.id"
+              type="button"
+              class="task-select"
+              :class="{ selected: t.id === selected }"
+              @click="selected = t.id"
+            >
+              <strong>{{ t.title }}</strong>
+              <span class="status" :class="t.state">{{
+                taskLabels[t.state]
+              }}</span>
+              <small>{{ dateLabel(t.startedAt) }}</small>
+            </button>
+          </template>
+        </div>
+      </section>
+
+      <section class="card pane">
+        <div class="panel-head spaced-head">
+          <div class="head-title">
+            <Icon name="document" :size="17" />
+            <h2>任务详情</h2>
+          </div>
+        </div>
+        <div class="pane-scroll">
+          <TaskDetail v-if="active" :task="active" />
+          <div v-else class="empty" style="margin-top: 40px">
+            <span class="empty-icon"><Icon name="tasks" :size="16" /></span>
+            <p class="empty-title">选择一个任务</p>
+            <p class="empty-hint">点击左侧任务查看执行阶段、产物信息与详细日志。</p>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
 </template>

@@ -17,7 +17,16 @@ import type {
   GitStash,
   RepositoryState,
 } from "../../shared/git-client";
-import { call, context, model, notify, route, setGuard, leaveGuard } from "../state";
+import {
+  call,
+  confirm,
+  context,
+  model,
+  notify,
+  route,
+  setGuard,
+  leaveGuard,
+} from "../state";
 import { submitTabForProject } from "../../shared/submit-policy";
 import { gitOperationLabel } from "../../shared/git-labels";
 import ProjectSelect from "../components/ProjectSelect.vue";
@@ -27,6 +36,7 @@ import CommitGraph from "../components/CommitGraph.vue";
 import GitCommitPanel from "../components/GitCommitPanel.vue";
 import SubmitPage from "./SubmitPage.vue";
 import CloseButton from "../components/CloseButton.vue";
+
 const projectId = ref(context.value.projectId || "homeproject"),
   tab = ref("changes"),
   state = ref<RepositoryState>(),
@@ -44,47 +54,75 @@ const query = ref(""),
   selected = ref(""),
   checked = ref<string[]>([]),
   message = ref(""),
-  amend = ref(false);
-const commitOpen = ref(false), submitOpen = ref(false),
+  amend = ref(false),
+  moreOpsOpen = ref(false);
+const commitOpen = ref(false),
+  submitOpen = ref(false),
   submitTaskId = ref("");
 const submitPage = ref<InstanceType<typeof SubmitPage>>();
+
 async function closeSubmit() {
-  if (await submitPage.value?.canLeave() ?? true) submitOpen.value = false;
+  if ((await submitPage.value?.canLeave()) ?? true) submitOpen.value = false;
 }
+
 const canSubmit = computed(() => !!submitTabForProject(projectId.value));
-const activeSubmitTask = computed(() => model.tasks.find((task) =>
-  task.projectId === projectId.value && ["erp", "app"].includes(task.type) &&
-  ["running", "awaiting", "cancelling"].includes(task.state)));
+const activeSubmitTask = computed(() =>
+  model.tasks.find(
+    (task) =>
+      task.projectId === projectId.value &&
+      ["erp", "app"].includes(task.type) &&
+      ["running", "awaiting", "cancelling"].includes(task.state),
+  ),
+);
 const pageRoot = ref<HTMLElement>();
 const scrollPositions = new Map<HTMLElement, { top: number; left: number }>();
+
 async function guard(reason?: "navigate" | "close") {
-  if (submitOpen.value && !await submitPage.value?.canLeave()) return false;
+  if (submitOpen.value && !(await submitPage.value?.canLeave())) return false;
   if (reason !== "close" || !message.value.trim()) return true;
-  return call<boolean>("ui.confirm", {
-    title: "提交说明尚未提交",
-    message: "关闭工作台会丢弃此处提交说明。确认关闭？",
+  return confirm(
+    "提交说明尚未提交",
+    "关闭工作台会丢弃此处提交说明，确认关闭？",
+    "丢弃并关闭",
+    { tone: "warning", danger: true },
+  );
+}
+
+watch(
+  route,
+  (next, previous) => {
+    if (previous !== "review" || next === "review") return;
+    scrollPositions.clear();
+    for (const element of Array.from(
+      pageRoot.value?.querySelectorAll<HTMLElement>("*") || [],
+    ))
+      if (
+        element.scrollHeight > element.clientHeight ||
+        element.scrollWidth > element.clientWidth
+      )
+        scrollPositions.set(element, {
+          top: element.scrollTop,
+          left: element.scrollLeft,
+        });
+  },
+  { flush: "sync" },
+);
+
+async function stageVisible(onlyChecked: boolean) {
+  const paths = onlyChecked
+    ? new Set(checked.value)
+    : new Set(files.value.map((f) => f.path));
+  await execute("stage", {
+    files: state.value?.files
+      .filter((f) => paths.has(f.path))
+      .map((f) => f.path),
   });
 }
-watch(route, (next, previous) => {
-  if (previous !== "review" || next === "review") return;
-  scrollPositions.clear();
-  for (const element of Array.from(pageRoot.value?.querySelectorAll<HTMLElement>("*") || []))
-    if (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)
-      scrollPositions.set(element, { top: element.scrollTop, left: element.scrollLeft });
-}, { flush: "sync" });
-async function openCommit() {
-  tab.value = "changes";
-  commitOpen.value = true;
-  await nextTick();
-  document.querySelector<HTMLTextAreaElement>(".git-commit-modal textarea")?.focus();
-}
-async function stageVisible(onlyChecked: boolean) {
-  const paths = onlyChecked ? new Set(checked.value) : new Set(files.value.map((f) => f.path));
-  await execute("stage", { files: state.value?.files.filter((f) => paths.has(f.path)).map((f) => f.path) });
-}
+
 function commit(push: boolean) {
   void execute("commit", { message: message.value, amend: amend.value, push });
 }
+
 async function openSubmit(taskId = "") {
   if (!canSubmit.value) return;
   await readStatus();
@@ -92,6 +130,7 @@ async function openSubmit(taskId = "") {
   submitTaskId.value = taskId;
   submitOpen.value = true;
 }
+
 const branches = ref<GitBranch[]>([]),
   commits = ref<GitCommit[]>([]),
   stashes = ref<GitStash[]>([]),
@@ -108,6 +147,7 @@ const quickBranchOpen = ref(false),
   quickBranchInput = ref<HTMLInputElement>(),
   quickBranchButton = ref<HTMLButtonElement>();
 let quickBranchRequest = 0;
+
 const quickBranches = computed(() =>
   branches.value
     .filter((branch) =>
@@ -121,6 +161,7 @@ const quickBranches = computed(() =>
         a.name.localeCompare(b.name),
     ),
 );
+
 async function toggleQuickBranches() {
   if (quickBranchOpen.value) {
     quickBranchOpen.value = false;
@@ -148,10 +189,12 @@ async function toggleQuickBranches() {
     if (id === quickBranchRequest) quickBranchLoading.value = false;
   }
 }
+
 function closeQuickBranches() {
   quickBranchOpen.value = false;
   quickBranchButton.value?.focus();
 }
+
 async function chooseQuickBranch(branch: GitBranch) {
   if (repositoryBusy.value || state.value?.operation) return;
   let chosen = branch;
@@ -171,6 +214,7 @@ async function chooseQuickBranch(branch: GitBranch) {
   quickBranchOpen.value = false;
   if (!chosen.current) await execute("checkout", { branch: chosen.name });
 }
+
 async function quickBranchKey(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault();
@@ -201,10 +245,12 @@ async function quickBranchKey(event: KeyboardEvent) {
     .getElementById("quick-branch-" + quickBranchIndex.value)
     ?.scrollIntoView({ block: "nearest" });
 }
+
 watch(quickBranches, () => {
   const first = quickBranches.value.findIndex((branch) => !branch.current);
   quickBranchIndex.value = first >= 0 ? first : 0;
 });
+
 const chosenCommit = ref<GitCommit>(),
   details = ref<{
     commit: string;
@@ -223,6 +269,15 @@ let disposed = false,
   detailId = 0,
   unsubscribe: (() => void) | undefined,
   refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showUntrackedFile(file: ChangeFile) {
+  return !file.untracked || file.inTrackedDirectory !== false;
+}
+
+const totalVisibleChanges = computed(
+  () => state.value?.files.filter(showUntrackedFile).length || 0,
+);
+
 const files = computed(() => {
   const text = query.value.toLowerCase();
   return (state.value?.files || [])
@@ -247,16 +302,12 @@ const files = computed(() => {
         : a.path.localeCompare(b.path),
     );
 });
-function showUntrackedFile(file: ChangeFile) {
-  return (
-    !file.untracked ||
-    file.inTrackedDirectory !== false
-  );
-}
-const hiddenUntrackedCount = computed(() =>
-  state.value?.files.filter(
-        (file) => file.untracked && file.inTrackedDirectory === false,
-      ).length || 0,
+
+const hiddenUntrackedCount = computed(
+  () =>
+    state.value?.files.filter(
+      (file) => file.untracked && file.inTrackedDirectory === false,
+    ).length || 0,
 );
 const stagedCount = computed(
     () => state.value?.files.filter((f) => f.staged).length || 0,
@@ -278,6 +329,17 @@ const hasSelection = computed(() => checked.value.length > 0),
         : "local",
   );
 const checkedSet = computed(() => new Set(checked.value));
+const allVisibleChecked = computed(
+  () =>
+    files.value.length > 0 &&
+    files.value.every((f) => checkedSet.value.has(f.path)),
+);
+const someVisibleChecked = computed(
+  () =>
+    !allVisibleChecked.value &&
+    files.value.some((f) => checkedSet.value.has(f.path)),
+);
+
 const detailFiles = computed<ChangeFile[]>(() =>
   (details.value?.files || []).map((f) => ({
     ...f,
@@ -300,6 +362,7 @@ const repositoryBusy = computed(
           model.config?.projects.find((p) => p.id === projectId.value)?.path,
     ),
 );
+
 async function readStatus() {
   const id = ++refreshId,
     project = projectId.value;
@@ -320,6 +383,7 @@ async function readStatus() {
       statusError.value = String(e instanceof Error ? e.message : e);
   }
 }
+
 async function loadTab() {
   const project = projectId.value,
     current = tab.value;
@@ -341,10 +405,12 @@ async function loadTab() {
     notify(e instanceof Error ? e.message : String(e), true);
   }
 }
+
 async function refresh() {
   await readStatus();
   await loadTab();
 }
+
 async function execute(operation: string, p: Record<string, any> = {}) {
   if (busy.value) return;
   busy.value = true;
@@ -374,12 +440,23 @@ async function execute(operation: string, p: Record<string, any> = {}) {
     busy.value = false;
   }
 }
+
 function toggle(file: ChangeFile) {
   checked.value = checked.value.includes(file.path)
     ? checked.value.filter((p) => p !== file.path)
     : [...checked.value, file.path];
 }
-function stage(operation: "stage" | "unstage" | "rollback", file?: ChangeFile) {
+
+function toggleAllFiles(event: Event) {
+  checked.value = (event.target as HTMLInputElement).checked
+    ? files.value.map((f) => f.path)
+    : [];
+}
+
+function stage(
+  operation: "stage" | "unstage" | "rollback",
+  file?: ChangeFile,
+) {
   const byPath = new Map(state.value?.files.map((f) => [f.path, f]));
   void execute(operation, {
     files: file
@@ -396,7 +473,9 @@ function stage(operation: "stage" | "unstage" | "rollback", file?: ChangeFile) {
         }),
   });
   menu.value = undefined;
+  moreOpsOpen.value = false;
 }
+
 async function showDiff(file: ChangeFile, comparison?: GitComparison) {
   if (busy.value) return;
   try {
@@ -411,6 +490,7 @@ async function showDiff(file: ChangeFile, comparison?: GitComparison) {
     notify(e instanceof Error ? e.message : String(e), true);
   }
 }
+
 function open(kind: string, values: Record<string, any> = {}) {
   dialog.value = kind;
   preview.value = undefined;
@@ -429,6 +509,7 @@ function open(kind: string, values: Record<string, any> = {}) {
     ...values,
   };
   menu.value = undefined;
+  moreOpsOpen.value = false;
   void nextTick(() =>
     document
       .querySelector<HTMLElement>(
@@ -437,6 +518,7 @@ function open(kind: string, values: Record<string, any> = {}) {
       ?.focus(),
   );
 }
+
 async function submitDialog() {
   if (dialog.value === "compare") {
     try {
@@ -477,6 +559,7 @@ async function submitDialog() {
     ...(dialog.value === "push" ? { head: preview.value?.head } : {}),
   });
 }
+
 async function loadLog(append = false) {
   const id = ++logId,
     project = projectId.value,
@@ -496,6 +579,7 @@ async function loadLog(append = false) {
     if (id === logId) notify(e instanceof Error ? e.message : String(e), true);
   }
 }
+
 async function selectCommit(commit: GitCommit) {
   chosenCommit.value = commit;
   details.value = undefined;
@@ -510,6 +594,7 @@ async function selectCommit(commit: GitCommit) {
     notify(e instanceof Error ? e.message : String(e), true);
   }
 }
+
 function history(file: ChangeFile) {
   tab.value = "log";
   logFile.value = file.path;
@@ -517,6 +602,7 @@ function history(file: ChangeFile) {
   menu.value = undefined;
   void loadLog();
 }
+
 function historicalDiff(file: { path: string; status: string }) {
   if (!details.value) return;
   void showDiff(
@@ -536,6 +622,7 @@ function historicalDiff(file: { path: string; status: string }) {
     },
   );
 }
+
 async function stashDiff(stash: GitStash, untracked = false) {
   const comparison: GitComparison = {
     mode: "versions",
@@ -553,6 +640,7 @@ async function stashDiff(stash: GitStash, untracked = false) {
     notify(e instanceof Error ? e.message : String(e), true);
   }
 }
+
 function fileMenu(file: ChangeFile, event: MouseEvent) {
   selected.value = file.path;
   menu.value = {
@@ -561,6 +649,7 @@ function fileMenu(file: ChangeFile, event: MouseEvent) {
     file,
   };
 }
+
 function commitMenu(commit: GitCommit, event: MouseEvent) {
   menu.value = {
     x: Math.min(event.clientX, window.innerWidth - 230),
@@ -568,10 +657,13 @@ function commitMenu(commit: GitCommit, event: MouseEvent) {
     commit,
   };
 }
+
 function closeMenu() {
   menu.value = undefined;
   quickBranchOpen.value = false;
+  moreOpsOpen.value = false;
 }
+
 function key(event: KeyboardEvent) {
   if (route.value !== "review") return;
   if (event.key === "F5") {
@@ -581,7 +673,9 @@ function key(event: KeyboardEvent) {
   if (event.ctrlKey && event.key === "Enter") {
     event.preventDefault();
     if (
-      !dialog.value && !submitOpen.value && !repositoryBusy.value &&
+      !dialog.value &&
+      !submitOpen.value &&
+      !repositoryBusy.value &&
       tab.value === "changes" &&
       (stagedCount.value || amend.value) &&
       message.value.trim()
@@ -590,15 +684,18 @@ function key(event: KeyboardEvent) {
   }
   if (event.key === "Escape") {
     menu.value = undefined;
+    moreOpsOpen.value = false;
     if (quickBranchOpen.value) closeQuickBranches();
     if (!busy.value) dialog.value = "";
     commitOpen.value = false;
     void closeSubmit();
   }
 }
+
 function onFocus() {
   if (route.value === "review" && !busy.value) void readStatus();
 }
+
 watch(projectId, () => {
   ++quickBranchRequest;
   quickBranchOpen.value = false;
@@ -622,7 +719,9 @@ watch(projectId, () => {
   submitOpen.value = false;
   void refresh();
 });
+
 watch(tab, () => void loadTab());
+
 onMounted(() => {
   window.addEventListener("keydown", key);
   window.addEventListener("click", closeMenu);
@@ -635,6 +734,7 @@ onMounted(() => {
       }, 450);
   });
 });
+
 function applyContext() {
   if (route.value !== "review") return;
   if (context.value.projectId) projectId.value = context.value.projectId;
@@ -642,7 +742,9 @@ function applyContext() {
     filter.value = context.value.scope;
   if (context.value.submit) void openSubmit(context.value.taskId || "");
 }
+
 watch(context, applyContext);
+
 onActivated(async () => {
   setGuard(guard);
   applyContext();
@@ -651,10 +753,12 @@ onActivated(async () => {
   for (const [element, position] of scrollPositions)
     if (element.isConnected) element.scrollTo(position);
 });
+
 onDeactivated(() => {
   closeMenu();
   if (leaveGuard === guard) setGuard(null);
 });
+
 onBeforeUnmount(() => {
   ++quickBranchRequest;
   disposed = true;
@@ -669,18 +773,84 @@ onBeforeUnmount(() => {
   if (leaveGuard === guard) setGuard(null);
 });
 </script>
+
 <template>
   <div ref="pageRoot" class="git-page">
-    <div class="git-toolbar">
-      <ProjectSelect
-        v-model="projectId"
-        :optional="false"
-        label="Git 项目"
-        :disabled="busy"
-      />
+    <!-- 顶部标题与远程同步操作 -->
+    <div class="page-head">
+      <div>
+        <h1>Git 管理</h1>
+        <div class="h-meta">
+          <span>{{ totalVisibleChanges }} 个本地变更</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ stagedCount }} 个已暂存文件</span>
+        </div>
+      </div>
+      <div class="h-actions">
+        <span class="button-group">
+          <button
+            type="button"
+            :disabled="repositoryBusy"
+            @click="execute('fetch')"
+          >
+            <Icon name="refresh" :size="14" />Fetch
+          </button>
+          <button
+            type="button"
+            :disabled="repositoryBusy"
+            @click="open('pull')"
+          >
+            <Icon name="pull" :size="14" />Pull
+          </button>
+          <button
+            type="button"
+            :disabled="repositoryBusy"
+            @click="open('push')"
+          >
+            <Icon name="push" :size="14" />Push
+          </button>
+        </span>
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="
+            !canSubmit || busy || (repositoryBusy && !activeSubmitTask)
+          "
+          :title="
+            canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'
+          "
+          @click="openSubmit()"
+        >
+          <Icon name="merge" :size="15" />一键提测
+        </button>
+      </div>
+    </div>
+
+    <!-- 仓库 / 分支 / 上游同步上下文条 -->
+    <div class="repo-bar card">
+      <div class="repo-block">
+        <div class="service-mark">
+          <Icon name="repo" :size="20" />
+        </div>
+        <div>
+          <div class="context-label">仓库</div>
+          <ProjectSelect
+            v-model="projectId"
+            class="repo-select"
+            :optional="false"
+            label="Git 项目"
+            :disabled="busy"
+          />
+        </div>
+      </div>
+
+      <div class="vdiv" aria-hidden="true" />
+
       <div class="git-quick-branch" @click.stop>
+        <div class="context-label">当前分支</div>
         <button
           ref="quickBranchButton"
+          type="button"
           class="git-branch-button"
           title="切换分支"
           aria-label="切换分支"
@@ -690,14 +860,13 @@ onBeforeUnmount(() => {
           :disabled="repositoryBusy || submitOpen"
           @click="toggleQuickBranches"
         >
-          <Icon name="branch" :size="16" /><span
-            class="git-current-branch"
-            :title="state?.branch"
-            >{{
-              state?.branch || (state?.detached ? "游离 HEAD" : "尚未读取")
-            }}</span
-          ><span class="git-branch-caret">▾</span>
+          <Icon name="branch2" :size="15" />
+          <span class="git-current-branch" :title="state?.branch">{{
+            state?.branch || (state?.detached ? "游离 HEAD" : "尚未读取")
+          }}</span>
+          <Icon name="down" :size="13" />
         </button>
+
         <div
           v-if="quickBranchOpen"
           class="git-quick-branch-menu"
@@ -757,6 +926,7 @@ onBeforeUnmount(() => {
               </div>
               <button
                 :id="'quick-branch-' + index"
+                type="button"
                 role="option"
                 :aria-selected="branch.current"
                 :class="{ highlighted: index === quickBranchIndex }"
@@ -767,12 +937,12 @@ onBeforeUnmount(() => {
                 @mouseenter="quickBranchIndex = index"
                 @click="chooseQuickBranch(branch)"
               >
-                <Icon name="branch" :size="14" /><span
-                  >{{ branch.name
-                  }}<small v-if="branch.upstream">{{
-                    branch.upstream
-                  }}</small></span
-                ><strong v-if="branch.current">当前</strong>
+                <Icon name="branch2" :size="14" />
+                <span>
+                  {{ branch.name }}
+                  <small v-if="branch.upstream">{{ branch.upstream }}</small>
+                </span>
+                <strong v-if="branch.current">当前</strong>
               </button>
             </template>
             <p
@@ -784,99 +954,145 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <span
-        class="git-sync-status"
-        :title="state?.upstream || '尚未配置上游分支'"
-        >↑ {{ state?.ahead || 0 }} ↓ {{ state?.behind || 0 }}</span
-      >
-      <span class="git-toolbar-separator" />
-      <button :disabled="repositoryBusy" @click="execute('fetch')">Fetch</button
-      ><button :disabled="repositoryBusy" @click="open('pull')">Pull</button
-      ><button :disabled="repositoryBusy" @click="open('push')">Push</button>
-      <button :disabled="repositoryBusy" title="打开本地提交窗口" @click="openCommit">
-        Commit <span class="git-count">{{ stagedCount }}</span></button
-      ><button :disabled="repositoryBusy" @click="open('stash-push')">
-        Stash
-      </button>
-      <button class="primary" :disabled="!canSubmit || busy || (repositoryBusy && !activeSubmitTask)"
-        :title="canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'"
-        @click="openSubmit()"><Icon name="merge" :size="14" />一键提测</button>
-      <details class="git-more">
-        <summary>更多 ···</summary>
-        <div class="git-dropdown">
-          <button @click="open('compare')">比较分支 / 提交</button
-          ><button @click="open('create-branch')">从提交创建分支</button
-          ><button @click="open('merge')">Merge 到当前分支</button
-          ><button @click="open('rebase')">Rebase 当前分支到…</button>
+
+      <div class="vdiv" aria-hidden="true" />
+
+      <div :title="state?.upstream || '尚未配置上游分支'">
+        <div class="context-label">与上游同步</div>
+        <div class="sync-count">
+          <Icon name="arrow-up" :size="13" />
+          <span>{{ state?.ahead || 0 }}</span>
+          <Icon name="arrow-down" :size="13" style="margin-left: 6px" />
+          <span>{{ state?.behind || 0 }}</span>
         </div>
-      </details>
-      <button
-        class="git-refresh"
-        title="刷新（F5）"
-        :disabled="busy"
-        @click="refresh"
-      >
-        <Icon name="refresh" :size="15" />
-      </button>
+      </div>
+
+      <div class="repo-actions">
+        <button
+          type="button"
+          class="btn blank compact"
+          :disabled="repositoryBusy"
+          @click="open('stash-push')"
+        >
+          <Icon name="stash" :size="14" />新建 Stash
+        </button>
+        <details class="git-more">
+          <summary><Icon name="more" :size="15" />更多</summary>
+          <div class="git-dropdown">
+            <button type="button" @click="open('compare')">
+              比较分支 / 提交
+            </button>
+            <button type="button" @click="open('create-branch')">
+              从提交创建分支
+            </button>
+            <button type="button" @click="open('merge')">
+              Merge 到当前分支
+            </button>
+            <button type="button" @click="open('rebase')">
+              Rebase 当前分支到…
+            </button>
+          </div>
+        </details>
+        <button
+          type="button"
+          class="icon-btn"
+          title="刷新仓库（F5）"
+          aria-label="刷新仓库"
+          :disabled="busy"
+          @click="refresh"
+        >
+          <Icon name="refresh" :size="15" />
+        </button>
+      </div>
     </div>
+
+    <!-- 冲突/操作中提示条 -->
     <div
       v-if="state?.operation || conflicts"
       class="git-operation-bar"
       role="status"
     >
-      <Icon name="warning" :size="16" /><strong>{{
+      <Icon name="warning" :size="16" />
+      <strong>{{
         state?.operation ? gitOperationLabel(state.operation) : "冲突待处理"
-      }}</strong
-      ><span>{{ conflicts }} 个冲突文件</span
-      ><button
+      }}</strong>
+      <span>{{ conflicts }} 个冲突文件</span>
+      <button
+        type="button"
+        class="btn compact"
         @click="
           tab = 'changes';
           filter = 'conflicts';
         "
       >
-        查看冲突</button
-      ><button
+        查看冲突
+      </button>
+      <button
         v-if="state?.operation"
+        type="button"
+        class="btn primary compact"
         :disabled="repositoryBusy || !!conflicts"
         @click="execute('continue')"
       >
-        Continue</button
-      ><button
+        Continue
+      </button>
+      <button
         v-if="['rebase', 'cherry-pick'].includes(state?.operation || '')"
+        type="button"
+        class="btn compact"
         :disabled="repositoryBusy"
         @click="execute('skip')"
       >
-        Skip</button
-      ><button
+        Skip
+      </button>
+      <button
         v-if="state?.operation"
+        type="button"
+        class="btn stop compact"
         :disabled="repositoryBusy"
         @click="execute('abort')"
       >
         Abort
       </button>
     </div>
-    <div class="git-tabs" role="tablist" aria-label="Git 功能">
+
+    <!-- 标签页栏 -->
+    <div class="repo-tabs git-tabs" role="tablist" aria-label="Git 功能">
       <button
         v-for="item in [
-          ['changes', '本地变更'],
-          ['log', 'Git Log'],
-          ['branches', '分支'],
-          ['stash', 'Stash'],
+          ['changes', '本地变更', 'changes'],
+          ['log', 'Git Log', 'history'],
+          ['branches', '分支', 'branch2'],
+          ['stash', 'Stash', 'stash'],
         ]"
         :key="item[0]"
+        type="button"
+        class="tab"
         role="tab"
         :aria-selected="tab === item[0]"
-        :class="{ active: tab === item[0] }"
+        :class="{ active: tab === item[0], current: tab === item[0] }"
         @click="tab = item[0]"
       >
-        {{ item[1]
-        }}<span v-if="item[0] === 'changes'" class="git-count">{{
-          state?.files.filter(showUntrackedFile).length || 0
-        }}</span></button
-      ><span class="git-tab-hint">{{
-        busy ? "Git 操作执行中…" : state?.upstream || "本地仓库 · 未配置上游分支"
-      }}</span>
+        <Icon :name="item[2]" :size="14" />
+        <span>{{ item[1] }}</span>
+        <span
+          v-if="item[0] === 'changes'"
+          class="count"
+          aria-hidden="true"
+          >{{ totalVisibleChanges }}</span
+        >
+      </button>
+      <span class="upstream" :title="state?.upstream || ''">
+        <Icon name="branch2" :size="12" />
+        <span>{{
+          busy
+            ? "Git 操作执行中…"
+            : state?.upstream || "本地仓库 · 未配置上游分支"
+        }}</span>
+      </span>
     </div>
+
+    <!-- 错误提示条 -->
     <div v-if="error || statusError" class="git-error" role="alert">
       <span>{{ error || statusError }}</span>
       <CloseButton
@@ -887,114 +1103,200 @@ onBeforeUnmount(() => {
         "
       />
     </div>
-    <div v-if="tab === 'changes'" class="git-changes-layout">
-      <section class="git-changes-panel">
-        <div class="git-filterbar">
-          <input
-            v-model="query"
-            type="search"
-            placeholder="搜索文件路径"
-            aria-label="搜索变更文件"
-          /><select v-model="filter" aria-label="变更范围">
+
+    <!-- 本地变更双栏 -->
+    <div v-if="tab === 'changes'" class="duo git-layout">
+      <section class="card pane">
+        <div class="panel-head">
+          <div class="head-title">
+            <Icon name="changes" :size="17" />
+            <h2>变更文件</h2>
+            <span class="count">{{ files.length }}</span>
+          </div>
+          <button
+            type="button"
+            class="btn light-brand compact"
+            :disabled="repositoryBusy || !hasSelection"
+            @click="stage('stage')"
+          >
+            <Icon name="plus" :size="13" />
+            {{ checked.length ? `暂存所选 · ${checked.length}` : "暂存所选" }}
+          </button>
+        </div>
+
+        <div class="file-filters">
+          <label class="search-box" style="margin: 0">
+            <Icon name="search" :size="14" />
+            <input
+              v-model="query"
+              type="search"
+              placeholder="搜索文件路径"
+              aria-label="搜索变更文件"
+            />
+          </label>
+          <select v-model="filter" class="compact" aria-label="变更范围">
             <option value="all">全部变更</option>
             <option value="staged">已暂存</option>
             <option value="unstaged">未暂存</option>
             <option value="untracked">未跟踪</option>
-            <option value="conflicts">冲突</option></select
-          ><select v-model="sort" aria-label="文件排序">
+            <option value="conflicts">冲突</option>
+          </select>
+          <select v-model="sort" class="compact" aria-label="文件排序">
             <option value="path">按路径</option>
             <option value="status">按状态</option>
           </select>
         </div>
-        <div
-          v-if="hiddenUntrackedCount"
-          class="git-untracked-filter"
-        >
-          <span class="muted" title="项目根目录及全新子目录中的未跟踪文件默认隐藏。"
-            >已隐藏 {{ hiddenUntrackedCount }} 个未跟踪文件</span
-          >
+
+        <div class="git-table-head">
+          <input
+            type="checkbox"
+            :checked="allVisibleChecked"
+            :indeterminate="someVisibleChecked"
+            :disabled="!files.length"
+            aria-label="选择当前列表全部文件"
+            @change="toggleAllFiles"
+          />
+          <span>文件路径</span>
+          <span>文件状态</span>
+          <span />
         </div>
-        <div class="git-selectionbar">
-          <label
-            ><input
-              type="checkbox"
-              :checked="
-                !!files.length && files.every((f) => checkedSet.has(f.path))
-              "
-              aria-label="选择当前列表全部文件"
-              @change="
-                checked = ($event.target as HTMLInputElement).checked
-                  ? files.map((f) => f.path)
-                  : []
-              "
-            />{{
-              checked.length
-                ? `已选择 ${checked.length} 个`
-                : `${files.length} 个文件`
-            }}</label
-          ><button
-            :disabled="repositoryBusy || !hasSelection"
-            @click="stage('stage')"
-          >
-            Stage</button
-          ><button
-            :disabled="repositoryBusy || !hasSelection"
-            @click="stage('unstage')"
-          >
-            Unstage</button
-          ><button
-            :disabled="repositoryBusy || !hasSelection"
-            @click="stage('rollback')"
-          >
-            回滚未暂存修改
-          </button>
-        </div>
+
         <VirtualFiles
+          variant="rich"
           :files="files"
           :selected="selected"
           :checked="checked"
+          :busy="repositoryBusy"
           multiple
           @select="selected = $event.path"
           @toggle="toggle"
           @show="showDiff($event)"
           @menu="fileMenu"
+          @stage="stage('stage', $event)"
+          @unstage="stage('unstage', $event)"
         />
-        <div class="git-file-footer">
-          <span>双击 / Enter · 独立窗口对比</span
-          ><span>● 已暂存 · ◐ 同时有未暂存修改</span>
+
+        <div class="selection-row" @click.stop>
+          <span>{{
+            checked.length
+              ? `已勾选 ${checked.length} 项`
+              : files.length
+                ? `共 ${files.length} 项变更 · 勾选后可暂存`
+                : "工作区暂无匹配变更"
+          }}</span>
+          <span class="push" />
+          <div class="git-ops-wrap">
+            <button
+              type="button"
+              class="text-action"
+              @click="moreOpsOpen = !moreOpsOpen"
+            >
+              <Icon name="down" :size="12" />更多文件操作
+            </button>
+            <div v-if="moreOpsOpen" class="git-dropdown ops-up" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="repositoryBusy || !hasSelection"
+                @click="stage('stage')"
+              >
+                暂存所选文件（Stage）
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="repositoryBusy || !hasSelection"
+                @click="stage('unstage')"
+              >
+                取消暂存所选（Unstage）
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="repositoryBusy || !hasSelection"
+                @click="stage('rollback')"
+              >
+                回滚所选未暂存修改…
+              </button>
+              <button
+                v-if="selected"
+                type="button"
+                role="menuitem"
+                @click="
+                  showDiff(state!.files.find((f) => f.path === selected)!);
+                  moreOpsOpen = false;
+                "
+              >
+                打开当前文件差异对比 ↗
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="hiddenUntrackedCount"
+          class="git-info"
+          title="项目根目录及全新子目录中的未跟踪文件默认隐藏。"
+        >
+          <Icon name="eye-off" :size="14" />
+          <span
+            >已按项目规则隐藏
+            {{ hiddenUntrackedCount.toLocaleString() }} 个未跟踪文件</span
+          >
+        </div>
+
+        <div class="footnote git-file-footer">
+          <Icon name="external" :size="13" />
+          <span>双击文件或按</span>
+          <span class="mini-key">Enter</span>
+          <span>打开独立差异对比窗口</span>
         </div>
       </section>
-      <aside class="git-commit-panel">
-        <GitCommitPanel v-model:message="message" v-model:amend="amend"
-          :staged-count="stagedCount" :busy="repositoryBusy" :upstream="state?.upstream"
-          :visible-count="files.length" :checked-count="checked.length"
-          @stage="stageVisible" @inspect="filter = 'staged'" @commit="commit" />
-        <div v-if="selected" class="git-selected-detail">
-          <span class="muted">当前文件</span><code>{{ selected }}</code
-          ><button
-            @click="showDiff(state!.files.find((f) => f.path === selected)!)"
-          >
-            打开对比 ↗
-          </button>
+
+      <section class="card pane">
+        <div class="panel-head spaced-head">
+          <div class="head-title">
+            <Icon name="git-commit" :size="17" />
+            <h2>提交变更</h2>
+          </div>
+          <span class="mini-key">Ctrl + Enter</span>
         </div>
-      </aside>
+        <GitCommitPanel
+          v-model:message="message"
+          v-model:amend="amend"
+          :staged-count="stagedCount"
+          :busy="repositoryBusy"
+          :upstream="state?.upstream"
+          :visible-count="files.length"
+          :checked-count="checked.length"
+          @stage="stageVisible"
+          @inspect="filter = 'staged'"
+          @commit="commit"
+        />
+      </section>
     </div>
-    <div v-else-if="tab === 'log'" class="git-log-layout">
+
+    <!-- Git Log -->
+    <div v-else-if="tab === 'log'" class="git-log-layout card">
       <div class="git-log-main">
         <form class="git-filterbar" @submit.prevent="loadLog()">
           <input
             v-model="logQuery"
             aria-label="搜索提交说明"
             placeholder="搜索提交说明"
-          /><input
+          />
+          <input
             v-model="logFile"
             aria-label="文件历史路径"
             placeholder="文件路径（可选）"
-          /><label class="git-checkbox"
-            ><input v-model="logAll" type="checkbox" />全部分支</label
-          ><button type="submit">筛选</button
-          ><button
+          />
+          <label class="git-checkbox">
+            <input v-model="logAll" type="checkbox" />全部分支
+          </label>
+          <button type="submit" class="btn primary compact">筛选</button>
+          <button
             type="button"
+            class="btn compact"
             @click="
               logQuery = '';
               logFile = '';
@@ -1010,35 +1312,62 @@ onBeforeUnmount(() => {
             :selected="chosenCommit?.hash || ''"
             @select="selectCommit"
             @menu="commitMenu"
-          /><button v-if="logMore" class="git-load-more" @click="loadLog(true)">
+          />
+          <button
+            v-if="logMore"
+            type="button"
+            class="btn compact git-load-more"
+            @click="loadLog(true)"
+          >
             加载更多历史
           </button>
           <p v-if="!commits.length" class="git-empty">没有匹配的提交</p>
         </div>
       </div>
       <aside class="git-log-detail">
-        <template v-if="details"
-          ><code>{{ details.commit }}</code>
+        <template v-if="details">
+          <code>{{ details.commit }}</code>
           <pre>{{ details.message }}</pre>
           <div class="git-detail-actions">
             <button
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               @click="execute('revert', { ref: details.commit })"
             >
-              Revert</button
-            ><button
+              Revert
+            </button>
+            <button
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               @click="execute('cherry-pick', { ref: details.commit })"
             >
-              Cherry-pick</button
-            ><button @click="open('create-branch', { ref: details.commit })">
-              创建分支</button
-            ><button @click="compareCommit = details.commit">
-              选为比较起点</button
-            ><button
+              Cherry-pick
+            </button>
+            <button
+              type="button"
+              class="btn compact"
+              @click="open('create-branch', { ref: details.commit })"
+            >
+              创建分支
+            </button>
+            <button
+              type="button"
+              class="btn compact"
+              @click="compareCommit = details.commit"
+            >
+              选为比较起点
+            </button>
+            <button
               v-if="compareCommit"
+              type="button"
+              class="btn light-brand compact"
               @click="
-                open('compare', { base: compareCommit, target: details.commit })
+                open('compare', {
+                  base: compareCommit,
+                  target: details.commit,
+                })
               "
             >
               比较两个提交
@@ -1047,23 +1376,38 @@ onBeforeUnmount(() => {
           <p class="git-help">{{ details.files.length }} 个文件</p>
           <VirtualFiles
             :files="detailFiles"
-            @select="selected = $event.path"
             :selected="selected"
+            @select="selected = $event.path"
             @show="historicalDiff($event)"
-        /></template>
+          />
+        </template>
         <p v-else class="git-empty">选择提交查看详情与文件</p>
       </aside>
     </div>
-    <div v-else-if="tab === 'branches'" class="git-branches">
+
+    <!-- 分支 -->
+    <div v-else-if="tab === 'branches'" class="git-branches card">
       <div class="git-filterbar">
-        <input
-          v-model="branchQuery"
-          type="search"
-          aria-label="搜索分支"
-          placeholder="搜索本地 / 远程分支"
-        /><button :disabled="repositoryBusy" @click="open('create-branch')">
-          新建分支</button
-        ><button @click="open('compare')">比较分支</button>
+        <label class="search-box" style="margin: 0; flex: 1; max-width: 340px">
+          <Icon name="search" :size="14" />
+          <input
+            v-model="branchQuery"
+            type="search"
+            aria-label="搜索分支"
+            placeholder="搜索本地 / 远程分支"
+          />
+        </label>
+        <button
+          type="button"
+          class="btn primary compact"
+          :disabled="repositoryBusy"
+          @click="open('create-branch')"
+        >
+          <Icon name="plus" :size="13" />新建分支
+        </button>
+        <button type="button" class="btn compact" @click="open('compare')">
+          比较分支
+        </button>
       </div>
       <div class="git-branch-list">
         <div
@@ -1071,48 +1415,60 @@ onBeforeUnmount(() => {
           :key="branch.name"
           class="git-branch-row"
         >
-          <Icon name="branch" :size="17" />
+          <Icon name="branch2" :size="16" />
           <div class="git-branch-name">
-            <strong
-              >{{ branch.name }}
-              <span v-if="branch.current" class="git-ref-label">当前</span
-              ><span v-else class="muted small">{{
+            <strong>
+              {{ branch.name }}
+              <span v-if="branch.current" class="badge brand">当前</span>
+              <span v-else class="badge neutral">{{
                 branch.remote ? "远程" : "本地"
-              }}</span></strong
-            ><small
-              >{{ branch.subject }}
-              <span v-if="branch.upstream">· {{ branch.upstream }}</span></small
-            >
+              }}</span>
+            </strong>
+            <small>
+              {{ branch.subject }}
+              <span v-if="branch.upstream">· {{ branch.upstream }}</span>
+            </small>
           </div>
           <div class="git-branch-actions">
             <button
               v-if="!branch.current"
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               @click="execute('checkout', { branch: branch.name })"
             >
-              Checkout</button
-            ><button
+              Checkout
+            </button>
+            <button
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               @click="open('merge', { ref: branch.name })"
             >
-              Merge</button
-            ><button
+              Merge
+            </button>
+            <button
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               @click="open('rebase', { ref: branch.name })"
             >
               Rebase
             </button>
             <details class="git-more">
-              <summary>···</summary>
+              <summary><Icon name="more" :size="14" /></summary>
               <div class="git-dropdown">
                 <button
+                  type="button"
                   @click="
                     open('compare', { base: 'HEAD', target: branch.name })
                   "
                 >
-                  与 HEAD 比较</button
-                ><button
+                  与 HEAD 比较
+                </button>
+                <button
                   v-if="!branch.remote"
+                  type="button"
                   @click="
                     open('rename-branch', {
                       branch: branch.name,
@@ -1120,9 +1476,11 @@ onBeforeUnmount(() => {
                     })
                   "
                 >
-                  重命名</button
-                ><button
+                  重命名
+                </button>
+                <button
                   v-if="!branch.remote && !branch.current"
+                  type="button"
                   :disabled="repositoryBusy"
                   @click="execute('delete-branch', { branch: branch.name })"
                 >
@@ -1135,10 +1493,17 @@ onBeforeUnmount(() => {
         <p v-if="!filteredBranches.length" class="git-empty">没有匹配分支</p>
       </div>
     </div>
-    <div v-else class="git-stash-panel">
+
+    <!-- Stash -->
+    <div v-else class="git-stash-panel card">
       <div class="git-filterbar">
-        <button :disabled="repositoryBusy" @click="open('stash-push')">
-          Stash Push
+        <button
+          type="button"
+          class="btn primary compact"
+          :disabled="repositoryBusy"
+          @click="open('stash-push')"
+        >
+          <Icon name="stash" :size="14" />新建 Stash
         </button>
       </div>
       <div class="git-stash-list">
@@ -1148,33 +1513,46 @@ onBeforeUnmount(() => {
           class="git-stash-row"
         >
           <div>
-            <strong>{{ stash.ref }}</strong
-            ><span>{{ stash.subject }}</span
-            ><small
-              >{{ stash.date.slice(0, 19).replace("T", " ") }} ·
-              {{ stash.hash.slice(0, 8) }}</small
-            >
+            <strong>{{ stash.ref }}</strong>
+            <span>{{ stash.subject }}</span>
+            <small>
+              {{ stash.date.slice(0, 19).replace("T", " ") }} ·
+              {{ stash.hash.slice(0, 8) }}
+            </small>
           </div>
           <div class="git-stash-actions">
-            <button @click="stashDiff(stash)">Diff</button
-            ><button
+            <button type="button" class="btn compact" @click="stashDiff(stash)">
+              Diff
+            </button>
+            <button
+              type="button"
+              class="btn compact"
               title="查看包含的未跟踪文件；未包含时会提示"
               @click="stashDiff(stash, true)"
             >
-              未跟踪文件</button
-            ><button
+              未跟踪文件
+            </button>
+            <button
+              type="button"
+              class="btn compact"
               :disabled="repositoryBusy"
               title="应用并保留记录"
               @click="execute('stash-apply', stash)"
             >
-              Stash Apply</button
-            ><button
+              Stash Apply
+            </button>
+            <button
+              type="button"
+              class="btn light-brand compact"
               :disabled="repositoryBusy"
               title="成功应用后移除记录"
               @click="execute('stash-pop', stash)"
             >
-              Stash Pop</button
-            ><button
+              Stash Pop
+            </button>
+            <button
+              type="button"
+              class="btn stop compact"
               :disabled="repositoryBusy"
               @click="execute('stash-drop', stash)"
             >
@@ -1185,10 +1563,13 @@ onBeforeUnmount(() => {
         <p v-if="!stashes.length" class="git-empty">没有 Stash 记录</p>
       </div>
     </div>
-    <details v-if="output" class="git-output">
+
+    <details v-if="output" class="git-output card">
       <summary>最近操作结果 / Git 钩子输出</summary>
       <pre>{{ output }}</pre>
     </details>
+
+    <!-- 右键菜单 -->
     <div
       v-if="menu"
       class="git-context-menu"
@@ -1196,36 +1577,46 @@ onBeforeUnmount(() => {
       role="menu"
       @click.stop
     >
-      <template v-if="menu.file"
-        ><button
+      <template v-if="menu.file">
+        <button
+          type="button"
           role="menuitem"
           @click="
             showDiff(menu.file);
             closeMenu();
           "
         >
-          打开对比 ↗</button
-        ><button
+          打开对比 ↗
+        </button>
+        <button
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="stage('stage', menu.file)"
         >
-          Stage</button
-        ><button
+          Stage
+        </button>
+        <button
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="stage('unstage', menu.file)"
         >
-          Unstage</button
-        ><button
+          Unstage
+        </button>
+        <button
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="stage('rollback', menu.file)"
         >
-          回滚未暂存修改…</button
-        ><button role="menuitem" @click="history(menu.file)">
-          查看文件历史</button
-        ><button
+          回滚未暂存修改…
+        </button>
+        <button type="button" role="menuitem" @click="history(menu.file)">
+          查看文件历史
+        </button>
+        <button
+          type="button"
           role="menuitem"
           @click="
             open('compare', {
@@ -1235,16 +1626,20 @@ onBeforeUnmount(() => {
             })
           "
         >
-          与历史版本比较…</button
-        ><button
+          与历史版本比较…
+        </button>
+        <button
+          type="button"
           role="menuitem"
           @click="
             call('git.copy', { projectId, text: menu.file.path });
             closeMenu();
           "
         >
-          复制相对路径</button
-        ><button
+          复制相对路径
+        </button>
+        <button
+          type="button"
           role="menuitem"
           @click="
             call('git.reveal', { projectId, file: menu.file.path });
@@ -1252,18 +1647,22 @@ onBeforeUnmount(() => {
           "
         >
           在文件资源管理器中打开
-        </button></template
-      >
-      <template v-if="menu.commit"
-        ><button
+        </button>
+      </template>
+
+      <template v-if="menu.commit">
+        <button
+          type="button"
           role="menuitem"
           @click="
             call('git.copy', { projectId, text: menu.commit.hash });
             closeMenu();
           "
         >
-          复制提交号</button
-        ><button
+          复制提交号
+        </button>
+        <button
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="
@@ -1271,8 +1670,10 @@ onBeforeUnmount(() => {
             closeMenu();
           "
         >
-          Revert 此提交…</button
-        ><button
+          Revert 此提交…
+        </button>
+        <button
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="
@@ -1280,19 +1681,25 @@ onBeforeUnmount(() => {
             closeMenu();
           "
         >
-          Cherry-pick…</button
-        ><button
+          Cherry-pick…
+        </button>
+        <button
+          type="button"
           role="menuitem"
           @click="open('compare', { base: menu.commit.hash, target: 'HEAD' })"
         >
-          与 HEAD 比较</button
-        ><button
+          与 HEAD 比较
+        </button>
+        <button
+          type="button"
           role="menuitem"
           @click="open('create-branch', { ref: menu.commit.hash })"
         >
-          从此提交创建分支</button
-        ><button
+          从此提交创建分支
+        </button>
+        <button
           v-if="menu.commit.hash === state?.head"
+          type="button"
           role="menuitem"
           :disabled="repositoryBusy"
           @click="
@@ -1301,25 +1708,41 @@ onBeforeUnmount(() => {
           "
         >
           撤销最后一次提交…
-        </button></template
+        </button>
+      </template>
+    </div>
+
+    <!-- 一键提测弹窗 -->
+    <div
+      v-if="submitOpen"
+      class="git-dialog-overlay"
+      @click.self="closeSubmit"
+    >
+      <section
+        class="git-dialog git-submit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="一键提测"
       >
-    </div>
-    <div v-if="commitOpen" class="git-dialog-overlay" @click.self="!busy && (commitOpen = false)">
-      <section class="git-dialog git-commit-modal" role="dialog" aria-modal="true" aria-label="本地提交">
-        <div class="section-head"><h2>本地提交</h2><CloseButton label="关闭提交窗口" :disabled="busy" @click="commitOpen = false" /></div>
-        <GitCommitPanel v-model:message="message" v-model:amend="amend"
-          :staged-count="stagedCount" :busy="repositoryBusy" :upstream="state?.upstream"
-          :visible-count="files.length" :checked-count="checked.length"
-          @stage="stageVisible" @inspect="filter = 'staged'; commitOpen = false" @commit="commit" />
-        <p v-if="error" class="git-error" role="alert">{{ error }}</p>
+        <div class="section-head">
+          <h2>
+            一键提测 ·
+            {{ model.config?.projects.find((p) => p.id === projectId)?.name }}
+          </h2>
+          <CloseButton label="关闭提测窗口" @click="closeSubmit" />
+        </div>
+        <div class="git-submit-content">
+          <SubmitPage
+            ref="submitPage"
+            :key="projectId"
+            :project-id="projectId"
+            :task-id="submitTaskId"
+          />
+        </div>
       </section>
     </div>
-    <div v-if="submitOpen" class="git-dialog-overlay" @click.self="closeSubmit">
-      <section class="git-dialog git-submit-dialog" role="dialog" aria-modal="true" aria-label="一键提测">
-        <div class="section-head"><h2>一键提测 · {{ model.config?.projects.find(p => p.id === projectId)?.name }}</h2><CloseButton label="关闭提测窗口" @click="closeSubmit" /></div>
-        <div class="git-submit-content"><SubmitPage ref="submitPage" :key="projectId" :project-id="projectId" :task-id="submitTaskId" /></div>
-      </section>
-    </div>
+
+    <!-- Git 操作弹窗 -->
     <div
       v-if="dialog"
       class="git-dialog-overlay"
@@ -1332,7 +1755,7 @@ onBeforeUnmount(() => {
               {
                 push: "Push",
                 pull: "Pull",
-                "stash-push": "Stash Push",
+                "stash-push": "新建 Stash",
                 "create-branch": "新建分支",
                 "rename-branch": "重命名分支",
                 merge: "Merge 到当前分支",
@@ -1348,78 +1771,88 @@ onBeforeUnmount(() => {
           {{ model.config?.projects.find((p) => p.id === projectId)?.name }} ·
           {{ state?.branch }}
         </p>
-        <template v-if="dialog === 'push'"
-          ><label
-            >远程仓库<select v-model="form.remote" :disabled="!!preview">
+
+        <template v-if="dialog === 'push'">
+          <label>
+            远程仓库
+            <select v-model="form.remote" :disabled="!!preview">
               <option v-for="remote in state?.remotes" :key="remote">
                 {{ remote }}
               </option>
-            </select></label
-          ><label
-            >目标分支<input
-              v-model="form.branch"
-              :disabled="!!preview"
-              required
-          /></label>
-          <pre v-if="preview" class="git-push-preview"
-            >{{ preview.commits || "无新增提交"
-            }}{{ preview.newBranch ? "\n将创建远程分支" : "" }}</pre
-          >
+            </select>
+          </label>
+          <label>
+            目标分支
+            <input v-model="form.branch" :disabled="!!preview" required />
+          </label>
+          <pre v-if="preview" class="git-push-preview">{{
+            preview.commits || "无新增提交"
+          }}{{ preview.newBranch ? "\n将创建远程分支" : "" }}</pre>
         </template>
-        <template v-else-if="dialog === 'pull'"
-          ><p>上游分支 · {{ state?.upstream || "未配置" }}</p>
-          <label
-            >Pull 策略<select v-model="form.strategy">
+
+        <template v-else-if="dialog === 'pull'">
+          <p class="small">上游分支 · {{ state?.upstream || "未配置" }}</p>
+          <label>
+            Pull 策略
+            <select v-model="form.strategy">
               <option value="merge">Merge · 合并远程变更</option>
               <option value="rebase">Rebase · 重放本地提交</option>
-            </select></label
-          ></template
-        >
-        <template v-else-if="dialog === 'stash-push'"
-          ><label
-            >说明<input
-              v-model="form.message"
-              placeholder="临时保存说明" /></label
-          ><label class="git-checkbox"
-            ><input v-model="form.untracked" type="checkbox" />包含未跟踪文件</label
-          ></template
-        >
-        <template v-else-if="dialog === 'compare'"
-          ><label
-            >原始版本<input
-              v-model="form.base"
-              required
-              placeholder="分支或提交号" /></label
-          ><label v-if="!form.working"
-            >目标版本<input
-              v-model="form.target"
-              required
-              placeholder="分支或提交号" /></label
-          ><label class="git-checkbox"
-            ><input v-model="form.working" type="checkbox" />目标为当前工作区</label
-          ><label
-            >仅此文件（可选）<input
-              v-model="form.file"
-              placeholder="仓库相对路径" /></label
-        ></template>
-        <template v-else-if="['merge', 'rebase'].includes(dialog)"
-          ><label
-            >源分支 / 提交号<input
-              v-model="form.ref"
-              required
-              list="git-refs" /></label
-          ><label v-if="dialog === 'merge'" class="git-checkbox"
-            ><input v-model="form.noFF" type="checkbox" />创建合并提交（--no-ff）</label
-          >
+            </select>
+          </label>
+        </template>
+
+        <template v-else-if="dialog === 'stash-push'">
+          <label>
+            说明
+            <input v-model="form.message" placeholder="临时保存说明" />
+          </label>
+          <label class="git-checkbox">
+            <input v-model="form.untracked" type="checkbox" />包含未跟踪文件
+          </label>
+        </template>
+
+        <template v-else-if="dialog === 'compare'">
+          <label>
+            原始版本
+            <input v-model="form.base" required placeholder="分支或提交号" />
+          </label>
+          <label v-if="!form.working">
+            目标版本
+            <input v-model="form.target" required placeholder="分支或提交号" />
+          </label>
+          <label class="git-checkbox">
+            <input v-model="form.working" type="checkbox" />目标为当前工作区
+          </label>
+          <label>
+            仅此文件（可选）
+            <input v-model="form.file" placeholder="仓库相对路径" />
+          </label>
+        </template>
+
+        <template v-else-if="['merge', 'rebase'].includes(dialog)">
+          <label>
+            源分支 / 提交号
+            <input v-model="form.ref" required list="git-refs" />
+          </label>
+          <label v-if="dialog === 'merge'" class="git-checkbox">
+            <input v-model="form.noFF" type="checkbox" />创建合并提交（--no-ff）
+          </label>
           <p v-if="dialog === 'rebase'" class="git-help">
             Rebase 会重写提交历史。已推送的分支请先与协作者确认。
-          </p></template
-        >
-        <template v-else
-          ><label>分支名称<input v-model="form.name" required /></label
-          ><label v-if="dialog === 'create-branch'"
-            >起点提交号 / 分支<input v-model="form.ref" required /></label
-        ></template>
+          </p>
+        </template>
+
+        <template v-else>
+          <label>
+            分支名称
+            <input v-model="form.name" required />
+          </label>
+          <label v-if="dialog === 'create-branch'">
+            起点提交号 / 分支
+            <input v-model="form.ref" required />
+          </label>
+        </template>
+
         <datalist id="git-refs">
           <option
             v-for="branch in branches"
@@ -1427,10 +1860,16 @@ onBeforeUnmount(() => {
             :value="branch.name"
           />
         </datalist>
+
         <footer>
-          <button type="button" :disabled="busy" @click="dialog = ''">
-            取消</button
-          ><button type="submit" class="primary" :disabled="repositoryBusy">
+          <button type="button" class="btn" :disabled="busy" @click="dialog = ''">
+            取消
+          </button>
+          <button
+            type="submit"
+            class="btn primary"
+            :disabled="repositoryBusy"
+          >
             {{ dialog === "push" && !preview ? "预览待推送提交" : "继续" }}
           </button>
         </footer>

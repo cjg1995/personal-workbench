@@ -4,6 +4,7 @@ import path from "node:path";
 import { ensureDir, now } from "./util.js";
 export const buckets = [
   "note",
+  "prompt",
   "config",
   "task",
   "review",
@@ -127,6 +128,21 @@ export class Store {
             value.id !== row.id)
         )
           throw new Error("备份工作记录无效");
+        if (
+          row.kind === "prompt" &&
+          (value.id !== row.id ||
+            typeof value.title !== "string" ||
+            !value.title.trim() ||
+            typeof value.body !== "string" ||
+            !value.body.trim() ||
+            !Array.isArray(value.tags) ||
+            value.tags.some((tag: unknown) => typeof tag !== "string") ||
+            typeof value.starred !== "boolean" ||
+            typeof value.createdAt !== "string" ||
+            typeof value.updatedAt !== "string" ||
+            (value.deletedAt !== null && typeof value.deletedAt !== "string"))
+        )
+          throw new Error("备份提示词无效");
       }
       return {
         version: v,

@@ -44,19 +44,22 @@ export class RecordsService {
     if (original && original.kind !== input.kind)
       throw new Error("记录类型不能在编辑中改变");
     if (original?.deletedAt) throw new Error("此记录已删除，请先恢复");
+    let happenedOn: string | null = null;
+    if (input.kind === "work") {
+      if (input.happenedOn === "") throw new Error("发生日期不能为空");
+      happenedOn = validateDate(
+        input.happenedOn === undefined
+          ? (original?.happenedOn ?? localDate())
+          : input.happenedOn,
+      );
+      if (original && !happenedOn) throw new Error("发生日期不能为空");
+    }
     const note: Note = {
       id: original?.id || id(),
       kind: input.kind,
       text,
       projectId: input.projectId || null,
-      happenedOn:
-        input.kind === "work"
-          ? validateDate(
-              input.happenedOn === undefined
-                ? (original?.happenedOn ?? localDate())
-                : input.happenedOn,
-            )
-          : null,
+      happenedOn,
       result: input.result || "",
       createdAt: original?.createdAt || now(),
       updatedAt: now(),

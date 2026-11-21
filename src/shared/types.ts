@@ -15,6 +15,16 @@ export interface Note {
   sourceLine: number | null;
   originalText: string | null;
 }
+export interface Prompt {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  starred: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
 export type TaskState =
   | "running"
   | "awaiting"
@@ -245,6 +255,21 @@ export const sections = [
   "个人工作计划、学习目标",
   "部门工作中存在问题及改进建议",
 ];
+export type UiDialogTone = "info" | "question" | "warning" | "danger" | "error";
+export interface UiDialogButton {
+  label: string;
+  variant?: "default" | "primary" | "danger";
+}
+export interface UiDialogRequest {
+  id: string;
+  tone: UiDialogTone;
+  title: string;
+  message: string;
+  detail?: string;
+  buttons: UiDialogButton[];
+  defaultId: number;
+  cancelId: number;
+}
 export interface ApiResponse<T = unknown> {
   ok: boolean;
   data?: T;
@@ -252,6 +277,8 @@ export interface ApiResponse<T = unknown> {
 }
 export interface WorkbenchApi {
   call<T = unknown>(action: string, payload?: unknown): Promise<ApiResponse<T>>;
+  onDialog(callback: (request: UiDialogRequest) => void): () => void;
+  replyDialog(id: string, response: number): void;
   onChanged(callback: () => void): () => void;
   onReviewProgress(callback: (message: string) => void): () => void;
   onNavigate(callback: (destination: { taskId: string }) => void): () => void;

@@ -20,6 +20,8 @@ import {
 } from "../state";
 import CloseButton from "../components/CloseButton.vue";
 import RunLog from "../components/RunLog.vue";
+import Icon from "../components/Icon.vue";
+
 const runs = ref<
     (RunInfo & {
       canStop?: boolean;
@@ -30,9 +32,10 @@ const runs = ref<
       message?: string;
     })[]
   >([]),
-  selected = ref(context.value.projectId || "homeproject"),
+  selected = ref(context.value.projectId || "refsys"),
   query = ref(""),
   group = ref(""),
+  collapsedGroups = ref<Record<string, boolean>>({}),
   busy = ref<string | null>(null),
   loading = ref(false),
   log = ref<any>(null),
@@ -40,30 +43,66 @@ const runs = ref<
   rules = ref<{ path: string; text: string }[]>([]),
   rulesBusy = ref(false),
   rulesFor = ref("");
+
 let timer: ReturnType<typeof setInterval> | undefined;
 const pageRoot = ref<HTMLElement>();
 const scrollPositions = new Map<HTMLElement, { top: number; left: number }>();
-const selectedProject = computed(() =>
-  model.config?.projects.find((p) => p.id === selected.value),
+
+const liveStates = ["starting", "running", "watching", "stopping", "tool-open"];
+
+const allProjects = computed(() => model.config?.projects || []);
+const groupNames = computed(() => {
+  const ordered = ["推荐官", "HomeProject"];
+  for (const p of allProjects.value) {
+    if (p.group && !ordered.includes(p.group)) ordered.push(p.group);
+  }
+  return ordered.filter((g) => allProjects.value.some((p) => p.group === g));
+});
+
+const selectedProject = computed(
+  () =>
+    allProjects.value.find((p) => p.id === selected.value) ||
+    allProjects.value[0],
 );
+
+watch(
+  allProjects,
+  (list) => {
+    if (list.length && !list.some((p) => p.id === selected.value)) {
+      selected.value = list[0].id;
+    }
+  },
+  { immediate: true },
+);
+
 const current = computed(() =>
-  runs.value.find((r) => r.projectId === selected.value),
+  runs.value.find((r) => r.projectId === selectedProject.value?.id),
 );
+
+const runningCount = computed(
+  () =>
+    runs.value.filter((r) =>
+      ["running", "watching", "external", "tool-open"].includes(r.state),
+    ).length,
+);
+
 const groups = computed(() =>
-  ["HomeProject", "推荐官"]
+  groupNames.value
     .filter((g) => !group.value || group.value === g)
     .map((g) => ({
       name: g,
-      projects:
-        model.config?.projects.filter(
-          (p) =>
-            p.group === g &&
-            (!query.value ||
-              p.name.toLowerCase().includes(query.value.toLowerCase())),
-        ) || [],
-    })),
+      projects: allProjects.value.filter(
+        (p) =>
+          p.group === g &&
+          (!query.value ||
+            p.name.toLowerCase().includes(query.value.toLowerCase())),
+      ),
+    }))
+    .filter((g) => g.projects.length > 0),
 );
+
 const run = (id: string) => runs.value.find((r) => r.projectId === id);
+
 const types: Record<string, string> = {
   tomcat: "Java / Tomcat",
   spring: "Spring Boot",
@@ -72,6 +111,41 @@ const types: Record<string, string> = {
   wechat: "微信原生小程序",
   "uni-wechat": "UniApp 小程序",
 };
+
+function techIcon(project: { id: string; type: string }) {
+  if (project.type === "spring" || project.type === "tomcat")
+    return { icon: "server", cls: "server" };
+  if (project.type === "vue" || project.id === "wecom")
+    return { icon: "web", cls: "web" };
+  return { icon: "phone", cls: "phone" };
+}
+
+function isLiveState(state?: string) {
+  return !!state && ["running", "watching", "tool-open"].includes(state);
+}
+
+function badgeClass(state?: string) {
+  if (!state || state === "stopped") return "neutral";
+  if (["running", "watching", "tool-open"].includes(state)) return "live";
+  if (state === "external") return "brand";
+  if (["starting", "stopping", "unconfigured", "unknown"].includes(state))
+    return "pending";
+  if (state === "failed") return "danger";
+  return "neutral";
+}
+
+const hostLabel = computed(() => {
+  const url = current.value?.url;
+  if (url) {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  }
+  return current.value?.port ? `localhost:${current.value.port}` : "";
+});
+
 function primaryAction(id: string) {
   const project = model.config?.projects.find((item) => item.id === id);
   const info = run(id);
@@ -94,10 +168,15 @@ function primaryAction(id: string) {
     return { action: "ide", label: "在原工具中管理" };
   return null;
 }
+
 function shownRunMessage(info?: { state?: string; message?: string } | null) {
   const message = info?.message?.trim() || "";
   if (!message) return "";
-  if (["failed", "unconfigured", "unknown", "external"].includes(info?.state || ""))
+  if (
+    ["failed", "unconfigured", "unknown", "external"].includes(
+      info?.state || "",
+    )
+  )
     return message;
   if (
     /请|重试|未能|失败|错误|不可用|占用|无法|不存在|未打开|未标记|需要|冲突/.test(
@@ -107,30 +186,50 @@ function shownRunMessage(info?: { state?: string; message?: string } | null) {
     return message;
   return "";
 }
+
 function stopLabel(id: string) {
   return model.config?.projects.find((item) => item.id === id)?.type ===
     "uni-wechat"
     ? "停止监听"
     : "停止";
 }
+
+function toggleGroup(name: string) {
+  collapsedGroups.value = {
+    ...collapsedGroups.value,
+    [name]: !collapsedGroups.value[name],
+  };
+}
+
 async function refresh() {
   if (loading.value) return;
   loading.value = true;
   try {
     runs.value = await call("projects.list");
+    const selId = selectedProject.value?.id;
+    const selRun = selId ? run(selId) : undefined;
+    if (
+      selId &&
+      selRun &&
+      liveStates.includes(selRun.state) &&
+      log.value?.projectId !== selId
+    ) {
+      beginLive(selId);
+    }
   } catch (e) {
     notify(e instanceof Error ? e.message : String(e), true);
   } finally {
     loading.value = false;
   }
 }
-const liveStates = ["starting", "running", "watching", "stopping", "tool-open"];
+
 let liveToken = 0;
 let livePaused = false;
 let liveBusy = false;
 let liveWanted = false;
 let liveTimer: ReturnType<typeof setTimeout> | undefined;
 let logSession = 0;
+
 function clearLiveTimer() {
   if (liveTimer) clearTimeout(liveTimer);
   liveTimer = undefined;
@@ -202,12 +301,18 @@ async function tickLive(token: number, id: string, session: number) {
   }
   if (keepGoing) scheduleLive(token, id, session);
 }
+
 function selectProject(id: string) {
   if (id === selected.value) return;
   stopLive();
   log.value = null;
   selected.value = id;
+  const info = run(id);
+  if (info && liveStates.includes(info.state)) {
+    beginLive(id);
+  }
 }
+
 function beginLive(id: string) {
   stopLive();
   liveWanted = true;
@@ -216,12 +321,14 @@ function beginLive(id: string) {
   log.value = { text: "", offset: 0, path: "", projectId: id, session };
   void tickLive(token, id, session);
 }
+
 function resumeLive() {
-  const current = log.value;
-  if (!liveWanted || !current?.projectId) return;
+  const cur = log.value;
+  if (!liveWanted || !cur?.projectId) return;
   livePaused = false;
-  void tickLive(liveToken, current.projectId, current.session);
+  void tickLive(liveToken, cur.projectId, cur.session);
 }
+
 function applyContext() {
   if (route.value !== "projects") return false;
   const id = context.value.projectId;
@@ -229,11 +336,15 @@ function applyContext() {
   selectProject(id);
   return true;
 }
+
 function rememberScroll() {
   scrollPositions.clear();
   const root = pageRoot.value;
   if (!root) return;
-  for (const element of [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))])
+  for (const element of [
+    root,
+    ...Array.from(root.querySelectorAll<HTMLElement>("*")),
+  ])
     if (
       element.scrollHeight > element.clientHeight ||
       element.scrollWidth > element.clientWidth
@@ -243,14 +354,17 @@ function rememberScroll() {
         left: element.scrollLeft,
       });
 }
+
 function restoreScroll() {
   for (const [element, position] of scrollPositions)
     if (element.isConnected) element.scrollTo(position);
 }
+
 function startStatusTimer() {
   if (timer) clearInterval(timer);
   timer = setInterval(() => void refresh(), 9000);
 }
+
 watch(
   route,
   (next, previous) => {
@@ -259,6 +373,7 @@ watch(
   },
   { flush: "sync" },
 );
+
 async function act(action: string, id: string) {
   const live = action === "start" || action === "restart";
   if (live) {
@@ -292,6 +407,7 @@ async function act(action: string, id: string) {
   if (started) beginLive(id);
   else log.value = null;
 }
+
 async function runAction(action: string, id: string) {
   selected.value = id;
   if (action === "copy") {
@@ -313,6 +429,7 @@ async function runAction(action: string, id: string) {
   }
   await act(action, id);
 }
+
 async function openRules() {
   const project = selectedProject.value;
   if (!project) return;
@@ -325,6 +442,7 @@ async function openRules() {
   });
   rulesBusy.value = false;
 }
+
 onActivated(async () => {
   const switched = applyContext();
   startStatusTimer();
@@ -337,215 +455,476 @@ onActivated(async () => {
   resumeLive();
   void refresh();
 });
+
 onDeactivated(() => {
   if (timer) clearInterval(timer);
   timer = undefined;
   pauseLive();
   if (rulesDialog.value?.open) rulesDialog.value.close();
 });
+
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   stopLive();
 });
 </script>
+
 <template>
   <div ref="pageRoot" class="projects-page">
-  <div class="projects-workspace">
-    <section class="projects-list">
-      <div class="projects-toolbar">
-        <select v-model="group" aria-label="项目分组">
-          <option value="">全部项目</option>
-          <option>HomeProject</option>
-          <option>推荐官</option>
-        </select>
-        <input
-          v-model="query"
-          type="search"
-          placeholder="搜索项目"
-          aria-label="搜索项目"
-        />
+    <div class="page-head">
+      <div>
+        <h1>项目管理</h1>
+        <div class="h-meta">
+          <span>{{ allProjects.length }} 个项目</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ groupNames.length }} 个分组</span>
+        </div>
       </div>
-      <div class="projects-scroll">
-        <p v-if="!groups.some((g) => g.projects.length)" class="empty compact">
-          没有匹配的工作目录
-        </p>
-        <template v-for="g in groups" :key="g.name">
-          <p class="project-group">{{ g.name }}</p>
-          <div
-            v-for="p in g.projects"
-            :key="p.id"
-            class="project-item"
-            :class="{ selected: p.id === selected }"
-            @click="selectProject(p.id)"
-          >
-            <div class="project-item-main">
-              <strong class="project-name">{{ p.name }}</strong>
-              <small
-                >{{ types[p.type] }}
-                <span
-                  v-if="run(p.id)"
-                  class="status"
-                  :class="
-                    run(p.id)!.state === 'running'
-                      ? 'running-service'
-                      : run(p.id)!.state
-                  "
-                  :title="shownRunMessage(run(p.id)) || undefined"
-                  >{{ runLabels[run(p.id)!.state] }}</span
-                ><span v-else class="muted">{{
-                  loading ? "检测中…" : "状态未知"
-                }}</span>              </small
+      <div class="h-actions">
+        <span
+          class="badge"
+          :class="runningCount ? 'live' : 'neutral'"
+        >
+          <i v-if="runningCount" class="dot" />
+          {{ runningCount ? `${runningCount} 个项目运行中` : "暂无运行中项目" }}
+        </span>
+      </div>
+    </div>
+
+    <div class="duo project-layout">
+      <!-- 左侧项目列表卡片 -->
+      <section class="card pane">
+        <div class="panel-head">
+          <div class="head-title">
+            <Icon name="folders" :size="17" />
+            <h2>项目列表</h2>
+            <span class="count">{{ allProjects.length }}</span>
+          </div>
+        </div>
+
+        <div class="project-filter">
+          <label class="search-box" style="margin: 0">
+            <Icon name="search" :size="14" />
+            <input
+              v-model="query"
+              type="search"
+              placeholder="搜索项目"
+              aria-label="搜索项目"
+            />
+          </label>
+          <select v-model="group" aria-label="项目分组">
+            <option value="">全部分组</option>
+            <option v-for="g in groupNames" :key="g" :value="g">{{ g }}</option>
+          </select>
+        </div>
+
+        <div class="project-groups">
+          <div v-if="!groups.length" class="empty compact">
+            <span>没有匹配的工作目录</span>
+          </div>
+          <template v-for="g in groups" :key="g.name">
+            <button
+              type="button"
+              class="group-label"
+              :class="{ collapsed: !!collapsedGroups[g.name] }"
+              :aria-expanded="!collapsedGroups[g.name]"
+              @click="toggleGroup(g.name)"
+            >
+              <Icon name="down" :size="11" />
+              <span>{{ g.name }}</span>
+              <small>{{ g.projects.length }}</small>
+            </button>
+
+            <template v-if="!collapsedGroups[g.name]">
+              <div
+                v-for="p in g.projects"
+                :key="p.id"
+                class="project-item"
+                :class="{ selected: p.id === selectedProject?.id }"
+                role="button"
+                tabindex="0"
+                @click="selectProject(p.id)"
+                @keydown.enter="selectProject(p.id)"
               >
+                <span class="tech-icon" :class="techIcon(p).cls">
+                  <Icon :name="techIcon(p).icon" :size="16" />
+                </span>
+                <div class="grow">
+                  <strong class="project-name" :title="p.name">{{
+                    p.name
+                  }}</strong>
+                  <small>
+                    {{ types[p.type] }} ·
+                    <strong
+                      v-if="run(p.id) && isLiveState(run(p.id)!.state)"
+                      class="live-word"
+                      >{{ runLabels[run(p.id)!.state] }}</strong
+                    >
+                    <span v-else>{{
+                      run(p.id)
+                        ? runLabels[run(p.id)!.state]
+                        : loading
+                          ? "检测中…"
+                          : "状态未知"
+                    }}</span>
+                  </small>
+                </div>
+                <div @click.stop>
+                  <button
+                    v-if="run(p.id)?.canStop"
+                    type="button"
+                    class="run-action live"
+                    :disabled="busy === p.id"
+                    :title="stopLabel(p.id)"
+                    :aria-label="`${stopLabel(p.id)} ${p.name}`"
+                    @click="runAction('stop', p.id)"
+                  >
+                    <Icon name="stop" :size="12" />
+                  </button>
+                  <button
+                    v-else-if="primaryAction(p.id)?.action === 'start'"
+                    type="button"
+                    class="run-action"
+                    :disabled="busy === p.id"
+                    :title="primaryAction(p.id)?.title || '启动项目'"
+                    :aria-label="`启动 ${p.name}`"
+                    @click="runAction('start', p.id)"
+                  >
+                    <Icon name="play-mini" :size="12" />
+                  </button>
+                  <button
+                    v-else-if="primaryAction(p.id)?.action === 'ide'"
+                    type="button"
+                    class="run-action"
+                    :disabled="busy === p.id"
+                    title="在原工具中管理"
+                    :aria-label="`在原工具中管理 ${p.name}`"
+                    @click="runAction('ide', p.id)"
+                  >
+                    <Icon name="external" :size="12" />
+                  </button>
+                  <span
+                    v-else-if="run(p.id)?.state === 'starting'"
+                    class="spinner"
+                    title="启动中"
+                  />
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+
+        <div class="footnote">
+          <Icon name="play-mini" :size="12" />
+          <span>启动项目</span>
+          <span class="push" />
+          <Icon name="stop" :size="12" />
+          <span>停止项目</span>
+        </div>
+      </section>
+
+      <!-- 右侧服务详情 + 浅色运行日志 -->
+      <div v-if="selectedProject" class="project-col">
+        <section class="card service-info">
+          <div class="service-header">
+            <div class="service-mark">
+              <Icon name="stack" :size="24" />
             </div>
-            <div class="project-item-actions" @click.stop>
+            <div class="grow">
+              <div class="service-name">
+                <h2>{{ selectedProject.name }}</h2>
+                <span class="badge" :class="badgeClass(current?.state)">
+                  <i class="dot" />
+                  {{ runLabels[current?.state || "unknown"] }}
+                </span>
+              </div>
+              <div class="service-trace">
+                {{ selectedProject.group }}　/　{{ types[selectedProject.type] }}
+                <template v-if="current?.port"
+                  >　·　端口 {{ current.port }}</template
+                >
+              </div>
+            </div>
+
+            <div class="service-header-actions">
               <button
-                v-if="primaryAction(p.id) && primaryAction(p.id)!.action !== 'wechat'"
-                class="primary"
-                :disabled="busy === p.id"
-                :title="primaryAction(p.id)?.title"
-                @click="runAction(primaryAction(p.id)!.action, p.id)"
+                v-if="
+                  primaryAction(selectedProject.id) &&
+                  primaryAction(selectedProject.id)!.action !== 'start'
+                "
+                type="button"
+                class="btn"
+                :disabled="busy === selectedProject.id"
+                :title="primaryAction(selectedProject.id)?.title"
+                @click="
+                  runAction(
+                    primaryAction(selectedProject.id)!.action,
+                    selectedProject.id,
+                  )
+                "
               >
-                {{ primaryAction(p.id)!.label }}
+                <Icon name="external" :size="14" />
+                {{ primaryAction(selectedProject.id)!.label }}
               </button>
               <button
-                v-if="run(p.id)?.canStop"
-                :disabled="busy === p.id"
-                @click="runAction('stop', p.id)"
+                v-if="primaryAction(selectedProject.id)?.action === 'start'"
+                type="button"
+                class="btn light-brand"
+                :disabled="busy === selectedProject.id"
+                :title="primaryAction(selectedProject.id)?.title"
+                @click="runAction('start', selectedProject.id)"
               >
-                {{ stopLabel(p.id) }}
+                <Icon name="play-mini" :size="13" />启动
               </button>
-              <span
-                v-else-if="run(p.id)?.state === 'starting'"
-                class="muted small"
-                >启动中</span
+              <button
+                type="button"
+                class="btn primary"
+                title="在独立窗口编辑项目代码"
+                @click="runAction('editor', selectedProject.id)"
               >
+                <Icon name="code" :size="15" />代码编辑
+              </button>
+              <button
+                v-if="
+                  selectedProject.type === 'uni-wechat' &&
+                  primaryAction(selectedProject.id)?.action !== 'wechat'
+                "
+                type="button"
+                class="btn"
+                :disabled="
+                  busy === selectedProject.id || current?.state === 'starting'
+                "
+                @click="runAction('wechat', selectedProject.id)"
+              >
+                打开微信开发者工具
+              </button>
+              <button
+                v-if="
+                  !['wechat', 'uni-wechat'].includes(selectedProject.type) &&
+                  primaryAction(selectedProject.id)?.action !== 'ide'
+                "
+                type="button"
+                class="btn"
+                :disabled="busy === selectedProject.id"
+                @click="runAction('ide', selectedProject.id)"
+              >
+                <Icon name="external" :size="14" />打开 IDE
+              </button>
+              <button
+                v-if="current?.canStop"
+                type="button"
+                class="btn stop"
+                :disabled="busy === selectedProject.id"
+                @click="runAction('stop', selectedProject.id)"
+              >
+                <Icon name="stop" :size="12" />{{
+                  stopLabel(selectedProject.id)
+                }}
+              </button>
             </div>
           </div>
+
+          <p
+            v-if="shownRunMessage(current)"
+            :class="
+              ['unconfigured', 'unknown', 'failed'].includes(current!.state)
+                ? 'notice warning'
+                : 'inline-note'
+            "
+            style="margin-top: 12px; margin-bottom: 0"
+          >
+            {{ shownRunMessage(current) }}
+          </p>
+
+          <div class="service-facts">
+            <div class="fact">
+              <div class="fact-label">
+                <Icon name="folder" :size="12" />工作目录
+              </div>
+              <div class="fact-value">
+                <span class="mono" :title="selectedProject.path">{{
+                  selectedProject.path
+                }}</span>
+              </div>
+            </div>
+
+            <div class="fact">
+              <div class="fact-label">
+                <Icon name="link" :size="12" />实际地址
+              </div>
+              <div class="fact-value">
+                <template v-if="current?.url">
+                  <button
+                    type="button"
+                    class="fact-url-btn"
+                    :title="current.url"
+                    @click="runAction('url', selectedProject.id)"
+                  >
+                    <span>{{ current.url }}</span>
+                    <Icon name="external" :size="12" />
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn small blank"
+                    title="复制地址"
+                    aria-label="复制地址"
+                    @click="runAction('copy', selectedProject.id)"
+                  >
+                    <Icon name="copy" :size="12" />
+                  </button>
+                </template>
+                <span v-else class="muted">尚无经过核实的可用地址</span>
+              </div>
+            </div>
+
+            <div class="fact">
+              <div class="fact-label">
+                <Icon name="branch2" :size="12" />当前分支
+              </div>
+              <div class="fact-value">
+                <span class="mono" :title="current?.branch">{{
+                  current?.branch || "尚未核实 / 非 Git 目录"
+                }}</span>
+              </div>
+            </div>
+
+            <div class="fact">
+              <div class="fact-label">
+                <Icon name="shield" :size="12" />进程归属
+              </div>
+              <div class="fact-value">
+                <span>{{
+                  current?.canStop
+                    ? "工作台托管，身份已核实"
+                    : current?.state === "external"
+                      ? "外部实例，请用原工具管理"
+                      : "未核实为工作台运行实例"
+                }}</span>
+              </div>
+            </div>
+
+            <div v-if="current?.deployment" class="fact fact-wide">
+              <div class="fact-label">
+                <Icon name="archive" :size="12" />现有部署
+              </div>
+              <div class="fact-value">
+                <span class="mono" :title="current.deployment">{{
+                  current.deployment
+                }}</span>
+              </div>
+            </div>
+
+            <div class="fact fact-wide">
+              <div class="fact-label">
+                <Icon name="server" :size="12" />运行环境
+              </div>
+              <div class="fact-value">
+                <span>{{
+                  current?.description || types[selectedProject.type]
+                }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="service-tools">
+            <button
+              type="button"
+              class="text-action"
+              :disabled="busy === selectedProject.id"
+              @click="runAction('folder', selectedProject.id)"
+            >
+              <Icon name="folder" :size="13" />打开目录
+            </button>
+            <button
+              type="button"
+              class="text-action"
+              @click="runAction('rules', selectedProject.id)"
+            >
+              <Icon name="document" :size="13" />项目规则
+            </button>
+            <button
+              type="button"
+              class="text-action"
+              @click="runAction('log', selectedProject.id)"
+            >
+              <Icon name="external" :size="13" />查看日志
+            </button>
+            <span v-if="selectedProject.group === '推荐官'" class="dep">
+              依赖 HomeProject API，需单独启动。
+            </span>
+          </div>
+        </section>
+
+        <RunLog
+          v-if="log"
+          :key="log.session"
+          :text="String(log.text ?? '')"
+          :active="isLiveState(current?.state)"
+          :host-label="hostLabel"
+        />
+        <section v-else class="terminal">
+          <div class="term-head">
+            <Icon name="term" :size="16" />
+            <h3>运行日志</h3>
+            <span class="live-light idle" />
+          </div>
+          <div class="term-empty">
+            <span
+              >当前项目{{
+                runLabels[current?.state || "stopped"]
+              }}，尚未加载运行日志。</span
+            >
+            <div class="row" style="gap: 8px">
+              <button
+                v-if="primaryAction(selectedProject.id)?.action === 'start'"
+                type="button"
+                class="btn primary compact"
+                :disabled="busy === selectedProject.id"
+                @click="runAction('start', selectedProject.id)"
+              >
+                <Icon name="play-mini" :size="12" />启动项目并跟随日志
+              </button>
+              <button
+                type="button"
+                class="btn compact"
+                @click="runAction('log', selectedProject.id)"
+              >
+                <Icon name="term" :size="13" />查看上次日志
+              </button>
+            </div>
+          </div>
+          <div class="term-foot">
+            <i class="dot paused" />
+            <span>未跟随输出</span>
+            <span class="push" />
+            <span v-if="hostLabel" class="mono">{{ hostLabel }}</span>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <dialog
+      ref="rulesDialog"
+      class="rules-dialog"
+      aria-labelledby="project-rules-title"
+      @cancel.prevent="rulesDialog?.close()"
+    >
+      <div class="dialog-head">
+        <h2 id="project-rules-title">{{ rulesFor }} · 项目规则</h2>
+        <CloseButton label="关闭项目规则" @click="rulesDialog?.close()" />
+      </div>
+      <div class="rules-dialog-body">
+        <p v-if="rulesBusy" class="loading" role="status">正在读取规则文件…</p>
+        <template v-else>
+          <div v-for="rule in rules" :key="rule.path" class="rule-block">
+            <p class="path">{{ rule.path }}</p>
+            <pre class="rule-text">{{ rule.text }}</pre>
+          </div>
+          <p v-if="!rules.length" class="muted small">
+            此项目没有自己的规则文件。
+          </p>
         </template>
       </div>
-    </section>
-    <section v-if="selectedProject" class="projects-detail">
-      <div class="section-head">
-        <h2>{{ selectedProject.name }}</h2>
-        <span class="status" :class="current?.state">{{
-          runLabels[current?.state || "unknown"]
-        }}</span>
-      </div>
-      <p
-        v-if="shownRunMessage(current)"
-        :class="
-          ['unconfigured', 'unknown', 'failed'].includes(current!.state)
-            ? 'notice warning'
-            : 'muted small'
-        "
-      >
-        {{ shownRunMessage(current) }}
-      </p>
-      <div class="projects-actions">
-        <button
-          v-if="primaryAction(selected) && primaryAction(selected)!.action !== 'start'"
-          class="primary"
-          :disabled="busy === selected"
-          :title="primaryAction(selected)?.title"
-          @click="runAction(primaryAction(selected)!.action, selected)"
-        >
-          {{ primaryAction(selected)!.label }}
-        </button>
-        <button @click="runAction('editor', selected)" title="在独立窗口编辑项目代码">
-          代码编辑
-        </button>
-        <button
-          v-if="
-            selectedProject.type === 'uni-wechat' &&
-            primaryAction(selected)?.action !== 'wechat'
-          "
-          :disabled="busy === selected || current?.state === 'starting'"
-          @click="runAction('wechat', selected)"
-        >
-          打开微信开发者工具
-        </button>
-        <button
-          v-if="current?.canStop"
-          :disabled="busy === selected"
-          @click="runAction('stop', selected)"
-        >
-          {{ stopLabel(selected) }}
-        </button>
-        <button
-          v-if="
-            !['wechat', 'uni-wechat'].includes(selectedProject.type) &&
-            primaryAction(selected)?.action !== 'ide'
-          "
-          :disabled="busy === selected"
-          @click="runAction('ide', selected)"
-        >
-          打开 IDE
-        </button>
-        <button @click="runAction('log', selected)">查看日志</button>
-        <button :disabled="busy === selected" @click="runAction('folder', selected)">
-          打开目录
-        </button>
-        <button @click="runAction('rules', selected)">项目规则</button>
-      </div>
-      <dl class="kv">
-        <dt>工作目录</dt>
-        <dd class="path" :title="selectedProject.path">{{ selectedProject.path }}</dd>
-        <dt>当前分支</dt>
-        <dd>{{ current?.branch || "尚未核实 / 非 Git 目录" }}</dd>
-        <dt>运行环境</dt>
-        <dd>{{ current?.description || types[selectedProject.type] }}</dd>
-        <dt v-if="current?.port">端口</dt>
-        <dd v-if="current?.port">{{ current.port }}</dd>
-        <dt v-if="current?.deployment">现有部署</dt>
-        <dd v-if="current?.deployment" class="path" :title="current.deployment">
-          {{ current.deployment }}
-        </dd>
-        <dt>实际地址</dt>
-        <dd class="address-line">
-          <span class="path" :title="current?.url">{{
-            current?.url || "尚无经过核实的可用地址"
-          }}</span>
-          <button v-if="current?.url" @click="runAction('url', selected)">
-            打开
-          </button>
-        </dd>
-        <dt>进程归属</dt>
-        <dd>
-          {{
-            current?.canStop
-              ? "工作台拥有且身份核实"
-              : current?.state === "external"
-                ? "外部实例，请用原工具管理"
-                : "未核实为工作台运行实例"
-          }}
-        </dd>
-      </dl>
-      <p v-if="selectedProject.group === '推荐官'" class="small muted">
-        后端依赖 HomeProject API，工作台不会代为启动。
-      </p>
-      <RunLog v-if="log" :key="log.session" :text="String(log.text ?? '')" />
-    </section>
-  </div>
-  <dialog
-    ref="rulesDialog"
-    class="rules-dialog"
-    aria-labelledby="project-rules-title"
-    @cancel.prevent="rulesDialog?.close()"
-  >
-    <div class="dialog-head">
-      <h2 id="project-rules-title">{{ rulesFor }} · 项目规则</h2>
-      <CloseButton label="关闭项目规则" @click="rulesDialog?.close()" />
-    </div>
-    <div class="rules-dialog-body">
-      <p v-if="rulesBusy" class="loading" role="status">正在读取规则文件…</p>
-      <template v-else>
-        <div v-for="rule in rules" :key="rule.path" class="rule-block">
-          <p class="path">{{ rule.path }}</p>
-          <pre class="rule-text">{{ rule.text }}</pre>
-        </div>
-        <p v-if="!rules.length" class="muted small">此项目没有自己的规则文件。</p>
-      </template>
-    </div>
-  </dialog>
+    </dialog>
   </div>
 </template>

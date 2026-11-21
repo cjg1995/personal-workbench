@@ -9,16 +9,17 @@ import {
   notify,
   recordModal,
   reload,
-  projectName,
   leaveGuard,
   setGuard,
 } from "../state";
 import CloseButton from "./CloseButton.vue";
+
 const dialog = ref<HTMLDialogElement>();
 const form = ref({ ...recordModal.value } as Partial<Note>);
 const busy = ref(false);
 const baseline = JSON.stringify(form.value),
   previousGuard = leaveGuard;
+
 async function guard() {
   return (
     JSON.stringify(form.value) === baseline ||
@@ -29,10 +30,12 @@ async function guard() {
     ))
   );
 }
+
 setGuard(
   async () => (await guard()) && (!previousGuard || (await previousGuard())),
 );
 onBeforeUnmount(() => setGuard(previousGuard));
+
 const existing = computed(() =>
   model.notes.filter(
     (n) =>
@@ -42,32 +45,37 @@ const existing = computed(() =>
       n.sourceId === form.value.sourceId,
   ),
 );
+
 onMounted(async () => {
   dialog.value?.showModal();
   await nextTick();
   dialog.value?.querySelector("textarea")?.focus();
 });
+
 async function close() {
   if (!(await guard())) return;
   recordModal.value = null;
 }
+
 async function save() {
   if (busy.value || !form.value.text?.trim()) return;
   busy.value = true;
   await attempt(async () => {
     await call("record.save", form.value);
     await reload();
-    notify("已保存工作记录");
+    notify(form.value.kind === "idea" ? "已添加灵感待办" : "已保存工作记录");
     recordModal.value = null;
   });
   busy.value = false;
 }
+
 function onKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     event.preventDefault();
     void save();
   }
 }
+
 function setKind(value: "idea" | "work") {
   if (form.value.kind === value) return;
   form.value.kind = value;
@@ -83,7 +91,7 @@ function setKind(value: "idea" | "work") {
   >
     <form @submit.prevent="save">
       <div class="dialog-head">
-        <h2 id="record-dialog-title">新建记录</h2>
+        <h2 id="record-dialog-title">快速记录</h2>
         <CloseButton label="关闭记录窗口" @click="close" />
       </div>
       <div class="tabs" role="group" aria-label="记录类型">
@@ -93,8 +101,9 @@ function setKind(value: "idea" | "work") {
           :aria-pressed="form.kind === 'work'"
           @click="setKind('work')"
         >
-          记一条工作</button
-        ><button
+          记一条工作
+        </button>
+        <button
           type="button"
           :class="{ active: form.kind === 'idea' }"
           :aria-pressed="form.kind === 'idea'"
@@ -106,8 +115,9 @@ function setKind(value: "idea" | "work") {
       <p v-if="existing.length" class="notice">
         此来源已有 {{ existing.length }} 条工作记录。请核对，避免重复录入。
       </p>
-      <label
-        >内容<textarea
+      <label>
+        内容
+        <textarea
           v-model="form.text"
           required
           rows="5"
@@ -119,17 +129,30 @@ function setKind(value: "idea" | "work") {
         />
       </label>
       <div class="actions spaced">
-        <span class="dialog-hint"
-          >Ctrl + Enter 保存 · Esc 关闭</span
-        >
+        <span class="dialog-hint">
+          <span class="mini-key">Ctrl</span>
+          <span>+</span>
+          <span class="mini-key">Enter</span>
+          <span>保存</span>
+          <span class="sep-dot" aria-hidden="true" />
+          <span class="mini-key">Esc</span>
+          <span>关闭</span>
+        </span>
         <div class="row">
-          <button type="button" :disabled="busy" @click="close">取消</button
-          ><button
+          <button type="button" :disabled="busy" @click="close">取消</button>
+          <button
+            type="submit"
             class="primary"
             :disabled="busy || !form.text?.trim()"
             :aria-busy="busy"
           >
-            {{ busy ? "保存中…" : "保存记录" }}
+            {{
+              busy
+                ? "保存中…"
+                : form.kind === "idea"
+                  ? "添加待办"
+                  : "保存记录"
+            }}
           </button>
         </div>
       </div>

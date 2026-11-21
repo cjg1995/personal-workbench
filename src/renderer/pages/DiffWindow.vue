@@ -22,6 +22,7 @@ import { DiffScrollbar } from "../diff-scrollbar";
 import VirtualFiles from "../components/VirtualFiles.vue";
 import Icon from "../components/Icon.vue";
 import CloseButton from "../components/CloseButton.vue";
+import MessageDialog from "../components/MessageDialog.vue";
 const request = ref<DiffWindowRequest>(),
   projectName = ref(""),
   files = ref<ChangeFile[]>([]),
@@ -1288,5 +1289,6 @@ onBeforeUnmount(disposeViewer);
       ><span class="diff-status-result">{{ result.slice(-200) }}</span
       ><span>F7 / Shift+F7 跨文件 · F11 沉浸查看</span>
     </footer>
+    <MessageDialog :dark="settings.dark" />
   </div>
 </template>

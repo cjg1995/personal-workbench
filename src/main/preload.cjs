@@ -2,6 +2,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("workbench", {
   call: (action, payload) =>
     ipcRenderer.invoke("workbench:action", action, payload),
+  onDialog: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on("workbench:dialog", listener);
+    return () => ipcRenderer.removeListener("workbench:dialog", listener);
+  },
+  replyDialog: (id, response) =>
+    ipcRenderer.send("workbench:dialog-reply", { id, response }),
   onChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on("workbench:changed", listener);

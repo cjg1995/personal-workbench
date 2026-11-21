@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import { Store } from "../core/store.js";
 import { ConfigService } from "../core/config.js";
 import { RecordsService } from "../core/records.js";
+import { PromptsService } from "../core/prompts.js";
 import { TaskManager } from "../core/tasks.js";
 import { Git } from "../core/git.js";
 import { GitClientService } from "../core/git-client.js";
@@ -63,6 +64,9 @@ import type {
   MonthlyDraft,
   RecordKind,
   RunInfo,
+  UiDialogButton,
+  UiDialogRequest,
+  UiDialogTone,
 } from "../shared/types.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const override = process.argv
@@ -156,6 +160,7 @@ if (!app.requestSingleInstanceLock()) {
   const projectBrowser = new ProjectBrowser(dataDir, (url) => shell.openExternal(url));
   const tasks = new TaskManager(store, dataDir, changed),
     records = new RecordsService(store, dataDir),
+    prompts = new PromptsService(store),
     git = new Git(config.get().tools.git),
     submit = new SubmitService(git, tasks, dataDir),
     apk = new ApkService(config, tasks, dataDir),
@@ -518,18 +523,129 @@ if (!app.requestSingleInstanceLock()) {
       deployment: configuration?.deployment,
     };
   };
-  const ask = async (title: string, message: string, confirm = "确认") =>
-    (
-      await dialog.showMessageBox(win, {
-        type: "question",
-        title,
-        message,
-        buttons: ["取消", confirm],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      })
-    ).response === 1;
+  const pendingDialogs = new Map<
+    string,
+    {
+      senderId: number;
+      cancelId: number;
+      resolve: (result: { response: number }) => void;
+      cleanup: () => void;
+    }
+  >();
+  ipcMain.on("workbench:dialog-reply", (event, payload) => {
+    const reqId = typeof payload?.id === "string" ? payload.id : "";
+    const entry = pendingDialogs.get(reqId);
+    if (!entry || entry.senderId !== event.sender.id) return;
+    pendingDialogs.delete(reqId);
+    entry.cleanup();
+    const response = Number.isInteger(payload?.response)
+      ? Number(payload.response)
+      : entry.cancelId;
+    entry.resolve({ response });
+  });
+  const showUiDialog = (
+    target: BrowserWindow | undefined,
+    options: {
+      tone?: UiDialogTone;
+      title: string;
+      message: string;
+      detail?: string;
+      buttons: UiDialogButton[];
+      defaultId?: number;
+      cancelId?: number;
+    },
+  ): Promise<{ response: number }> => {
+    const host = target && !target.isDestroyed() ? target : win;
+    const buttons: UiDialogButton[] = options.buttons.length
+      ? options.buttons
+      : [{ label: "确定", variant: "primary" }];
+    const clamp = (value: number | undefined, fallback: number) => {
+      const n = Number.isInteger(value) ? Number(value) : fallback;
+      return Math.min(Math.max(0, n), buttons.length - 1);
+    };
+    const defaultId = clamp(options.defaultId, 0);
+    const cancelId = clamp(options.cancelId, 0);
+    if (!host || host.isDestroyed() || host.webContents.isDestroyed()) {
+      return Promise.resolve({ response: cancelId });
+    }
+    if (host.isMinimized()) host.restore();
+    if (!host.isVisible()) host.show();
+    host.focus();
+    const reqId = id();
+    const request: UiDialogRequest = {
+      id: reqId,
+      tone: options.tone || "question",
+      title: options.title,
+      message: options.message,
+      detail: options.detail || undefined,
+      buttons,
+      defaultId,
+      cancelId,
+    };
+    return new Promise((resolve) => {
+      const onGone = () => {
+        const entry = pendingDialogs.get(reqId);
+        if (!entry) return;
+        pendingDialogs.delete(reqId);
+        entry.cleanup();
+        resolve({ response: cancelId });
+      };
+      const cleanup = () => {
+        if (!host.isDestroyed()) {
+          host.removeListener("closed", onGone);
+          if (!host.webContents.isDestroyed()) {
+            host.webContents.removeListener("render-process-gone", onGone);
+          }
+        }
+      };
+      pendingDialogs.set(reqId, {
+        senderId: host.webContents.id,
+        cancelId,
+        resolve,
+        cleanup,
+      });
+      host.once("closed", onGone);
+      host.webContents.once("render-process-gone", onGone);
+      host.webContents.send("workbench:dialog", request);
+    });
+  };
+  const ask = async (
+    title: string,
+    message: string,
+    confirm = "确认",
+    options: {
+      detail?: string;
+      tone?: UiDialogTone;
+      danger?: boolean;
+      target?: BrowserWindow;
+    } = {},
+  ) => {
+    const isDanger =
+      options.danger ?? /删除|移除|丢弃|回滚|清空|覆盖/.test(confirm);
+    const tone: UiDialogTone =
+      options.tone ||
+      (isDanger
+        ? /删除|移除|回滚/.test(confirm)
+          ? "danger"
+          : "warning"
+        : "question");
+    return (
+      (
+        await showUiDialog(options.target || win, {
+          tone,
+          title,
+          message,
+          detail: options.detail,
+          buttons: [
+            { label: "取消", variant: "default" },
+            { label: confirm, variant: isDanger ? "danger" : "primary" },
+          ],
+          defaultId: 0,
+          cancelId: 0,
+        })
+      ).response === 1
+    );
+  };
   const saveFile = async (defaultPath: string, extensions: string[]) => {
     const picked = await dialog.showSaveDialog(win, {
       defaultPath,
@@ -632,19 +748,34 @@ if (!app.requestSingleInstanceLock()) {
         }
         if (name === "editor.previews") return editorFiles.previews(root, Array.isArray(p.locations) ? p.locations : []);
         if (name === "editor.confirm-save") {
-          const result = await dialog.showMessageBox(source!, {
-            type: "question", title: "保存修改", message: "文件有未保存的修改",
-            detail: String(p.file || ""), buttons: ["保存", "放弃", "取消"],
-            defaultId: 0, cancelId: 2, noLink: true,
+          const result = await showUiDialog(source, {
+            tone: "question",
+            title: "保存修改",
+            message: "文件有未保存的修改，是否保存？",
+            detail: String(p.file || ""),
+            buttons: [
+              { label: "保存", variant: "primary" },
+              { label: "放弃", variant: "danger" },
+              { label: "取消", variant: "default" },
+            ],
+            defaultId: 0,
+            cancelId: 2,
           });
           return ["save", "discard", "cancel"][result.response] || "cancel";
         }
         if (name === "editor.confirm-conflict") {
-          const result = await dialog.showMessageBox(source!, {
-            type: "warning", title: "文件已变化", message: "文件已被其他程序修改",
-            detail: `${String(p.file || "")}\n选择重新加载会放弃本编辑器中该文件的修改。`,
-            buttons: ["取消", "重新加载", "覆盖外部修改"],
-            defaultId: 0, cancelId: 0, noLink: true,
+          const result = await showUiDialog(source, {
+            tone: "warning",
+            title: "文件已变化",
+            message: "文件已被其他程序修改。选择重新加载会放弃本编辑器中该文件的修改。",
+            detail: String(p.file || ""),
+            buttons: [
+              { label: "取消", variant: "default" },
+              { label: "重新加载", variant: "primary" },
+              { label: "覆盖外部修改", variant: "danger" },
+            ],
+            defaultId: 0,
+            cancelId: 0,
           });
           return ["cancel", "reload", "overwrite"][result.response] || "cancel";
         }
@@ -743,24 +874,32 @@ if (!app.requestSingleInstanceLock()) {
         return { request: item.request, projectName: project.name };
       }
       case "git.confirm-save": {
-        const result = await dialog.showMessageBox(source || win, {
-          type: "question",
+        const result = await showUiDialog(source || win, {
+          tone: "question",
+          title: "保存代码修改",
           message: "代码已修改，是否保存？",
           detail: String(p.file || ""),
-          buttons: ["保存", "不保存", "继续编辑"],
+          buttons: [
+            { label: "保存", variant: "primary" },
+            { label: "不保存", variant: "danger" },
+            { label: "继续编辑", variant: "default" },
+          ],
           defaultId: 0,
           cancelId: 2,
-          noLink: true,
         });
         return ["save", "discard", "cancel"][result.response] || "cancel";
       }
       case "git.confirm-leave":
         return (
           (
-            await dialog.showMessageBox(source || win, {
-              type: "question",
+            await showUiDialog(source || win, {
+              tone: "warning",
+              title: "有未保存编辑",
               message: "编辑结果尚未保存，丢弃编辑并继续？",
-              buttons: ["保留编辑", "丢弃编辑"],
+              buttons: [
+                { label: "保留编辑", variant: "default" },
+                { label: "丢弃编辑", variant: "danger" },
+              ],
               defaultId: 0,
               cancelId: 0,
             })
@@ -832,11 +971,15 @@ if (!app.requestSingleInstanceLock()) {
         if (
           p.operation === "rollback" &&
           !(
-            await dialog.showMessageBox(source || win, {
-              type: "warning",
-              message: "回滚当前差异块？",
-              detail: `${await gitClient.tokenFile(project.path, p.token)} · 差异块 ${Number(p.hunk) + 1}\n仅撤销此块的未暂存修改，无法通过 Git 撤销。暂存区保留。`,
-              buttons: ["取消", "回滚此块"],
+            await showUiDialog(source || win, {
+              tone: "danger",
+              title: "回滚当前差异块",
+              message: "仅撤销此块的未暂存修改，无法通过 Git 撤销，暂存区内容保留。",
+              detail: `${await gitClient.tokenFile(project.path, p.token)} · 差异块 ${Number(p.hunk) + 1}`,
+              buttons: [
+                { label: "取消", variant: "default" },
+                { label: "回滚此块", variant: "danger" },
+              ],
               defaultId: 0,
               cancelId: 0,
             })
@@ -859,13 +1002,17 @@ if (!app.requestSingleInstanceLock()) {
         );
         if (
           !(
-            await dialog.showMessageBox(source || win, {
-              type: "question",
-              message: "保存结果并标记冲突已解决？",
-              detail: p.delete
-                ? `${file}\n接受此冲突的删除结果，将移除工作区文件并暂存删除。不会自动继续当前操作。`
-                : `${file}\n合并结果将写入工作区并暂存；不会自动继续当前操作。`,
-              buttons: ["取消", "保存并暂存"],
+            await showUiDialog(source || win, {
+              tone: "question",
+              title: "保存结果并标记冲突已解决",
+              message: p.delete
+                ? "接受此冲突的删除结果，将移除工作区文件并暂存删除。不会自动继续当前操作。"
+                : "合并结果将写入工作区并暂存，不会自动继续当前操作。",
+              detail: file,
+              buttons: [
+                { label: "取消", variant: "default" },
+                { label: "保存并暂存", variant: "primary" },
+              ],
               defaultId: 0,
               cancelId: 0,
             })
@@ -937,14 +1084,38 @@ if (!app.requestSingleInstanceLock()) {
         if (
           detail &&
           !(
-            await dialog.showMessageBox(source || win, {
-              type: "warning",
-              message: `确认 Git · ${gitOperationLabel(operation)}`,
-              detail,
-              buttons: ["取消", "确认执行"],
+            await showUiDialog(source || win, {
+              tone: [
+                "rollback",
+                "delete-branch",
+                "stash-drop",
+                "rebase",
+                "abort",
+                "skip",
+              ].includes(operation)
+                ? "danger"
+                : "warning",
+              title: `确认 Git · ${gitOperationLabel(operation)}`,
+              message: "请核对以下操作详情后再继续执行：",
+              detail: detail.trim(),
+              buttons: [
+                { label: "取消", variant: "default" },
+                {
+                  label: "确认执行",
+                  variant: [
+                    "rollback",
+                    "delete-branch",
+                    "stash-drop",
+                    "rebase",
+                    "abort",
+                    "skip",
+                  ].includes(operation)
+                    ? "danger"
+                    : "primary",
+                },
+              ],
               defaultId: 0,
               cancelId: 0,
-              noLink: true,
             })
           ).response
         )
@@ -955,6 +1126,7 @@ if (!app.requestSingleInstanceLock()) {
         return {
           config: config.get(),
           notes: store.list("note"),
+          prompts: store.list("prompt"),
           tasks: tasks.list(),
           dataDir,
           today: localDate(),
@@ -1004,8 +1176,13 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "删除记录",
-            `将此记录移入已删除列表，可在工作台恢复。\n\n${note.text.slice(0, 300)}`,
+            "将此记录移入已删除列表，可在工作台随时恢复。",
             "删除这条记录",
+            {
+              detail: note.text.slice(0, 300),
+              tone: "danger",
+              danger: true,
+            },
           ))
         )
           return null;
@@ -1017,6 +1194,39 @@ if (!app.requestSingleInstanceLock()) {
         const n = records.restore(p.id);
         changed();
         return n;
+      }
+      case "prompt.save": {
+        const saved = prompts.save(p);
+        changed();
+        return saved;
+      }
+      case "prompt.star": {
+        const updated = prompts.star(p.id, !!p.starred);
+        changed();
+        return updated;
+      }
+      case "prompt.delete": {
+        const prompt = prompts.get(p.id);
+        if (
+          !(await ask(
+            "移至已删除？",
+            `「${prompt.title}」之后可在已删除列表中恢复。`,
+            "移至已删除",
+            {
+              tone: "danger",
+              danger: true,
+            },
+          ))
+        )
+          return null;
+        const removed = prompts.remove(prompt.id);
+        changed();
+        return removed;
+      }
+      case "prompt.restore": {
+        const restored = prompts.restore(p.id);
+        changed();
+        return restored;
       }
       case "monthly.get": {
         const draft = records.draft(p.month, config.get().name);
@@ -1103,8 +1313,12 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "恢复本地配置保护",
-            `工作目录：${project.path}\n恢复批次：${p.id}\n仅从对应备份恢复 ${policy.protectedFile} 和原 Git 标志。不会重复应用 stash、提交或推送。`,
+            `仅从对应备份恢复 ${policy.protectedFile} 和原 Git 标志。不会重复应用 stash、提交或推送。`,
             "恢复配置",
+            {
+              detail: `工作目录：${project.path}\n恢复批次：${p.id}`,
+              tone: "question",
+            },
           ))
         )
           return null;
@@ -1115,8 +1329,12 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "确认已在外部处理恢复事项",
-            `工作目录：${project.path}\n批次：${p.id}\n请先在原工具核对本地改动完整性、合并状态和保留的 stash。此操作仅记录人工确认，不应用或删除 stash。`,
+            "请先在原工具核对本地改动完整性、合并状态和保留的 stash。此操作仅记录人工确认，不应用或删除 stash。",
             "我已核对并处理",
+            {
+              detail: `工作目录：${project.path}\n批次：${p.id}`,
+              tone: "warning",
+            },
           ))
         )
           return null;
@@ -1503,8 +1721,12 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "恢复工作台数据",
-            `备份：${preview.file}\n日期：${preview.manifest.createdAt}\n将替换记录、配置、月报、审查及任务历史，先保存当前完整备份。源码、远端、APK 和原 TXT 不受影响。`,
+            "将替换记录、提示词、配置、月报、审查及任务历史，并先保存当前完整备份。源码、远端、APK 和原 TXT 不受影响。",
             "备份当前数据并恢复",
+            {
+              detail: `备份：${preview.file}\n日期：${preview.manifest.createdAt}`,
+              tone: "warning",
+            },
           ))
         )
           return null;
@@ -1518,30 +1740,48 @@ if (!app.requestSingleInstanceLock()) {
           String(p.title || "确认").slice(0, 100),
           String(p.message || "").slice(0, 4000),
           String(p.confirm || "确认").slice(0, 50),
+          {
+            detail: p.detail ? String(p.detail).slice(0, 4000) : undefined,
+            target: source || win,
+          },
         );
       case "ui.choose": {
-        const buttons = (Array.isArray(p.buttons) ? p.buttons : ["取消"])
+        const labels: string[] = (Array.isArray(p.buttons) ? p.buttons : ["取消"])
           .map((item: unknown) => String(item).slice(0, 20))
           .filter(Boolean)
           .slice(0, 4);
-        if (!buttons.length) buttons.push("取消");
-        const result = await dialog.showMessageBox(win, {
-          type: "question",
+        if (!labels.length) labels.push("取消");
+        const defaultId = Math.min(
+          Math.max(0, Number(p.defaultId ?? labels.length - 1) || 0),
+          labels.length - 1,
+        );
+        const buttons: UiDialogButton[] = labels.map((label, idx) => ({
+          label,
+          variant:
+            idx === 0
+              ? "default"
+              : /删除|移除|丢弃|回滚/.test(label)
+                ? "danger"
+                : idx === defaultId
+                  ? "primary"
+                  : "default",
+        }));
+        const result = await showUiDialog(source || win, {
+          tone: "question",
           title: String(p.title || "确认").slice(0, 100),
           message: String(p.message || "").slice(0, 4000),
+          detail: p.detail ? String(p.detail).slice(0, 4000) : undefined,
           buttons,
-          defaultId: Math.min(
-            Math.max(0, Number(p.defaultId ?? buttons.length - 1) || 0),
-            buttons.length - 1,
-          ),
+          defaultId,
           cancelId: 0,
-          noLink: true,
         });
         return result.response;
       }
-      case "clipboard.text":
-        clipboard.writeText(String(p.text || ""));
+      case "clipboard.text": {
+        const text = typeof p?.text === "string" ? p.text : String(p?.text ?? "");
+        clipboard.writeText(text);
         return { copied: true };
+      }
       case "window.minimize":
         win.minimize();
         return true;
@@ -1608,12 +1848,12 @@ if (!app.requestSingleInstanceLock()) {
     const workArea = screen.getPrimaryDisplay().workAreaSize;
     win = new BrowserWindow({
       width: Math.min(saved?.width || 1440, workArea.width),
-      height: Math.min(saved?.height || 900, workArea.height),
+      height: Math.min(saved?.height || 860, workArea.height),
       minWidth: Math.min(960, workArea.width),
-      minHeight: Math.min(680, workArea.height),
+      minHeight: Math.min(640, workArea.height),
       frame: false,
       title: "个人工作台",
-      backgroundColor: "#f5f7fa",
+      backgroundColor: "#f9fafc",
       icon: windowIcon,
       show: false,
       webPreferences: {
@@ -1772,8 +2012,8 @@ if (!app.requestSingleInstanceLock()) {
             win.close();
             return;
           }
-          const result = await dialog.showMessageBox(win, {
-            type: "question",
+          const result = await showUiDialog(win, {
+            tone: "warning",
             title: "退出个人工作台",
             message: `仍有 ${active.length} 个运行或待确认任务，${owned.length} 个工作台拥有的项目进程。`,
             detail: [
@@ -1784,13 +2024,12 @@ if (!app.requestSingleInstanceLock()) {
               "Git 写命令将完成当前命令后停止后续步骤。外部实例不由工作台停止。",
             ].join("\n"),
             buttons: [
-              "取消退出",
-              "安全结束任务并停止自有服务",
-              "安全结束任务，保留项目服务并退出",
+              { label: "取消退出", variant: "default" },
+              { label: "安全结束任务并停止自有服务", variant: "danger" },
+              { label: "安全结束任务，保留项目服务并退出", variant: "primary" },
             ],
             defaultId: 0,
             cancelId: 0,
-            noLink: true,
           });
           if (result.response === 0) return;
           for (const t of active) tasks.cancel(t.id);
@@ -1801,10 +2040,14 @@ if (!app.requestSingleInstanceLock()) {
           exiting = true;
           win.close();
         } catch (e) {
-          await dialog.showMessageBox(win, {
-            type: "error",
-            message: "尚未退出，请核对任务状态",
+          await showUiDialog(win, {
+            tone: "error",
+            title: "尚未退出",
+            message: "尚未退出，请核对任务状态。",
             detail: redact(errorText(e)),
+            buttons: [{ label: "知道了", variant: "primary" }],
+            defaultId: 0,
+            cancelId: 0,
           });
         } finally {
           closeDialog = false;

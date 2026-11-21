@@ -2,10 +2,13 @@ import { reactive, ref } from "vue";
 import type {
   Configuration,
   Note,
+  Prompt,
   Task,
   RunInfo,
+  UiDialogTone,
   WorkbenchApi,
 } from "../shared/types";
+import { openUiDialog, type OpenDialogOptions } from "./dialog";
 declare global {
   interface Window {
     workbench: WorkbenchApi;
@@ -15,6 +18,7 @@ declare global {
 export const model = reactive<{
   config: Configuration | null;
   notes: Note[];
+  prompts: Prompt[];
   tasks: Task[];
   runs: RunInfo[];
   dataDir: string;
@@ -25,6 +29,7 @@ export const model = reactive<{
 }>({
   config: null,
   notes: [],
+  prompts: [],
   tasks: [],
   runs: [],
   dataDir: "",
@@ -88,8 +93,35 @@ export async function navigate(page: string, params: Record<string, any> = {}) {
   route.value = page;
   context.value = params;
 }
-export const confirm = (title: string, message: string, button = "确认") =>
-  call<boolean>("ui.confirm", { title, message, confirm: button });
+export const confirm = (
+  title: string,
+  message: string,
+  button = "确认",
+  options: { detail?: string; tone?: UiDialogTone; danger?: boolean } = {},
+) => {
+  const isDanger =
+    options.danger ?? /删除|移除|丢弃|回滚|清空|覆盖/.test(button);
+  const tone: UiDialogTone =
+    options.tone ||
+    (isDanger
+      ? /删除|移除|回滚/.test(button)
+        ? "danger"
+        : "warning"
+      : "question");
+  return openUiDialog({
+    tone,
+    title,
+    message,
+    detail: options.detail,
+    buttons: [
+      { label: "取消", variant: "default" },
+      { label: button, variant: isDanger ? "danger" : "primary" },
+    ],
+    defaultId: 0,
+    cancelId: 0,
+  }).then((idx) => idx === 1);
+};
+export const choose = (options: OpenDialogOptions) => openUiDialog(options);
 export function openRecord(preset: Partial<Note> = {}) {
   recordModal.value = {
     kind: "work",

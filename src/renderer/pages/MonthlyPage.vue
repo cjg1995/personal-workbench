@@ -1,6 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { MonthlyDraft, MonthlyImage, Note } from "../../shared/types";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+} from "vue";
+import type {
+  MonthlyDraft,
+  MonthlyEntry,
+  MonthlyImage,
+  Note,
+} from "../../shared/types";
 import { sections } from "../../shared/types";
 import {
   attempt,
@@ -12,7 +23,9 @@ import {
   notify,
   setGuard,
 } from "../state";
+import { formatMonthDay, formatMonthTitle, splitNoteText } from "../format";
 import Icon from "../components/Icon.vue";
+
 const month = ref(context.value.month || model.today.slice(0, 7)),
   draft = ref<MonthlyDraft | null>(null),
   materials = ref<Note[]>([]),
@@ -21,11 +34,18 @@ const month = ref(context.value.month || model.today.slice(0, 7)),
   section = ref("其他"),
   saveState = ref(""),
   dirty = ref(false),
-  loading = ref(true);
+  loading = ref(true),
+  editingEntryId = ref<string | null>(null),
+  entryMenuId = ref<string | null>(null),
+  monthPickerOpen = ref(false),
+  pickerYear = ref(Number(month.value.slice(0, 4)) || new Date().getFullYear());
+
 const imageInput = ref<HTMLInputElement | null>(null),
   imageBusy = ref(false),
   imageError = ref("");
 const maxImageWidth = 1240;
+
+const monthTitle = computed(() => formatMonthTitle(month.value));
 const images = computed(() => draft.value?.images ?? []);
 const shotUrls = computed(() => {
   const urls = new Map<string, string>();
@@ -33,19 +53,28 @@ const shotUrls = computed(() => {
     urls.set(image.id, `data:${image.mime};base64,${image.data}`);
   return urls;
 });
+
 let timer: ReturnType<typeof setTimeout> | undefined;
 let pending: Promise<void> | null = null,
   unmounted = false;
+
 const linked = computed(
   () => new Set(draft.value?.entries.flatMap((e) => e.sourceIds) || []),
 );
+const linkedInMonthCount = computed(
+  () => materials.value.filter((n) => linked.value.has(n.id)).length,
+);
+
 const stateClass = computed(() =>
   saveState.value.includes("失败")
     ? "error"
-    : saveState.value.includes("待保存") || saveState.value.includes("新修改")
+    : saveState.value.includes("待保存") ||
+        saveState.value.includes("新修改") ||
+        saveState.value.includes("保存中")
       ? "pending"
       : "",
 );
+
 const selectableMaterials = computed(() =>
   materials.value.filter((n) => !linked.value.has(n.id)),
 );
@@ -57,11 +86,45 @@ const allSelected = computed(
 const someSelected = computed(
   () => selected.value.length > 0 && !allSelected.value,
 );
+
 function toggleAll(event: Event) {
   selected.value = (event.target as HTMLInputElement).checked
     ? selectableMaterials.value.map((n) => n.id)
     : [];
 }
+
+function toggleMaterial(note: Note) {
+  if (linked.value.has(note.id)) return;
+  selected.value = selected.value.includes(note.id)
+    ? selected.value.filter((id) => id !== note.id)
+    : [...selected.value, note.id];
+}
+
+function entriesIn(sec: string): MonthlyEntry[] {
+  return draft.value?.entries.filter((e) => e.section === sec) || [];
+}
+
+function entrySourceLabel(entry: MonthlyEntry): string {
+  if (entry.manual || !entry.sourceIds.length) return "手动补充";
+  const found = entry.sourceIds
+    .map(
+      (id) =>
+        materials.value.find((m) => m.id === id) ||
+        model.notes.find((n) => n.id === id),
+    )
+    .filter((n): n is Note => !!n);
+  if (found.length === 1 && found[0].happenedOn) {
+    return `来源于 ${formatMonthDay(found[0].happenedOn, false)}工作记录`;
+  }
+  if (found.length > 1) {
+    const firstDate = found.find((n) => !!n.happenedOn)?.happenedOn;
+    return firstDate
+      ? `来源于 ${entry.sourceIds.length} 条工作记录（${formatMonthDay(firstDate, false)}等）`
+      : `来源于 ${entry.sourceIds.length} 条工作记录`;
+  }
+  return `来源于 ${entry.sourceIds.length} 条工作记录`;
+}
+
 async function flush() {
   if (timer) clearTimeout(timer);
   if (pending) await pending;
@@ -91,6 +154,7 @@ async function flush() {
     pending = null;
   }
 }
+
 async function guard() {
   try {
     await flush();
@@ -107,7 +171,14 @@ async function guard() {
     return false;
   }
 }
+
 setGuard(guard);
+
+function closePopovers() {
+  entryMenuId.value = null;
+  monthPickerOpen.value = false;
+}
+
 onBeforeUnmount(() => {
   unmounted = true;
   setGuard(null);
@@ -115,7 +186,9 @@ onBeforeUnmount(() => {
   document.removeEventListener("paste", pasteEverywhere);
   document.removeEventListener("dragover", guardDrag);
   document.removeEventListener("drop", dropEverywhere);
+  window.removeEventListener("click", closePopovers);
 });
+
 function edited() {
   dirty.value = true;
   saveState.value = "待保存";
@@ -124,6 +197,7 @@ function edited() {
     if (!unmounted) void attempt(flush);
   }, 650);
 }
+
 async function load(replace = true) {
   loading.value = true;
   await attempt(async () => {
@@ -136,28 +210,57 @@ async function load(replace = true) {
       draft.value = data.draft;
       draft.value!.images ??= [];
       dirty.value = false;
-      saveState.value = draft.value!.entries.length ? "草稿已读取" : "";
+      saveState.value = draft.value!.entries.length ? "草稿已保存" : "";
       selected.value = [];
+      editingEntryId.value = null;
+      entryMenuId.value = null;
     }
   });
   loading.value = false;
 }
+
 onMounted(() => {
   document.addEventListener("paste", pasteEverywhere);
   document.addEventListener("dragover", guardDrag);
   document.addEventListener("drop", dropEverywhere);
+  window.addEventListener("click", closePopovers);
   void load();
 });
-async function changeMonth(event: Event) {
-  const next = (event.target as HTMLInputElement).value;
+
+async function selectMonthValue(next: string) {
+  if (!next || next === month.value) {
+    monthPickerOpen.value = false;
+    return;
+  }
+  if (!(await guard())) return;
+  month.value = next;
+  pickerYear.value = Number(next.slice(0, 4)) || pickerYear.value;
+  monthPickerOpen.value = false;
+  await load();
+}
+
+async function changeMonthInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const next = input.value;
   if (!next) return;
   if (!(await guard())) {
-    (event.target as HTMLInputElement).value = month.value;
+    input.value = month.value;
     return;
   }
   month.value = next;
+  pickerYear.value = Number(next.slice(0, 4)) || pickerYear.value;
+  monthPickerOpen.value = false;
   await load();
 }
+
+function toggleMonthPicker() {
+  if (!monthPickerOpen.value) {
+    pickerYear.value =
+      Number(month.value.slice(0, 4)) || new Date().getFullYear();
+  }
+  monthPickerOpen.value = !monthPickerOpen.value;
+}
+
 async function addSources() {
   await attempt(async () => {
     await flush();
@@ -174,29 +277,76 @@ async function addSources() {
     notify("已按原文加入正文，可继续编辑");
   });
 }
-function addManual(section: string) {
+
+async function addManual(targetSection: string) {
   if (!draft.value) return;
+  const id = crypto.randomUUID();
   draft.value.entries.push({
-    id: crypto.randomUUID(),
-    section,
+    id,
+    section: targetSection,
     text: "",
     sourceIds: [],
     sourceVersions: {},
     manual: true,
   });
+  editingEntryId.value = id;
   edited();
+  await nextTick();
+  document
+    .querySelector<HTMLTextAreaElement>(`[data-entry-id="${id}"] textarea`)
+    ?.focus();
 }
-function move(entryId: string, delta: number) {
+
+async function startEditEntry(id: string) {
+  editingEntryId.value = id;
+  entryMenuId.value = null;
+  await nextTick();
+  document
+    .querySelector<HTMLTextAreaElement>(`[data-entry-id="${id}"] textarea`)
+    ?.focus();
+}
+
+function toggleEditEntry(id: string) {
+  if (editingEntryId.value === id) {
+    editingEntryId.value = null;
+  } else {
+    void startEditEntry(id);
+  }
+}
+
+function toggleEntryMenu(id: string) {
+  entryMenuId.value = entryMenuId.value === id ? null : id;
+}
+
+function moveInSection(entry: MonthlyEntry, delta: number) {
   if (!draft.value) return;
-  const list = draft.value.entries,
-    i = list.findIndex((e) => e.id === entryId),
-    j = i + delta;
-  if (j < 0 || j >= list.length) return;
+  const list = draft.value.entries;
+  const sameSectionIndices: number[] = [];
+  list.forEach((item, idx) => {
+    if (item.section === entry.section) sameSectionIndices.push(idx);
+  });
+  const pos = sameSectionIndices.findIndex(
+    (idx) => list[idx].id === entry.id,
+  );
+  const targetPos = pos + delta;
+  if (pos < 0 || targetPos < 0 || targetPos >= sameSectionIndices.length)
+    return;
+  const i = sameSectionIndices[pos],
+    j = sameSectionIndices[targetPos];
   [list[i], list[j]] = [list[j], list[i]];
   edited();
+  entryMenuId.value = null;
 }
+
+function canMoveInSection(entry: MonthlyEntry, delta: number) {
+  const list = entriesIn(entry.section);
+  const idx = list.findIndex((item) => item.id === entry.id);
+  return idx >= 0 && idx + delta >= 0 && idx + delta < list.length;
+}
+
 async function remove(entryId: string) {
   if (!draft.value) return;
+  entryMenuId.value = null;
   if (
     !(await confirm(
       "删除月报条目",
@@ -206,8 +356,10 @@ async function remove(entryId: string) {
   )
     return;
   draft.value.entries = draft.value.entries.filter((e) => e.id !== entryId);
+  if (editingEntryId.value === entryId) editingEntryId.value = null;
   edited();
 }
+
 async function shrinkShot(file: Blob, order: number): Promise<MonthlyImage> {
   const bitmap = await createImageBitmap(file);
   try {
@@ -217,11 +369,11 @@ async function shrinkShot(file: Blob, order: number): Promise<MonthlyImage> {
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("当前环境无法处理图片");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(bitmap, 0, 0, width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("当前环境无法处理图片");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
     const url = canvas.toDataURL(
       file.type === "image/png" ? "image/png" : "image/jpeg",
       0.92,
@@ -238,6 +390,7 @@ async function shrinkShot(file: Blob, order: number): Promise<MonthlyImage> {
     bitmap.close();
   }
 }
+
 async function addShots(list: Array<File | Blob>) {
   if (!draft.value || imageBusy.value) return;
   const candidates = list.filter((file) => file.type.startsWith("image/"));
@@ -252,13 +405,16 @@ async function addShots(list: Array<File | Blob>) {
     const shot = await shrinkShot(candidates[0], 1);
     (draft.value.images ??= []).splice(0, draft.value.images.length, shot);
     edited();
-    notify(replaced ? "已用新截图替换原截图" : "已加入截图，导出 Word 时自动带上");
+    notify(
+      replaced ? "已用新截图替换原截图" : "已加入截图，导出 Word 时自动带上",
+    );
   } catch (e) {
     imageError.value = e instanceof Error ? e.message : String(e);
   } finally {
     imageBusy.value = false;
   }
 }
+
 function clipboardShots(event: ClipboardEvent) {
   return Array.from(event.clipboardData?.items || [])
     .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
@@ -306,6 +462,7 @@ function removeShot(shotId: string) {
   imageError.value = "";
   edited();
 }
+
 async function exportFile() {
   await attempt(async () => {
     await flush();
@@ -315,198 +472,651 @@ async function exportFile() {
     notify(result ? "文件已写入：" + result.path : "已取消导出");
   });
 }
+
+const majorSections = [
+  { key: sections[2], heading: "二、个人学习和成长" },
+  { key: sections[3], heading: "三、个人工作计划、学习目标" },
+  { key: sections[4], heading: "四、部门工作中存在问题及改进建议" },
+];
 </script>
+
 <template>
   <div class="monthly-page">
-  <div class="toolbar">
-    <input
-      type="month"
-      :value="month"
-      aria-label="月报月份"
-      @change="changeMonth"
-    /><span
-      v-if="saveState"
-      class="save-state"
-      :class="stateClass"
-      role="status"
-      >{{ saveState }}</span
-    >
-    <div class="row push-right">
-      <button class="primary" :disabled="!draft" @click="exportFile()">
-        导出 Word
-      </button>
-    </div>
-  </div>
-  <div v-if="draft" class="monthly-layout">
-    <section>
-      <div class="section-head">
-        <h2>本月素材</h2>
-        <button class="link small" @click="load(false)">刷新</button>
-      </div>
-      <div v-if="materials.length" class="material-select-all">
-        <label>
-          <input
-            type="checkbox"
-            :checked="allSelected"
-            :indeterminate="someSelected"
-            :disabled="!selectableMaterials.length"
-            aria-label="全选本月素材"
-            @change="toggleAll"
-          />
-          <span
-            >全选<small class="muted"
-              >{{ selected.length }} / {{ selectableMaterials.length }}</small
-            ></span
-          >
-        </label>
-      </div>
-      <p v-if="undated" class="inline-note warn">
-        {{ undated }} 条记录日期待补充，尚未计入本月。<button
-          class="link"
-          @click="navigate('work', { tab: 'undated' })"
-        >
-          去补日期
-        </button>
-      </p>
-      <div class="material-scroll">
-      <p v-if="!materials.length" class="empty compact">
-        本月还没有日期明确的工作记录。
-      </p>
-      <div v-for="n in materials" :key="n.id" class="material">
-        <label
-          ><span
-            v-if="linked.has(n.id)"
-            class="material-check"
-            aria-hidden="true"
-            ><Icon name="check" :size="13" /></span
-          ><input
-            v-else
-            v-model="selected"
-            type="checkbox"
-            :value="n.id"
-          /><span
-            ><time class="date">{{ n.happenedOn }}</time
-            >{{ n.text }}</span
-          ></label
-        >
-      </div>
-      </div>
-      <div v-if="materials.length" class="material-actions">
-        <label class="field-stack"
-          ><select v-model="section" aria-label="放入章节" :title="section">
-            <button type="button">
-              <selectedcontent></selectedcontent>
-            </button>
-            <option v-for="s in sections" :key="s">{{ s }}</option>
-          </select></label
-        ><button
-          class="primary"
-          :disabled="!selected.length"
-          @click="addSources"
-        >
-          {{ selected.length ? "加入正文 " + selected.length : "加入正文" }}
-        </button>
-      </div>
-    </section>
-    <section>
-      <h2 class="doc-first">一、工作成果</h2>
-      <div class="shot-block">
-        <ul v-if="images.length" class="shot-list">
-          <li v-for="shot in images" :key="shot.id" class="shot-item">
-            <img :src="shotUrls.get(shot.id)" :alt="shot.name" />
-            <button
-              class="shot-remove"
-              aria-label="移除截图"
-              title="移除这张截图"
-              @click="removeShot(shot.id)"
-            >
-              <Icon name="close" :size="12" />
-            </button>
-          </li>
-        </ul>
-        <div
-          v-else
-          class="shot-zone"
-          :class="{ busy: imageBusy }"
-          tabindex="0"
-          aria-label="粘贴钉钉工作内容汇总截图"
-          @paste="onPaste"
-          @dragover.prevent
-          @drop="onDrop"
-        >
-          <span class="shot-hint"
-            ><Icon name="image" :size="15" /><span v-if="imageBusy"
-              >正在处理截图…</span
-            ><span v-else>粘贴钉钉「工作内容汇总」截图</span></span
-          >
-          <small class="shot-tip">Ctrl+V 或拖入，导出 Word 时自动带上。</small>
-          <button class="link small" @click="pickShots">选择图片…</button>
+    <div class="page-head">
+      <div>
+        <h1>月度总结</h1>
+        <div class="h-meta">
+          <span>{{ materials.length }} 条工作素材</span>
+          <i class="sep-dot" aria-hidden="true" />
+          <span>{{ linkedInMonthCount }} 条已加入正文</span>
         </div>
-        <p v-if="imageError" class="inline-note warn">{{ imageError }}</p>
-        <input
-          ref="imageInput"
-          class="shot-input"
-          type="file"
-          accept="image/*"
-          aria-hidden="true"
-          tabindex="-1"
-          @change="onPickShots"
-        />
       </div>
-      <template v-for="(s, index) in sections" :key="s">
-        <h3 v-if="index < 2">{{ index + 1 }}. {{ s }}</h3>
-        <h2 v-else class="section-rule">
-          {{ index === 2 ? "二、" : index === 3 ? "三、" : "四、" }}{{ s }}
-        </h2>
-        <div
-          v-for="e in draft.entries.filter((e) => e.section === s)"
-          :key="e.id"
-          class="monthly-entry"
+
+      <div class="h-actions month-actions">
+        <span
+          v-if="saveState"
+          class="saved"
+          :class="stateClass"
+          role="status"
         >
-          <textarea
-            v-model="e.text"
-            rows="1"
-            :aria-label="s + '正文'"
-            placeholder="在此人工编辑正文…"
-            @input="edited"
+          <Icon
+            :name="
+              stateClass === 'error'
+                ? 'warning'
+                : stateClass === 'pending'
+                  ? 'clock'
+                  : 'check-circle'
+            "
+            :size="14"
           />
-          <div class="row">
-            <small class="muted">{{
-              e.manual ? "手动补充" : "来源 " + e.sourceIds.length + " 条"
-            }}</small
-            ><select
-              v-model="e.section"
-              aria-label="调整条目章节"
-              @change="edited"
+          <span>{{ saveState }}</span>
+        </span>
+
+        <div class="month-btn-wrap" @click.stop>
+          <button
+            type="button"
+            class="btn"
+            aria-label="选择月报月份"
+            :aria-expanded="monthPickerOpen"
+            @click="toggleMonthPicker"
+          >
+            <Icon name="calendar2" :size="15" />
+            <span>{{ monthTitle.label }}</span>
+            <Icon name="down" :size="12" />
+          </button>
+
+          <div
+            v-if="monthPickerOpen"
+            class="month-popover right"
+            role="dialog"
+            aria-label="切换月报月份"
+          >
+            <div class="month-popover-head">
+              <button
+                type="button"
+                class="icon-btn small blank"
+                aria-label="上一年"
+                @click="pickerYear--"
+              >
+                <Icon name="arrow-left" :size="13" />
+              </button>
+              <strong>{{ pickerYear }} 年</strong>
+              <button
+                type="button"
+                class="icon-btn small blank"
+                aria-label="下一年"
+                @click="pickerYear++"
+              >
+                <Icon name="arrow-right" :size="13" />
+              </button>
+            </div>
+            <div class="month-popover-grid">
+              <button
+                v-for="m in 12"
+                :key="m"
+                type="button"
+                :class="{
+                  active:
+                    month === `${pickerYear}-${String(m).padStart(2, '0')}`,
+                }"
+                @click="
+                  selectMonthValue(
+                    `${pickerYear}-${String(m).padStart(2, '0')}`,
+                  )
+                "
+              >
+                {{ m }} 月
+              </button>
+            </div>
+            <div class="month-popover-foot">
+              <input
+                type="month"
+                class="month-native-input"
+                :value="month"
+                aria-label="月报月份"
+                @change="changeMonthInput"
+              />
+              <button
+                type="button"
+                class="text-action"
+                @click="selectMonthValue(model.today.slice(0, 7))"
+              >
+                本月
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="!draft"
+          @click="exportFile()"
+        >
+          <Icon name="download" :size="15" />导出 Word
+        </button>
+      </div>
+    </div>
+
+    <div v-if="draft" class="duo monthly-layout">
+      <!-- 左栏：本月素材 -->
+      <section class="card pane">
+        <div class="panel-head">
+          <div class="head-title">
+            <Icon name="stack" :size="17" />
+            <h2>本月素材</h2>
+            <span class="count">{{ materials.length }}</span>
+          </div>
+          <button
+            type="button"
+            class="icon-btn blank"
+            title="刷新素材"
+            aria-label="刷新素材"
+            @click="load(false)"
+          >
+            <Icon name="refresh" :size="15" />
+          </button>
+        </div>
+
+        <div v-if="materials.length" class="all-materials">
+          <label>
+            <input
+              type="checkbox"
+              :checked="allSelected"
+              :indeterminate="someSelected"
+              :disabled="!selectableMaterials.length"
+              aria-label="全选可用素材"
+              @change="toggleAll"
+            />
+            <span>全选可用素材</span>
+          </label>
+          <span class="push" />
+          <span>已选 {{ selected.length }} / {{ selectableMaterials.length }}</span>
+        </div>
+
+        <div v-if="undated" class="material-undated">
+          <span>{{ undated }} 条记录缺少日期，未计入本月</span>
+          <button
+            type="button"
+            class="text-action"
+            @click="navigate('work', { month: '' })"
+          >
+            查看全部记录
+          </button>
+        </div>
+
+        <div class="material-list">
+          <div v-if="!materials.length" class="empty" style="margin: auto">
+            <span class="empty-icon"><Icon name="stack" :size="16" /></span>
+            <p class="empty-title">{{ monthTitle.label }}暂无可用素材</p>
+            <p class="empty-hint">带有发生日期的工作记录会自动汇总到这里。</p>
+          </div>
+
+          <div
+            v-for="n in materials"
+            :key="n.id"
+            class="material-item material"
+            :class="{
+              sel: selected.includes(n.id),
+              linked: linked.has(n.id),
+            }"
+            @click="toggleMaterial(n)"
+          >
+            <span
+              v-if="linked.has(n.id)"
+              class="check-mark linked"
+              title="已加入正文"
+              aria-label="已加入正文"
             >
-              <option v-for="section in sections" :key="section">
-                {{ section }}
-              </option></select
-            ><button aria-label="上移条目" @click="move(e.id, -1)">↑</button
-            ><button aria-label="下移条目" @click="move(e.id, 1)">↓</button
-            ><button class="danger text-button" @click="remove(e.id)">
-              移除
+              <Icon name="check" :size="11" />
+            </span>
+            <input
+              v-else
+              v-model="selected"
+              type="checkbox"
+              :value="n.id"
+              :aria-label="'选择素材 ' + splitNoteText(n.text).title"
+              @click.stop
+            />
+            <div class="grow">
+              <div class="date">
+                <span>{{ formatMonthDay(n.happenedOn, true) }}</span>
+                <span v-if="linked.has(n.id)" class="tag live">已加入正文</span>
+              </div>
+              <strong>{{ splitNoteText(n.text).title }}</strong>
+              <p v-if="splitNoteText(n.text).body">
+                {{ splitNoteText(n.text).body }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="material-foot">
+          <span class="section-label">加入章节</span>
+          <div class="row">
+            <select
+              v-model="section"
+              aria-label="放入章节"
+              :title="section"
+            >
+              <option v-for="s in sections" :key="s" :value="s">
+                {{ s }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="btn light-brand"
+              :disabled="!selected.length"
+              @click="addSources"
+            >
+              <Icon name="plus" :size="13" />
+              {{
+                selected.length ? `加入正文 · ${selected.length}` : "加入正文"
+              }}
             </button>
           </div>
         </div>
-        <p
-          v-if="!draft.entries.some((e) => e.section === s)"
-          class="small muted"
-        >
-          留空待填写。
-        </p>
-        <button class="link small" @click="addManual(s)">
-          ＋ 手动补充
-        </button></template
-      >
-    </section>
-  </div>
-  <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
-  <div v-else class="empty">
-    <span class="empty-icon"><Icon name="chart" :size="16" /></span>
-    <p class="empty-title">暂时没有月报草稿</p>
-    <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
-    <button class="link" @click="load()">重新读取</button>
-  </div>
+      </section>
+
+      <!-- 右栏：文档式正文纸面编辑区 -->
+      <div class="card paper-desk">
+        <article class="paper">
+          <div class="doc-heading">
+            <div>
+              <div class="doc-date">{{ monthTitle.label }}</div>
+              <h2>工作总结</h2>
+            </div>
+            <Icon name="document" :size="29" />
+          </div>
+
+          <!-- 一、工作成果 -->
+          <section>
+            <div class="doc-section-head">
+              <b>一、工作成果</b>
+            </div>
+
+            <!-- 截图区 -->
+            <div class="shot-block">
+              <ul v-if="images.length" class="shot-list">
+                <li v-for="shot in images" :key="shot.id" class="shot-item">
+                  <img :src="shotUrls.get(shot.id)" :alt="shot.name" />
+                  <button
+                    type="button"
+                    class="shot-remove"
+                    aria-label="移除截图"
+                    title="移除这张截图"
+                    @click="removeShot(shot.id)"
+                  >
+                    <Icon name="close" :size="12" />
+                  </button>
+                </li>
+              </ul>
+
+              <div
+                v-else
+                class="drop-zone"
+                :class="{ busy: imageBusy }"
+                tabindex="0"
+                aria-label="粘贴钉钉工作内容汇总截图"
+                @paste="onPaste"
+                @dragover.prevent
+                @drop="onDrop"
+              >
+                <div class="drop-icon"><Icon name="image" :size="20" /></div>
+                <div>
+                  <b>{{
+                    imageBusy ? "正在处理截图…" : "钉钉「工作内容汇总」截图"
+                  }}</b>
+                  <small>按 Ctrl + V 粘贴或拖入，导出 Word 时随正文附上。</small>
+                </div>
+                <span class="push" />
+                <button
+                  type="button"
+                  class="text-action"
+                  @click="pickShots"
+                >
+                  <Icon name="plus" :size="11" />选择图片
+                </button>
+              </div>
+
+              <p v-if="imageError" class="inline-note warn">{{ imageError }}</p>
+              <input
+                ref="imageInput"
+                class="shot-input"
+                type="file"
+                accept="image/*"
+                aria-hidden="true"
+                tabindex="-1"
+                @change="onPickShots"
+              />
+            </div>
+
+            <!-- 1. 主要工作 / 2. 其他 -->
+            <template v-for="(s, idx) in sections.slice(0, 2)" :key="s">
+              <div class="doc-section-head minor">
+                <b>{{ idx + 1 }}. {{ s }}</b>
+                <button
+                  type="button"
+                  class="text-action"
+                  @click="addManual(s)"
+                >
+                  <Icon name="plus" :size="11" />手动补充
+                </button>
+              </div>
+
+              <div
+                v-for="e in entriesIn(s)"
+                :key="e.id"
+                :data-entry-id="e.id"
+                class="doc-entry monthly-entry"
+              >
+                <template v-if="editingEntryId === e.id || !e.text.trim()">
+                  <textarea
+                    v-model="e.text"
+                    rows="2"
+                    :aria-label="s + '正文'"
+                    placeholder="在此人工编辑正文…"
+                    @input="edited"
+                  />
+                  <div class="entry-inline-controls">
+                    <select
+                      v-model="e.section"
+                      aria-label="调整条目章节"
+                      @change="edited"
+                    >
+                      <option v-for="sec in sections" :key="sec" :value="sec">
+                        {{ sec }}
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="btn compact"
+                      aria-label="上移条目"
+                      :disabled="!canMoveInSection(e, -1)"
+                      @click="moveInSection(e, -1)"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      class="btn compact"
+                      aria-label="下移条目"
+                      :disabled="!canMoveInSection(e, 1)"
+                      @click="moveInSection(e, 1)"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      class="delete-action"
+                      @click="remove(e.id)"
+                    >
+                      移除
+                    </button>
+                    <button
+                      v-if="e.text.trim()"
+                      type="button"
+                      class="btn light-brand compact push"
+                      @click="editingEntryId = null"
+                    >
+                      完成编辑
+                    </button>
+                  </div>
+                </template>
+
+                <template v-else>
+                  <p class="doc-entry-text" @click="startEditEntry(e.id)">
+                    {{ e.text }}
+                  </p>
+                </template>
+
+                <div class="source-note">
+                  <Icon :name="e.manual ? 'penbox' : 'link'" :size="11" />
+                  <span>{{ entrySourceLabel(e) }}</span>
+                  <span class="entry-tools" @click.stop>
+                    <button
+                      type="button"
+                      class="text-action"
+                      @click="toggleEditEntry(e.id)"
+                    >
+                      <Icon name="penbox" :size="11" />
+                      {{ editingEntryId === e.id ? "收起编辑" : "编辑条目" }}
+                    </button>
+                    <button
+                      type="button"
+                      class="icon-btn small blank"
+                      aria-label="更多条目操作"
+                      title="调整章节、排序或移除"
+                      @click="toggleEntryMenu(e.id)"
+                    >
+                      <Icon name="more" :size="14" />
+                    </button>
+                    <div
+                      v-if="entryMenuId === e.id"
+                      class="entry-menu"
+                      role="menu"
+                    >
+                      <div class="entry-menu-section">
+                        <small>目标章节</small>
+                        <select
+                          v-model="e.section"
+                          aria-label="调整条目章节"
+                          @change="edited"
+                        >
+                          <option
+                            v-for="sec in sections"
+                            :key="sec"
+                            :value="sec"
+                          >
+                            {{ sec }}
+                          </option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        :disabled="!canMoveInSection(e, -1)"
+                        @click="moveInSection(e, -1)"
+                      >
+                        <Icon name="up" :size="12" />上移条目
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        :disabled="!canMoveInSection(e, 1)"
+                        @click="moveInSection(e, 1)"
+                      >
+                        <Icon name="down" :size="12" />下移条目
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        class="danger-item"
+                        @click="remove(e.id)"
+                      >
+                        <Icon name="trash" :size="12" />从正文移除
+                      </button>
+                    </div>
+                  </span>
+                </div>
+              </div>
+            </template>
+          </section>
+
+          <!-- 二、三、四章节 -->
+          <template v-for="sec in majorSections" :key="sec.key">
+            <div v-if="!entriesIn(sec.key).length" class="empty-doc-row">
+              <div class="doc-section-head">
+                <b>{{ sec.heading }}</b>
+              </div>
+              <button
+                type="button"
+                class="text-action"
+                @click="addManual(sec.key)"
+              >
+                <Icon name="plus" :size="11" />手动补充
+              </button>
+            </div>
+
+            <section v-else class="doc-section-block">
+              <div class="doc-section-head">
+                <b>{{ sec.heading }}</b>
+                <button
+                  type="button"
+                  class="text-action"
+                  @click="addManual(sec.key)"
+                >
+                  <Icon name="plus" :size="11" />手动补充
+                </button>
+              </div>
+
+              <div
+                v-for="e in entriesIn(sec.key)"
+                :key="e.id"
+                :data-entry-id="e.id"
+                class="doc-entry monthly-entry"
+              >
+                <template v-if="editingEntryId === e.id || !e.text.trim()">
+                  <textarea
+                    v-model="e.text"
+                    rows="2"
+                    :aria-label="sec.key + '正文'"
+                    placeholder="在此人工编辑正文…"
+                    @input="edited"
+                  />
+                  <div class="entry-inline-controls">
+                    <select
+                      v-model="e.section"
+                      aria-label="调整条目章节"
+                      @change="edited"
+                    >
+                      <option v-for="sOpt in sections" :key="sOpt" :value="sOpt">
+                        {{ sOpt }}
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="btn compact"
+                      aria-label="上移条目"
+                      :disabled="!canMoveInSection(e, -1)"
+                      @click="moveInSection(e, -1)"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      class="btn compact"
+                      aria-label="下移条目"
+                      :disabled="!canMoveInSection(e, 1)"
+                      @click="moveInSection(e, 1)"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      class="delete-action"
+                      @click="remove(e.id)"
+                    >
+                      移除
+                    </button>
+                    <button
+                      v-if="e.text.trim()"
+                      type="button"
+                      class="btn light-brand compact push"
+                      @click="editingEntryId = null"
+                    >
+                      完成编辑
+                    </button>
+                  </div>
+                </template>
+                <template v-else>
+                  <p class="doc-entry-text" @click="startEditEntry(e.id)">
+                    {{ e.text }}
+                  </p>
+                </template>
+
+                <div class="source-note">
+                  <Icon :name="e.manual ? 'penbox' : 'link'" :size="11" />
+                  <span>{{ entrySourceLabel(e) }}</span>
+                  <span class="entry-tools" @click.stop>
+                    <button
+                      type="button"
+                      class="text-action"
+                      @click="toggleEditEntry(e.id)"
+                    >
+                      <Icon name="penbox" :size="11" />
+                      {{ editingEntryId === e.id ? "收起编辑" : "编辑条目" }}
+                    </button>
+                    <button
+                      type="button"
+                      class="icon-btn small blank"
+                      aria-label="更多条目操作"
+                      title="调整章节、排序或移除"
+                      @click="toggleEntryMenu(e.id)"
+                    >
+                      <Icon name="more" :size="14" />
+                    </button>
+                    <div
+                      v-if="entryMenuId === e.id"
+                      class="entry-menu"
+                      role="menu"
+                    >
+                      <div class="entry-menu-section">
+                        <small>目标章节</small>
+                        <select
+                          v-model="e.section"
+                          aria-label="调整条目章节"
+                          @change="edited"
+                        >
+                          <option
+                            v-for="sOpt in sections"
+                            :key="sOpt"
+                            :value="sOpt"
+                          >
+                            {{ sOpt }}
+                          </option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        :disabled="!canMoveInSection(e, -1)"
+                        @click="moveInSection(e, -1)"
+                      >
+                        <Icon name="up" :size="12" />上移条目
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        :disabled="!canMoveInSection(e, 1)"
+                        @click="moveInSection(e, 1)"
+                      >
+                        <Icon name="down" :size="12" />下移条目
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        class="danger-item"
+                        @click="remove(e.id)"
+                      >
+                        <Icon name="trash" :size="12" />从正文移除
+                      </button>
+                    </div>
+                  </span>
+                </div>
+              </div>
+            </section>
+          </template>
+        </article>
+      </div>
+    </div>
+
+    <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
+    <div v-else class="card empty" style="flex: 1">
+      <span class="empty-icon"><Icon name="report" :size="16" /></span>
+      <p class="empty-title">暂时没有月报草稿</p>
+      <p class="empty-hint">重新选择月份，或稍后重试读取。</p>
+      <button type="button" class="link" @click="load()">重新读取</button>
+    </div>
   </div>
 </template>

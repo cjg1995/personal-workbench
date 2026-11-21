@@ -8,6 +8,7 @@ import { call } from "../state";
 import Icon from "../components/Icon.vue";
 import CloseButton from "../components/CloseButton.vue";
 import FileTypeIcon from "../components/FileTypeIcon.vue";
+import MessageDialog from "../components/MessageDialog.vue";
 import EditorTreeNode, { type TreeNode } from "../components/EditorTreeNode.vue";
 
 const baseWorker = (self as any).MonacoEnvironment.getWorker;
@@ -1862,5 +1863,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+    <MessageDialog :dark="dark" />
   </div>
 </template>

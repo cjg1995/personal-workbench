@@ -35,6 +35,18 @@ test("记录内容唯一必填；编辑保留 ID；待办完成独立；软删�
   const work = f.records.save({ kind: "work", text: "已发生工作" });
   const updated = f.records.save({ ...work, text: "编辑后的工作" });
   assert.equal(updated.id, work.id);
+  assert.throws(
+    () => f.records.save({ ...work, happenedOn: "" }),
+    /发生日期不能为空/,
+  );
+  assert.throws(
+    () => f.records.save({ ...work, happenedOn: null }),
+    /发生日期不能为空/,
+  );
+  assert.throws(
+    () => f.records.save({ kind: "work", text: "空日期", happenedOn: "" }),
+    /发生日期不能为空/,
+  );
   assert.equal(f.records.list("work").length, 1);
   f.records.remove(work.id);
   assert.equal(f.records.list("work").length, 0);

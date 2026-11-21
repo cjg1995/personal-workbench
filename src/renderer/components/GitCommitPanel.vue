@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import Icon from "./Icon.vue";
+
 defineProps<{
   message: string;
   amend: boolean;
@@ -8,6 +10,7 @@ defineProps<{
   visibleCount: number;
   checkedCount: number;
 }>();
+
 defineEmits<{
   "update:message": [value: string];
   "update:amend": [value: boolean];
@@ -17,28 +20,80 @@ defineEmits<{
 }>();
 </script>
 <template>
-  <div class="git-panel-title">
-    <strong>Commit</strong><span>{{ stagedCount }} 个已暂存文件</span>
-  </div>
-  <div class="git-stage-actions">
-    <button :disabled="busy || !visibleCount" @click="$emit('stage', false)">暂存当前列表</button>
-    <button v-if="checkedCount" :disabled="busy" @click="$emit('stage', true)">暂存勾选文件</button>
-  </div>
-  <p v-if="!stagedCount" class="git-help">先暂存需要提交的文件，再填写提交说明。</p>
-  <button class="git-text-button" :disabled="!stagedCount" @click="$emit('inspect')">检查已暂存变更 →</button>
-  <textarea
-    :value="message"
-    aria-label="本地提交说明"
-    placeholder="填写提交说明…"
-    maxlength="20000"
-    @input="$emit('update:message', ($event.target as HTMLTextAreaElement).value)"
-  />
-  <label class="git-checkbox"><input type="checkbox" :checked="amend" :disabled="busy"
-    @change="$emit('update:amend', ($event.target as HTMLInputElement).checked)" />修改最后一次提交（--amend）</label>
-  <div class="git-commit-actions">
-    <button class="primary" :disabled="busy || !message.trim() || (!stagedCount && !amend)"
-      title="提交全部已暂存内容（Ctrl+Enter）" @click="$emit('commit', false)">Commit</button>
-    <button :disabled="busy || !message.trim() || (!stagedCount && !amend) || !upstream"
-      :title="upstream ? '提交后推送到当前上游分支' : '当前分支没有上游，不能推送'" @click="$emit('commit', true)">Commit 并 Push</button>
+  <div class="commit-body">
+    <div class="stage-well">
+      <div class="grow">
+        <strong>已暂存 {{ stagedCount }} 个文件</strong>
+        <p v-if="!stagedCount">暂存文件后即可提交。</p>
+        <p v-else>
+          <button
+            type="button"
+            class="text-action"
+            style="padding: 0; min-height: 18px"
+            @click="$emit('inspect')"
+          >
+            查看已暂存变更 →
+          </button>
+        </p>
+      </div>
+      <button
+        type="button"
+        class="btn compact"
+        :disabled="busy || !visibleCount"
+        @click="$emit('stage', false)"
+      >
+        暂存当前列表
+      </button>
+    </div>
+
+    <label class="field-label" for="git-commit-textarea">提交说明</label>
+    <textarea
+      id="git-commit-textarea"
+      class="message-box"
+      :value="message"
+      aria-label="本地提交说明"
+      placeholder="简要描述本次修改…"
+      maxlength="20000"
+      @input="
+        $emit('update:message', ($event.target as HTMLTextAreaElement).value)
+      "
+    />
+
+    <label class="amend">
+      <input
+        type="checkbox"
+        :checked="amend"
+        :disabled="busy"
+        @change="
+          $emit('update:amend', ($event.target as HTMLInputElement).checked)
+        "
+      />
+      <span>修改最后一次提交（amend）</span>
+    </label>
+
+    <div class="commit-buttons">
+      <button
+        type="button"
+        class="btn primary"
+        :disabled="busy || !message.trim() || (!stagedCount && !amend)"
+        title="提交全部已暂存内容（Ctrl+Enter）"
+        @click="$emit('commit', false)"
+      >
+        <Icon name="git-commit" :size="15" />提交
+      </button>
+      <button
+        type="button"
+        class="btn"
+        :disabled="
+          busy || !message.trim() || (!stagedCount && !amend) || !upstream
+        "
+        :title="
+          upstream ? '提交后推送到当前上游分支' : '当前分支没有上游，不能推送'
+        "
+        @click="$emit('commit', true)"
+      >
+        <Icon name="upload" :size="15" />提交并推送
+      </button>
+    </div>
   </div>
 </template>

@@ -66,14 +66,15 @@ async function capture(page, file) {
     );
     await nav(page, "灵感待办");
     await page.getByLabel("新记录内容").fill("界面回归：一句话灵感");
-    await page.getByRole("button", { name: "保存记录", exact: true }).click();
+    await page.getByRole("button", { name: "添加待办", exact: true }).click();
     await until(
       async () => !(await page.getByLabel("新记录内容").inputValue()),
       "quick-save",
     );
-    await page.getByRole("button", { name: /界面回归：一句话灵感/ }).click();
-    await page.locator(".note-detail textarea").fill("界面回归：编辑后的灵感");
-    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await page.locator(".idea-line", { hasText: "界面回归：一句话灵感" }).click();
+    await page.getByRole("button", { name: "编辑", exact: true }).click();
+    await page.locator(".detail-edit-form textarea").fill("界面回归：编辑后的灵感");
+    await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
     await until(
       async () =>
         (await api(page, "bootstrap")).notes.some(
@@ -107,10 +108,11 @@ async function capture(page, file) {
       (n) => n.kind === "work",
     );
     await page
-      .getByRole("button", { name: /界面回归：真实发生的工作/ })
+      .locator(".work-item", { hasText: "界面回归：真实发生的工作" })
       .click();
-    await page.locator(".note-detail input[type=date]").fill("2026-09-30");
-    await page.getByRole("button", { name: "保存修改", exact: true }).click();
+    await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+    await page.locator(".detail-edit-form input[type=date]").fill("2026-09-30");
+    await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
     await until(
       async () =>
         (await api(page, "bootstrap")).notes.find((n) => n.id === work.id)
@@ -123,23 +125,25 @@ async function capture(page, file) {
       "monthly open",
     );
     assert.equal(
-      await page.locator(".material").count(),
+      await page.locator(".material-item").count(),
       0,
-      "September material must not leak into October",
+      "September material must not leak into current month",
     );
-    await page.getByLabel("月报月份").fill("2026-09");
+    await page.getByRole("button", { name: "选择月报月份" }).click();
+    await page.getByLabel("月报月份", { exact: true }).fill("2026-09");
     await until(
-      async () => (await page.locator(".material").count()) === 1,
+      async () => (await page.locator(".material-item").count()) === 1,
       "September material",
     );
-    await page.locator(".material input[type=checkbox]").check();
-    await page.getByRole("button", { name: "加入正文 1", exact: true }).click();
+    await page.locator(".material-item input[type=checkbox]").check();
+    await page.getByRole("button", { name: "加入正文 · 1", exact: true }).click();
     await until(
-      async () => (await page.locator(".monthly-entry textarea").count()) === 1,
+      async () => (await page.locator(".doc-entry").count()) === 1,
       "source added",
     );
+    await page.locator(".doc-entry").getByRole("button", { name: /编辑条目/ }).click();
     await page
-      .locator(".monthly-entry textarea")
+      .locator(".doc-entry textarea")
       .fill("人工核对后的正文 & <特殊符号>\n第二行，保留换行。");
     await until(
       async () =>
