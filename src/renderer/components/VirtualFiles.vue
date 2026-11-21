@@ -208,9 +208,13 @@ onBeforeUnmount(() => observer?.disconnect());
               <strong>{{ splitFilePath(file.path).name }}</strong>
             </span>
           </div>
-          <span class="git-status-pill" :class="statusMeta(file).tone">
+          <span
+            class="git-status-pill"
+            :class="statusMeta(file).tone"
+            :title="statusMeta(file).label"
+            :aria-label="statusMeta(file).label"
+          >
             <b>{{ statusMeta(file).code }}</b>
-            <span>{{ statusMeta(file).label }}</span>
           </span>
           <button
             v-if="file.staged && !file.unstaged && !file.untracked"

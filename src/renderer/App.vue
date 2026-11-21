@@ -14,7 +14,6 @@ import {
   recordModal,
   leaveGuard,
 } from "./state";
-import { formatChromeDate } from "./format";
 import Icon from "./components/Icon.vue";
 import CloseButton from "./components/CloseButton.vue";
 import workbenchIcon from "../../assets/workbench-v2-64.png";
@@ -60,16 +59,6 @@ const groups = [
     ],
   },
 ] as const;
-
-const currentGroup = computed(() => {
-  for (const g of groups) {
-    if (g.items.some((item) => item[0] === route.value)) return g.name;
-  }
-  if (route.value === "tasks" || route.value === "settings") return "系统";
-  return "日常";
-});
-
-const chromeDate = computed(() => formatChromeDate(model.today));
 
 const openIdeasCount = computed(
   () =>
@@ -170,7 +159,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   <div class="shell" :class="{ 'rail-collapsed': railCollapsed }">
     <aside id="app-sidebar" class="rail" :class="{ open: navOpen }">
       <div class="brand">
-        <img :src="workbenchIcon" alt="" width="33" height="33" />
+        <img :src="workbenchIcon" alt="" width="24" height="24" />
         <strong>个人工作台</strong>
       </div>
       <button
@@ -255,29 +244,17 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     />
     <div class="frame">
       <header class="chrome">
-        <div class="crumb">
-          <button
-            type="button"
-            class="chrome-toggle"
-            :aria-label="railCollapsed ? '展开侧栏' : '切换侧栏'"
-            :aria-expanded="!railCollapsed"
-            aria-controls="app-sidebar"
-            title="切换侧栏"
-            @click="toggleSidebar"
-          >
-            <Icon name="panel" :size="16" />
-          </button>
-          <span class="divider" aria-hidden="true" />
-          <span>本地工作区</span>
-          <span class="slash" aria-hidden="true">/</span>
-          <span class="group">{{ currentGroup }}</span>
-        </div>
-        <div class="chrome-date">
-          <Icon name="calendar2" :size="14" />
-          <span>{{ chromeDate.date }}</span>
-          <span class="sep-dot" aria-hidden="true" />
-          <span class="weekday">{{ chromeDate.weekday }}</span>
-        </div>
+        <button
+          type="button"
+          class="chrome-toggle"
+          :aria-label="railCollapsed ? '展开侧栏' : '切换侧栏'"
+          :aria-expanded="!railCollapsed"
+          aria-controls="app-sidebar"
+          title="切换侧栏"
+          @click="toggleSidebar"
+        >
+          <Icon name="panel" :size="16" />
+        </button>
         <div class="window-buttons">
           <button
             type="button"

@@ -299,63 +299,60 @@ small {
 .rail {
   background: var(--nav);
   color: var(--text);
-  box-shadow: inset -1px 0 0 var(--line);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0 13px;
+  padding: 0 12px;
   overflow: hidden;
   user-select: none;
   transition: opacity 0.16s var(--ease), transform 0.2s var(--ease);
 }
 
-.brand {
-  height: 80px;
+.rail .brand {
+  height: 52px;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 0 9px;
+  gap: 9px;
+  padding: 0 8px;
   -webkit-app-region: drag;
 }
 
-.brand img {
-  width: 33px;
-  height: 33px;
+.rail .brand img {
+  width: 24px;
+  height: 24px;
   object-fit: contain;
   display: block;
 }
 
-.brand strong {
-  font-size: 19px;
-  font-weight: 640;
+.rail .brand strong {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--ink);
-  letter-spacing: 0.2px;
   white-space: nowrap;
 }
 
 .quick {
   flex: none;
   width: calc(100% - 8px);
-  height: 37px;
-  min-height: 37px;
-  margin: 0 4px 25px;
-  padding: 0 11px;
+  height: 34px;
+  min-height: 34px;
+  margin: 0 4px 16px;
+  padding: 0 10px;
   border: 1px solid var(--control-line);
-  border-radius: var(--r-sm);
+  border-radius: 6px;
   background: var(--paper);
-  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.035);
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 8px;
   color: var(--text);
   font-size: 13px;
-  font-weight: 520;
+  font-weight: 500;
   cursor: pointer;
   transition: background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease), color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
+    border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 
 .quick:hover:not(:disabled) {
@@ -450,33 +447,20 @@ small {
 
 .navitem.active,
 .rail-util.active {
-  background: var(--tint);
-  color: var(--brand-dark);
-  font-weight: 610;
+  background: var(--hover-strong);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .navitem.active:hover:not(:disabled),
 .rail-util.active:hover:not(:disabled) {
-  background: var(--tint);
-  color: var(--brand-dark);
+  background: var(--hover-strong);
+  color: var(--ink);
 }
 
 .navitem.active .ico,
 .rail-util.active .ico {
-  color: #356abd;
-}
-
-.navitem.active::before,
-.rail-util.active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 17px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--brand);
+  color: var(--ink);
 }
 
 .navitem:focus-visible,
@@ -493,8 +477,8 @@ small {
 
 .nav-count {
   margin-left: auto;
-  color: #556477;
-  font: 600 11px/19px var(--sans);
+  color: var(--soft);
+  font: 600 11px/18px var(--sans);
   min-width: 19px;
   text-align: center;
   padding: 0 6px;
@@ -503,7 +487,11 @@ small {
 }
 
 .navitem.active .nav-count,
-.rail-util.active .nav-count,
+.rail-util.active .nav-count {
+  color: var(--ink);
+  background: var(--paper);
+}
+
 .rail-util .running-number {
   color: var(--brand-dark);
   background: var(--blue-fill);
@@ -536,28 +524,23 @@ small {
 }
 
 .chrome {
-  flex: 0 0 51px;
+  flex: 0 0 40px;
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--line);
-  padding-left: 22px;
+  padding-left: 12px;
   background: var(--paper);
   color: var(--soft);
   -webkit-app-region: drag;
   user-select: none;
 }
 
-.crumb,
-.chrome-date,
 .window-buttons {
   display: inline-flex;
   align-items: center;
-}
-
-.crumb {
-  gap: 11px;
-  font-size: 12px;
-  min-width: 0;
+  gap: 2px;
+  margin: 0 6px 0 auto;
+  -webkit-app-region: no-drag;
 }
 
 .chrome-toggle {
@@ -579,42 +562,6 @@ small {
 .chrome-toggle:hover:not(:disabled) {
   background: var(--hover);
   color: var(--ink);
-}
-
-.crumb .divider {
-  height: 16px;
-  width: 1px;
-  background: var(--line);
-  margin-right: 1px;
-}
-
-.crumb .group {
-  color: #3f4d60;
-  font-weight: 560;
-}
-
-.crumb .slash {
-  color: #98a3b1;
-}
-
-.chrome-date {
-  margin-left: auto;
-  font-size: 12px;
-  gap: 8px;
-  color: #627084;
-  white-space: nowrap;
-}
-
-.chrome-date .weekday {
-  color: #627084;
-}
-
-.window-buttons {
-  gap: 1px;
-  margin: 0 6px 0 20px;
-  border-left: 1px solid var(--line);
-  padding-left: 6px;
-  -webkit-app-region: no-drag;
 }
 
 .window-buttons button {
@@ -649,7 +596,7 @@ small {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 24px 30px;
+  padding: 12px 20px 16px;
   overflow: hidden;
   background: var(--back);
 }
@@ -663,27 +610,39 @@ small {
   align-items: center;
   justify-content: space-between;
   flex: none;
-  margin-bottom: 20px;
-  min-height: 62px;
-  gap: 20px;
+  margin-bottom: 12px;
+  min-height: 44px;
+  gap: 12px;
+}
+
+.page-head-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .page-head h1 {
-  font-size: 31px;
-  line-height: 1.28;
-  letter-spacing: -0.9px;
-  font-weight: 710;
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: 0;
+  font-weight: 600;
   color: var(--ink);
 }
 
-.h-meta {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 9px;
+.head-status {
+  font-size: 12px;
+  font-weight: 400;
   color: var(--soft);
-  font-size: 13px;
-  margin-top: 6px;
+  white-space: nowrap;
+}
+
+.head-status.pending {
+  color: var(--warning-ink);
+}
+
+.head-status.error {
+  color: var(--danger-ink);
 }
 
 .sep-dot {
@@ -1393,8 +1352,7 @@ label:not(.search-box):not(.form-line):not(.detail-edit-row):not(.inline-label):
 .card {
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-card);
+  border-radius: 6px;
   min-width: 0;
 }
 
@@ -1407,7 +1365,7 @@ label:not(.search-box):not(.form-line):not(.detail-edit-row):not(.inline-label):
 
 .duo {
   display: grid;
-  gap: 18px;
+  gap: 12px;
   flex: 1 1 0;
   min-height: 0;
 }
@@ -2292,28 +2250,29 @@ details > summary:hover {
 .month-index {
   display: flex;
   align-items: center;
-  gap: 17px;
-  min-height: 102px;
+  gap: 12px;
+  min-height: 56px;
   flex: none;
-  padding: 13px 18px;
-  margin-bottom: 16px;
-  background: var(--paper);
-  border-color: var(--line);
+  padding: 6px 0 8px;
+  margin-bottom: 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   position: relative;
 }
 
 .month-index.all-months {
-  min-height: 76px;
-  padding: 11px 18px;
+  min-height: 48px;
+  padding: 6px 0 8px;
 }
 
 .month-picker-wrap {
   position: relative;
   flex: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
 }
 
 .month-name-btn {
@@ -2321,64 +2280,61 @@ details > summary:hover {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  width: 96px;
-  min-height: 52px;
-  padding: 3px 6px;
+  min-width: 72px;
+  min-height: 42px;
+  padding: 2px 6px;
   border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   text-align: left;
 }
 
 .month-name-btn:hover:not(:disabled) {
-  background: rgba(75, 141, 248, 0.08);
-  border-color: #cfe0fa;
+  background: var(--hover);
+  border-color: var(--line);
 }
 
 .month-name-btn .year {
   font-size: 11px;
-  letter-spacing: 0.6px;
-  color: #536c86;
-  font-weight: 620;
-  line-height: 1.35;
+  color: var(--soft);
+  font-weight: 500;
+  line-height: 1.25;
 }
 
 .month-name-btn strong {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  color: #2d4867;
-  font-size: 25px;
-  font-weight: 700;
+  gap: 3px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.25;
 }
 
 .month-name-btn strong.all-label {
-  font-size: 21px;
-  letter-spacing: 0.2px;
+  font-size: 16px;
 }
 
 .month-name-btn strong small {
-  font-size: 17px;
-  font-weight: 630;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .month-clear-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
-  min-height: 22px;
-  margin-left: 4px;
+  height: 24px;
+  min-height: 24px;
   padding: 0 7px;
-  border: 1px solid #d2e0f4;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--control-line);
+  border-radius: 4px;
+  background: var(--paper);
   box-shadow: none;
-  color: #46658c;
+  color: var(--soft);
   font-size: 11px;
-  font-weight: 540;
+  font-weight: 500;
 }
 
 .month-clear-btn:hover:not(:disabled) {
@@ -2566,8 +2522,8 @@ button.month-chip:hover:not(:disabled) {
 }
 
 .days {
-  border-left: 1px solid #d9e3ee;
-  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  padding-left: 10px;
   display: grid;
   flex: 1;
   min-width: 0;
@@ -2575,10 +2531,10 @@ button.month-chip:hover:not(:disabled) {
 }
 
 .day {
-  height: 66px;
-  min-height: 66px;
+  height: 46px;
+  min-height: 46px;
   min-width: 0;
-  padding: 6px 0 4px;
+  padding: 3px 0 2px;
   position: relative;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -2588,7 +2544,7 @@ button.month-chip:hover:not(:disabled) {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  gap: 3px;
+  gap: 1px;
   cursor: pointer;
 }
 
@@ -3314,20 +3270,20 @@ button.month-chip:hover:not(:disabled) {
 }
 
 .project-item small {
-  color: #606f81;
-  font-size: 10.5px;
-  line-height: 14px;
-  display: block;
+  color: var(--soft);
+  font-size: 11px;
+  line-height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-item small .live-word {
-  display: inline;
-  font-size: inherit;
-  color: var(--success-ink);
-  font-weight: 600;
+.project-item .project-state-badge {
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .project-item .run-action {
@@ -3366,11 +3322,11 @@ button.month-chip:hover:not(:disabled) {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  gap: 16px;
+  gap: 12px;
 }
 
 .service-info {
-  padding: 18px 20px 13px;
+  padding: 16px 18px 12px;
   flex: none;
 }
 
@@ -3379,19 +3335,6 @@ button.month-chip:hover:not(:disabled) {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.service-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 46px;
-  width: 46px;
-  border: 1px solid var(--tint-line);
-  border-radius: 10px;
-  background: var(--blue-fill);
-  color: #3568a6;
-  flex: none;
 }
 
 .service-name {
@@ -3977,10 +3920,10 @@ button.month-chip:hover:not(:disabled) {
   justify-content: center;
   align-items: flex-start;
   min-height: 0;
-  background: #eff2f6;
-  border-color: #dde3ea;
-  border-radius: 11px;
-  padding: 14px 23px 16px;
+  background: var(--quiet-surface);
+  border: 0;
+  border-radius: 0;
+  padding: 14px 20px 16px;
   overflow-y: auto;
 }
 
@@ -3988,9 +3931,8 @@ button.month-chip:hover:not(:disabled) {
   background: var(--paper);
   width: 100%;
   min-height: 100%;
-  border: 1px solid #dfe4eb;
+  border: 1px solid var(--line);
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(39, 59, 81, 0.045);
   padding: 24px 32px 26px;
 }
 
@@ -4645,7 +4587,7 @@ button.month-chip:hover:not(:disabled) {
 .split-editor {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
-  gap: 18px;
+  gap: 12px;
 }
 
 .file-list {
@@ -4764,14 +4706,11 @@ button.month-chip:hover:not(:disabled) {
 
 @media (max-width: 1280px) {
   .workarea {
-    padding: 18px 22px;
+    padding: 12px 16px 14px;
   }
   .page-head {
-    margin-bottom: 16px;
-    gap: 16px;
-  }
-  .page-head h1 {
-    font-size: 27px;
+    margin-bottom: 12px;
+    gap: 12px;
   }
   .quick-entry {
     flex: 1 1 480px;
@@ -4784,17 +4723,10 @@ button.month-chip:hover:not(:disabled) {
     grid-template-columns: 296px minmax(0, 1fr);
   }
   .month-index {
-    padding: 12px 14px;
-    gap: 12px;
-  }
-  .month-name-btn {
-    width: 86px;
-  }
-  .month-name-btn strong {
-    font-size: 22px;
+    gap: 10px;
   }
   .day strong {
-    font-size: 12.5px;
+    font-size: 13px;
   }
 }
 

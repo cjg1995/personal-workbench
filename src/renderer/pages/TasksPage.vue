@@ -49,21 +49,13 @@ watch(context, (value) => {
 <template>
   <div class="subpage-wrap">
     <div class="page-head">
-      <div>
-        <h1>任务中心</h1>
-        <div class="h-meta">
-          <span>共 {{ model.tasks.length }} 条任务记录</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ attention.length }} 项待处理或执行中</span>
-        </div>
-      </div>
+      <h1>任务中心</h1>
     </div>
 
     <div class="duo tasks-layout">
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="tasks" :size="17" />
             <h2>任务记录</h2>
             <span class="count">{{ tasks.length }}</span>
           </div>
@@ -127,7 +119,6 @@ watch(context, (value) => {
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="document" :size="17" />
             <h2>任务详情</h2>
           </div>
         </div>

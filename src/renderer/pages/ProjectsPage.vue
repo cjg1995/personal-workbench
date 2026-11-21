@@ -472,21 +472,11 @@ onBeforeUnmount(() => {
 <template>
   <div ref="pageRoot" class="projects-page">
     <div class="page-head">
-      <div>
-        <h1>项目管理</h1>
-        <div class="h-meta">
-          <span>{{ allProjects.length }} 个项目</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ groupNames.length }} 个分组</span>
-        </div>
-      </div>
-      <div class="h-actions">
-        <span
-          class="badge"
-          :class="runningCount ? 'live' : 'neutral'"
-        >
-          <i v-if="runningCount" class="dot" />
-          {{ runningCount ? `${runningCount} 个项目运行中` : "暂无运行中项目" }}
+      <h1>项目管理</h1>
+      <div v-if="runningCount" class="h-actions">
+        <span class="badge live">
+          <i class="dot" />
+          {{ runningCount }} 个运行中
         </span>
       </div>
     </div>
@@ -496,7 +486,6 @@ onBeforeUnmount(() => {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
-            <Icon name="folders" :size="17" />
             <h2>项目列表</h2>
             <span class="count">{{ allProjects.length }}</span>
           </div>
@@ -553,20 +542,14 @@ onBeforeUnmount(() => {
                   <strong class="project-name" :title="p.name">{{
                     p.name
                   }}</strong>
-                  <small>
-                    {{ types[p.type] }} ·
-                    <strong
-                      v-if="run(p.id) && isLiveState(run(p.id)!.state)"
-                      class="live-word"
-                      >{{ runLabels[run(p.id)!.state] }}</strong
+                  <small class="project-sub">
+                    <span>{{ types[p.type] }}</span>
+                    <span
+                      v-if="run(p.id) && run(p.id)!.state !== 'stopped'"
+                      class="badge project-state-badge"
+                      :class="badgeClass(run(p.id)!.state)"
+                      >{{ runLabels[run(p.id)!.state] }}</span
                     >
-                    <span v-else>{{
-                      run(p.id)
-                        ? runLabels[run(p.id)!.state]
-                        : loading
-                          ? "检测中…"
-                          : "状态未知"
-                    }}</span>
                   </small>
                 </div>
                 <div @click.stop>
@@ -613,29 +596,22 @@ onBeforeUnmount(() => {
             </template>
           </template>
         </div>
-
-        <div class="footnote">
-          <Icon name="play-mini" :size="12" />
-          <span>启动项目</span>
-          <span class="push" />
-          <Icon name="stop" :size="12" />
-          <span>停止项目</span>
-        </div>
       </section>
 
       <!-- 右侧服务详情 + 浅色运行日志 -->
       <div v-if="selectedProject" class="project-col">
         <section class="card service-info">
           <div class="service-header">
-            <div class="service-mark">
-              <Icon name="stack" :size="24" />
-            </div>
             <div class="grow">
               <div class="service-name">
                 <h2>{{ selectedProject.name }}</h2>
-                <span class="badge" :class="badgeClass(current?.state)">
+                <span
+                  v-if="current && current.state !== 'stopped'"
+                  class="badge"
+                  :class="badgeClass(current.state)"
+                >
                   <i class="dot" />
-                  {{ runLabels[current?.state || "unknown"] }}
+                  {{ runLabels[current.state] }}
                 </span>
               </div>
               <div class="service-trace">
@@ -864,7 +840,6 @@ onBeforeUnmount(() => {
         />
         <section v-else class="terminal">
           <div class="term-head">
-            <Icon name="term" :size="16" />
             <h3>运行日志</h3>
             <span class="live-light idle" />
           </div>

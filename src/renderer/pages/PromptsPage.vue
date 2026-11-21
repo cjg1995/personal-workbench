@@ -588,14 +588,7 @@ onBeforeUnmount(() => {
     <!-- 列表与详情模式 -->
     <template v-if="!editor">
       <div class="page-head">
-        <div>
-          <h1>提示词库</h1>
-          <div class="h-meta">
-            <span>共 {{ counts.all }} 条提示词</span>
-            <i class="sep-dot" aria-hidden="true" />
-            <span>已收藏 {{ counts.favorites }} 条</span>
-          </div>
-        </div>
+        <h1>提示词库</h1>
         <div class="h-actions">
           <button
             type="button"
@@ -612,10 +605,7 @@ onBeforeUnmount(() => {
         <!-- 左侧提示词列表卡片 -->
         <section class="card library-panel" aria-label="提示词列表">
           <div class="lib-head">
-            <h2>
-              <Icon name="library-lines" :size="16" />
-              我的提示词
-            </h2>
+            <h2>我的提示词</h2>
             <label class="compact-select inline-label">
               <Icon name="tag" :size="12" />
               <select v-model="selectedTag" aria-label="按标签筛选">
@@ -737,12 +727,11 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="list-foot">
-            <Icon name="sort" :size="14" />
             <span>{{
               tab === "deleted" ? "按删除时间排列" : "按最近修改排列"
             }}</span>
             <span class="push" />
-            <span>显示 {{ visiblePrompts.length }} 条</span>
+            <span v-if="isFiltering">匹配 {{ visiblePrompts.length }} 条</span>
           </div>
         </section>
 
@@ -893,13 +882,7 @@ onBeforeUnmount(() => {
     <!-- 新建与编辑模式 -->
     <template v-else>
       <div class="page-head">
-        <div>
-          <h1>{{ editor.id ? "编辑提示词" : "新建提示词" }}</h1>
-          <div class="h-meta">
-            <Icon name="prompt-collection" :size="13" />
-            <span>提示词库</span>
-          </div>
-        </div>
+        <h1>{{ editor.id ? "编辑提示词" : "新建提示词" }}</h1>
         <div class="h-actions">
           <button type="button" class="btn" :disabled="saving" @click="cancelEdit">
             <span>取消</span>
@@ -920,10 +903,7 @@ onBeforeUnmount(() => {
         <!-- 左侧表单卡片 -->
         <section class="card form-panel" aria-label="编辑提示词表单">
           <div class="form-head">
-            <h2>
-              <Icon name="penbox" :size="17" />
-              编辑内容
-            </h2>
+            <h2>编辑内容</h2>
             <span class="form-status" :class="{ clean: !editorDirty }">
               {{
                 editorDirty
@@ -1019,10 +999,7 @@ onBeforeUnmount(() => {
         <!-- 右侧实时预览卡片 -->
         <section class="card preview-panel" aria-label="实时预览">
           <div class="preview-head">
-            <h2>
-              <Icon name="eye" :size="17" />
-              实时预览
-            </h2>
+            <h2>实时预览</h2>
           </div>
 
           <div class="preview-body">
@@ -1148,10 +1125,7 @@ onBeforeUnmount(() => {
 
           <section class="fill-preview">
             <div class="fill-subhead">
-              <h3>
-                <Icon name="eye" :size="14" />
-                <span>复制内容预览</span>
-              </h3>
+              <h3>复制内容预览</h3>
             </div>
             <div class="prompt-text" data-fill-preview>
               <template

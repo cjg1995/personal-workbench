@@ -175,13 +175,9 @@ async function restore() {
 <template>
   <div class="subpage-wrap">
     <div class="page-head">
-      <div>
+      <div class="page-head-main">
         <h1>设置</h1>
-        <div class="h-meta">
-          <span>版本 {{ model.version }}</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>工作目录、工具路径与本地数据备份</span>
-        </div>
+        <span class="head-status">v{{ model.version }}</span>
       </div>
       <div v-if="dirty" class="h-actions">
         <span class="badge pending"><i class="dot" />有未保存修改</span>
@@ -230,7 +226,7 @@ async function restore() {
 
       <div class="settings-body">
         <section v-if="tab === 'projects'">
-          <h2>工作目录 · {{ form.projects.length }} 个</h2>
+          <h2>工作目录</h2>
           <p class="small muted" style="margin-bottom: 12px">
             未填写的高级字段沿用项目和 IDEA 配置。
           </p>

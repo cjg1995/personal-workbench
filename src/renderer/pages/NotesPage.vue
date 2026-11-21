@@ -19,7 +19,6 @@ import {
   formatDateTime,
   formatFullDate,
   formatGroupDate,
-  formatMonthDay,
   formatMonthTitle,
   formatTimeHM,
   getMonthDays,
@@ -141,25 +140,10 @@ const monthRecords = computed(() =>
         b.createdAt.localeCompare(a.createdAt),
     ),
 );
-const latestRecordLabel = computed(() => {
-  const inMonth = monthRecords.value.find((n) => !!n.happenedOn);
-  if (inMonth?.happenedOn) return formatMonthDay(inMonth.happenedOn, false);
-  const anyDated = activeAll.value
-    .filter((n) => !!n.happenedOn)
-    .sort((a, b) => (b.happenedOn || "").localeCompare(a.happenedOn || ""))[0];
-  return anyDated?.happenedOn ? formatMonthDay(anyDated.happenedOn, false) : "";
-});
-
 const monthTitle = computed(() => formatMonthTitle(month.value));
 const monthDays = computed(() =>
   month.value ? getMonthDays(month.value) : [],
 );
-const workMetaCountLabel = computed(() => {
-  if (!month.value) return `共 ${monthRecords.value.length} 条记录`;
-  if (month.value === currentMonth.value)
-    return `本月 ${monthRecords.value.length} 条记录`;
-  return `${monthTitle.value.label} ${monthRecords.value.length} 条记录`;
-});
 const workActiveTabLabel = computed(() => {
   if (!month.value) return "全部记录";
   if (month.value === currentMonth.value) return "本月记录";
@@ -643,13 +627,6 @@ async function restore() {
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>工作记录</h1>
-        <div class="h-meta">
-          <span>{{ workMetaCountLabel }}</span>
-          <template v-if="latestRecordLabel">
-            <i class="sep-dot" aria-hidden="true" />
-            <span>最近记录于 {{ latestRecordLabel }}</span>
-          </template>
-        </div>
       </div>
       <form
         class="quick-entry"
@@ -718,7 +695,7 @@ async function restore() {
     </div>
 
     <!-- 月份日期带 -->
-    <div class="month-index card" :class="{ 'all-months': !month }">
+    <div class="month-index" :class="{ 'all-months': !month }">
       <div class="month-picker-wrap" @click.stop>
         <button
           type="button"
@@ -903,7 +880,6 @@ async function restore() {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
-            <Icon name="list" :size="17" />
             <h2>记录列表</h2>
           </div>
           <label class="search-box" style="margin: 0">
@@ -1034,22 +1010,17 @@ async function restore() {
         </div>
 
         <div class="footnote">
-          <Icon name="note" :size="13" />
-          <span>{{
-            month
-              ? `所有月份共 ${activeAll.length} 条工作记录`
-              : `已显示全部 ${activeAll.length} 条工作记录`
-          }}</span>
+          <span v-if="month && activeAll.length > monthRecords.length">
+            全部月份共 {{ activeAll.length }} 条
+          </span>
           <span class="push" />
           <span>按发生日期降序</span>
-          <Icon name="sort" :size="13" />
         </div>
       </section>
 
       <section class="card pane note-detail">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="document" :size="17" />
             <h2>记录详情</h2>
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
@@ -1212,11 +1183,6 @@ async function restore() {
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>灵感待办</h1>
-        <div class="h-meta">
-          <span>共 {{ ideaTotal }} 项待办</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ openIdeas.length }} 项待完成</span>
-        </div>
       </div>
       <form
         class="quick-entry"
@@ -1276,7 +1242,6 @@ async function restore() {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
-            <Icon name="checklist" :size="17" />
             <h2>待办清单</h2>
           </div>
           <label class="search-box" style="margin: 0">
@@ -1399,12 +1364,11 @@ async function restore() {
 
       <!-- 右栏：待办详情 -->
       <section class="card pane idea-detail note-detail">
-          <div class="panel-head spaced-head">
-            <div class="head-title">
-              <Icon name="idea" :size="17" />
-              <h2>待办详情</h2>
-              <span v-if="dirty" class="badge pending">未保存</span>
-            </div>
+        <div class="panel-head spaced-head">
+          <div class="head-title">
+            <h2>待办详情</h2>
+            <span v-if="dirty" class="badge pending">未保存</span>
+          </div>
             <template v-if="editor && !editor.deletedAt">
               <button
                 v-if="!editing"

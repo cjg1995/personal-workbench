@@ -71,20 +71,10 @@ async function start() {
 <template>
   <div class="subpage-wrap">
     <div class="page-head">
-      <div>
-        <h1>APK 打包</h1>
-        <div class="h-meta">
-          <span>{{ androidProjects.length }} 个 Android 应用</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ history.length }} 条当前应用历史构建</span>
-        </div>
-      </div>
-      <div class="h-actions">
-        <span v-if="active" class="badge brand">
+      <h1>APK 打包</h1>
+      <div v-if="active" class="h-actions">
+        <span class="badge brand">
           <i class="dot" />打包执行中
-        </span>
-        <span v-else-if="config" class="badge live">
-          <i class="dot" />预检查通过
         </span>
       </div>
     </div>
@@ -93,7 +83,6 @@ async function start() {
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="box" :size="17" />
             <h2>打包配置</h2>
           </div>
           <button
@@ -196,7 +185,6 @@ async function start() {
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="tasks" :size="17" />
             <h2>构建状态与历史</h2>
           </div>
         </div>

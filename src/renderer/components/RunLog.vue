@@ -500,7 +500,6 @@ onBeforeUnmount(() => {
     @focusout="onFocusOut"
   >
     <div class="term-head">
-      <Icon name="term" :size="16" />
       <h3>运行日志</h3>
       <span class="live-light" :class="{ idle: !active }" />
       <div class="term-find" role="search">

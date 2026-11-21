@@ -61,9 +61,6 @@ let pending: Promise<void> | null = null,
 const linked = computed(
   () => new Set(draft.value?.entries.flatMap((e) => e.sourceIds) || []),
 );
-const linkedInMonthCount = computed(
-  () => materials.value.filter((n) => linked.value.has(n.id)).length,
-);
 
 const stateClass = computed(() =>
   saveState.value.includes("失败")
@@ -483,34 +480,19 @@ const majorSections = [
 <template>
   <div class="monthly-page">
     <div class="page-head">
-      <div>
+      <div class="page-head-main">
         <h1>月度总结</h1>
-        <div class="h-meta">
-          <span>{{ materials.length }} 条工作素材</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ linkedInMonthCount }} 条已加入正文</span>
-        </div>
-      </div>
-
-      <div class="h-actions month-actions">
         <span
           v-if="saveState"
-          class="saved"
+          class="head-status"
           :class="stateClass"
           role="status"
         >
-          <Icon
-            :name="
-              stateClass === 'error'
-                ? 'warning'
-                : stateClass === 'pending'
-                  ? 'clock'
-                  : 'check-circle'
-            "
-            :size="14"
-          />
-          <span>{{ saveState }}</span>
+          {{ saveState }}
         </span>
+      </div>
+
+      <div class="h-actions month-actions">
 
         <div class="month-btn-wrap" @click.stop>
           <button
@@ -603,7 +585,6 @@ const majorSections = [
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
-            <Icon name="stack" :size="17" />
             <h2>本月素材</h2>
             <span class="count">{{ materials.length }}</span>
           </div>
@@ -631,7 +612,7 @@ const majorSections = [
             <span>全选可用素材</span>
           </label>
           <span class="push" />
-          <span>已选 {{ selected.length }} / {{ selectableMaterials.length }}</span>
+          <span v-if="selected.length">已选 {{ selected.length }} 项</span>
         </div>
 
         <div v-if="undated" class="material-undated">
@@ -717,14 +698,13 @@ const majorSections = [
       </section>
 
       <!-- 右栏：文档式正文纸面编辑区 -->
-      <div class="card paper-desk">
+      <div class="paper-desk">
         <article class="paper">
           <div class="doc-heading">
             <div>
               <div class="doc-date">{{ monthTitle.label }}</div>
               <h2>工作总结</h2>
             </div>
-            <Icon name="document" :size="29" />
           </div>
 
           <!-- 一、工作成果 -->

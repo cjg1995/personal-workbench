@@ -10,20 +10,16 @@
   flex-direction: column;
 }
 
-.prompts-page .page-head .h-meta {
-  gap: 8px;
-}
-
 .prompts-page .library-main-btn {
-  height: 38px;
-  min-height: 38px;
-  padding-inline: 15px;
+  height: 34px;
+  min-height: 34px;
+  padding-inline: 14px;
 }
 
 .prompts-page .library-layout,
 .prompts-page .edit-layout {
   display: grid;
-  gap: 18px;
+  gap: 12px;
   min-height: 0;
   flex: 1 1 0;
 }
@@ -1127,11 +1123,11 @@
 @media (max-width: 980px) {
   .prompts-page .library-layout {
     grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1.3fr);
-    gap: 14px;
+    gap: 12px;
   }
   .prompts-page .edit-layout {
     grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
-    gap: 14px;
+    gap: 12px;
   }
   .prompts-page .read-intro,
   .prompts-page .read-body,

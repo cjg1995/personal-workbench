@@ -778,14 +778,7 @@ onBeforeUnmount(() => {
   <div ref="pageRoot" class="git-page">
     <!-- 顶部标题与远程同步操作 -->
     <div class="page-head">
-      <div>
-        <h1>Git 管理</h1>
-        <div class="h-meta">
-          <span>{{ totalVisibleChanges }} 个本地变更</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ stagedCount }} 个已暂存文件</span>
-        </div>
-      </div>
+      <h1>Git 管理</h1>
       <div class="h-actions">
         <span class="button-group">
           <button
@@ -829,9 +822,6 @@ onBeforeUnmount(() => {
     <!-- 仓库 / 分支 / 上游同步上下文条 -->
     <div class="repo-bar card">
       <div class="repo-block">
-        <div class="service-mark">
-          <Icon name="repo" :size="20" />
-        </div>
         <div>
           <div class="context-label">仓库</div>
           <ProjectSelect
@@ -1109,9 +1099,7 @@ onBeforeUnmount(() => {
       <section class="card pane">
         <div class="panel-head">
           <div class="head-title">
-            <Icon name="changes" :size="17" />
             <h2>变更文件</h2>
-            <span class="count">{{ files.length }}</span>
           </div>
           <button
             type="button"
@@ -1157,7 +1145,7 @@ onBeforeUnmount(() => {
             @change="toggleAllFiles"
           />
           <span>文件路径</span>
-          <span>文件状态</span>
+          <span>状态</span>
           <span />
         </div>
 
@@ -1177,13 +1165,8 @@ onBeforeUnmount(() => {
         />
 
         <div class="selection-row" @click.stop>
-          <span>{{
-            checked.length
-              ? `已勾选 ${checked.length} 项`
-              : files.length
-                ? `共 ${files.length} 项变更 · 勾选后可暂存`
-                : "工作区暂无匹配变更"
-          }}</span>
+          <span v-if="checked.length">已勾选 {{ checked.length }} 项</span>
+          <span v-else-if="!files.length">工作区无变更</span>
           <span class="push" />
           <div class="git-ops-wrap">
             <button
@@ -1256,7 +1239,6 @@ onBeforeUnmount(() => {
       <section class="card pane">
         <div class="panel-head spaced-head">
           <div class="head-title">
-            <Icon name="git-commit" :size="17" />
             <h2>提交变更</h2>
           </div>
           <span class="mini-key">Ctrl + Enter</span>
