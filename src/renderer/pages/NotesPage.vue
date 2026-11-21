@@ -620,9 +620,7 @@ async function restore() {
 </script>
 
 <template>
-  <!-- ======================================================================
-       工作记录页（01-工作记录.png）
-       ====================================================================== -->
+  <!-- 工作记录视图 -->
   <template v-if="kind === 'work'">
     <div class="page-head notes-head">
       <div class="page-head-title">
@@ -677,7 +675,8 @@ async function restore() {
             </button>
             <button
               type="submit"
-              class="btn primary compact"
+              class="btn compact"
+              :class="{ primary: !editing }"
               :disabled="busy || !text.trim() || !validComposerDate"
               :aria-busy="busy"
               title="保存记录（Ctrl+Enter）"
@@ -1076,7 +1075,7 @@ async function restore() {
                 <div class="actions" style="margin: 4px 0 0">
                   <button
                     type="button"
-                    class="btn primary"
+                    class="btn"
                     :disabled="!canSaveEdit"
                     @click="save"
                   >
@@ -1148,7 +1147,7 @@ async function restore() {
             <button
               v-if="editor.deletedAt"
               type="button"
-              class="btn primary compact"
+              class="btn compact"
               :disabled="busy"
               @click="restore"
             >
@@ -1171,9 +1170,7 @@ async function restore() {
     </div>
   </template>
 
-  <!-- ======================================================================
-       灵感待办页（02-灵感待办.png）
-       ====================================================================== -->
+  <!-- 灵感待办视图 -->
   <template v-else>
     <div class="page-head notes-head">
       <div class="page-head-title">
@@ -1215,7 +1212,8 @@ async function restore() {
             </button>
             <button
               type="submit"
-              class="btn primary compact"
+              class="btn compact"
+              :class="{ primary: !editing }"
               :disabled="busy || !text.trim()"
               :aria-busy="busy"
               title="添加待办（Ctrl+Enter）"
@@ -1401,7 +1399,7 @@ async function restore() {
                   <div class="actions" style="margin: 4px 0 0">
                     <button
                       type="button"
-                      class="btn primary"
+                      class="btn"
                       :disabled="busy || !dirty || !editor.text.trim()"
                       @click="save"
                     >
@@ -1471,7 +1469,7 @@ async function restore() {
                 <button
                   v-if="editor.deletedAt"
                   type="button"
-                  class="btn primary"
+                  class="btn"
                   :disabled="busy"
                   @click="restore"
                 >
@@ -1481,7 +1479,6 @@ async function restore() {
                   v-else
                   type="button"
                   class="btn"
-                  :class="editor.completedAt ? '' : 'primary'"
                   :disabled="busy"
                   title="只改变待办状态，不会自动生成工作记录"
                   @click="toggleComplete()"

@@ -684,7 +684,7 @@ const majorSections = [
             </select>
             <button
               type="button"
-              class="btn light-brand"
+              class="btn"
               :disabled="!selected.length"
               @click="addSources"
             >
@@ -834,7 +834,7 @@ const majorSections = [
                     <button
                       v-if="e.text.trim()"
                       type="button"
-                      class="btn light-brand compact push"
+                      class="btn compact push"
                       @click="editingEntryId = null"
                     >
                       完成编辑
@@ -1000,7 +1000,7 @@ const majorSections = [
                     <button
                       v-if="e.text.trim()"
                       type="button"
-                      class="btn light-brand compact push"
+                      class="btn compact push"
                       @click="editingEntryId = null"
                     >
                       完成编辑

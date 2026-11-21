@@ -159,7 +159,7 @@ async function start() {
           <div class="actions">
             <button
               type="button"
-              class="btn primary"
+              class="btn"
               :disabled="!config || busy || !!active"
               @click="start"
             >

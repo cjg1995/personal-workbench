@@ -392,7 +392,7 @@ async function restore() {
             <div class="actions">
               <button
                 type="button"
-                class="btn primary"
+                class="btn"
                 :disabled="busy"
                 @click="createBackup"
               >

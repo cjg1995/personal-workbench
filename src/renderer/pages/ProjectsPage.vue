@@ -660,7 +660,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="primaryAction(selectedProject.id)?.action === 'start'"
                 type="button"
-                class="btn light-brand"
+                class="btn"
                 :disabled="busy === selectedProject.id"
                 :title="primaryAction(selectedProject.id)?.title"
                 @click="runAction('start', selectedProject.id)"
@@ -669,7 +669,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 type="button"
-                class="btn primary"
+                class="btn"
                 title="在独立窗口编辑项目代码"
                 @click="runAction('editor', selectedProject.id)"
               >
@@ -861,7 +861,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="primaryAction(selectedProject.id)?.action === 'start'"
                 type="button"
-                class="btn primary compact"
+                class="btn compact"
                 :disabled="busy === selectedProject.id"
                 @click="runAction('start', selectedProject.id)"
               >

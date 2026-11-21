@@ -150,7 +150,6 @@ function openOperation() {
       </p>
       <div class="actions wrap">
         <button
-          class="primary"
           @click="attempt(() => call('apk.folder', { taskId: task.id }))"
         >
           <Icon name="folder" />打开产物目录</button
@@ -268,7 +267,6 @@ function openOperation() {
         v-if="
           !compact && ['app', 'erp', 'apk', 'run', 'wechat'].includes(task.type)
         "
-        class="primary"
         @click="openOperation"
       >
         {{

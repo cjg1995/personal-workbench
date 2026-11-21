@@ -822,7 +822,7 @@ onBeforeUnmount(() => {
                 <div class="toolbar-actions">
                   <button
                     type="button"
-                    class="btn primary"
+                    class="btn"
                     :disabled="busyAction"
                     @click="restorePrompt(selectedPrompt)"
                   >
@@ -853,7 +853,7 @@ onBeforeUnmount(() => {
                     </button>
                     <button
                       type="button"
-                      class="btn primary"
+                      class="btn"
                       @click="openFillDialog(selectedPrompt)"
                     >
                       <Icon name="braces" :size="15" />
@@ -863,7 +863,7 @@ onBeforeUnmount(() => {
                   <button
                     v-else
                     type="button"
-                    class="btn primary"
+                    class="btn"
                     @click="copyText(selectedPrompt.body, false)"
                   >
                     <Icon name="copy-p" :size="15" />

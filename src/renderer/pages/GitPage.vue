@@ -805,7 +805,7 @@ onBeforeUnmount(() => {
         </span>
         <button
           type="button"
-          class="btn primary"
+          class="btn"
           :disabled="
             !canSubmit || busy || (repositoryBusy && !activeSubmitTask)
           "
@@ -1020,7 +1020,7 @@ onBeforeUnmount(() => {
       <button
         v-if="state?.operation"
         type="button"
-        class="btn primary compact"
+        class="btn compact"
         :disabled="repositoryBusy || !!conflicts"
         @click="execute('continue')"
       >
@@ -1103,7 +1103,7 @@ onBeforeUnmount(() => {
           </div>
           <button
             type="button"
-            class="btn light-brand compact"
+            class="btn compact"
             :disabled="repositoryBusy || !hasSelection"
             @click="stage('stage')"
           >
@@ -1267,7 +1267,7 @@ onBeforeUnmount(() => {
           <label class="git-checkbox">
             <input v-model="logAll" type="checkbox" />全部分支
           </label>
-          <button type="submit" class="btn primary compact">筛选</button>
+          <button type="submit" class="btn compact">筛选</button>
           <button
             type="button"
             class="btn compact"
@@ -1336,7 +1336,7 @@ onBeforeUnmount(() => {
             <button
               v-if="compareCommit"
               type="button"
-              class="btn light-brand compact"
+              class="btn compact"
               @click="
                 open('compare', {
                   base: compareCommit,
@@ -1517,7 +1517,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="btn light-brand compact"
+              class="btn compact"
               :disabled="repositoryBusy"
               title="成功应用后移除记录"
               @click="execute('stash-pop', stash)"
