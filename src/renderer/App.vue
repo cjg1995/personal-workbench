@@ -181,7 +181,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       >
         <Icon name="penbox" :size="16" />
         <span class="nav-label">快速记录</span>
-        <kbd>Ctrl N</kbd>
       </button>
       <nav aria-label="主导航">
         <div v-for="group in groups" :key="group.name" class="navgroup">
@@ -268,8 +267,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
             <Icon name="panel" :size="16" />
           </button>
           <span class="divider" aria-hidden="true" />
-          <span>本地工作区</span>
-          <span class="slash" aria-hidden="true">/</span>
           <span class="group">{{ currentGroup }}</span>
         </div>
         <div class="chrome-date">

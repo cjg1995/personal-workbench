@@ -178,7 +178,11 @@ onBeforeUnmount(() => observer?.disconnect());
           :style="{ top: (start + index) * rowHeight + 'px' }"
           role="option"
           :aria-selected="file.path === selected"
-          :title="(file.oldPath ? file.oldPath + ' → ' : '') + file.path"
+          :title="
+            (file.oldPath ? file.oldPath + ' → ' : '') +
+            file.path +
+            '（双击或按 Enter 查看差异）'
+          "
           @click="emit('select', file)"
           @dblclick="emit('show', file)"
           @contextmenu.prevent="emit('menu', file, $event)"
@@ -208,32 +212,46 @@ onBeforeUnmount(() => observer?.disconnect());
               <strong>{{ splitFilePath(file.path).name }}</strong>
             </span>
           </div>
-          <span class="git-status-pill" :class="statusMeta(file).tone">
-            <b>{{ statusMeta(file).code }}</b>
+          <span
+            class="git-status-pill"
+            :class="statusMeta(file).tone"
+            :title="statusMeta(file).code + ' · ' + statusMeta(file).label"
+          >
             <span>{{ statusMeta(file).label }}</span>
           </span>
-          <button
-            v-if="file.staged && !file.unstaged && !file.untracked"
-            type="button"
-            class="icon-btn small"
-            :disabled="busy"
-            title="取消暂存此文件"
-            :aria-label="'取消暂存 ' + file.path"
-            @click.stop="emit('unstage', file)"
-          >
-            <Icon name="minus" :size="12" />
-          </button>
-          <button
-            v-else
-            type="button"
-            class="icon-btn small"
-            :disabled="busy"
-            title="暂存此文件"
-            :aria-label="'暂存 ' + file.path"
-            @click.stop="emit('stage', file)"
-          >
-            <Icon name="plus" :size="12" />
-          </button>
+          <div class="file-row-actions">
+            <button
+              type="button"
+              class="icon-btn small blank file-diff-btn"
+              title="查看差异（双击 / Enter）"
+              :aria-label="'查看差异 ' + file.path"
+              @click.stop="emit('show', file)"
+            >
+              <Icon name="eye" :size="13" />
+            </button>
+            <button
+              v-if="file.staged && !file.unstaged && !file.untracked"
+              type="button"
+              class="icon-btn small"
+              :disabled="busy"
+              title="取消暂存"
+              :aria-label="'取消暂存 ' + file.path"
+              @click.stop="emit('unstage', file)"
+            >
+              <Icon name="minus" :size="12" />
+            </button>
+            <button
+              v-else
+              type="button"
+              class="icon-btn small"
+              :disabled="busy"
+              title="暂存"
+              :aria-label="'暂存 ' + file.path"
+              @click.stop="emit('stage', file)"
+            >
+              <Icon name="plus" :size="12" />
+            </button>
+          </div>
         </div>
       </template>
 

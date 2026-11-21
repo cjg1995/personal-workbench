@@ -21,28 +21,16 @@ defineEmits<{
 </script>
 <template>
   <div class="commit-body">
-    <div class="stage-well">
-      <div class="grow">
-        <strong>已暂存 {{ stagedCount }} 个文件</strong>
-        <p v-if="!stagedCount">暂存文件后即可提交。</p>
-        <p v-else>
-          <button
-            type="button"
-            class="text-action"
-            style="padding: 0; min-height: 18px"
-            @click="$emit('inspect')"
-          >
-            查看已暂存变更 →
-          </button>
-        </p>
-      </div>
+    <div class="stage-well" :class="{ ready: stagedCount > 0 }">
+      <span class="stage-dot" aria-hidden="true" />
+      <strong class="grow">已暂存 {{ stagedCount }} 个文件</strong>
       <button
+        v-if="stagedCount"
         type="button"
-        class="btn compact"
-        :disabled="busy || !visibleCount"
-        @click="$emit('stage', false)"
+        class="text-action"
+        @click="$emit('inspect')"
       >
-        暂存当前列表
+        查看 →
       </button>
     </div>
 

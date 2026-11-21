@@ -67,8 +67,8 @@ function resizeComposer() {
   const el = composer.value;
   if (!el) return;
   el.style.height = "auto";
-  const minH = 64;
-  const maxH = 180;
+  const minH = 44;
+  const maxH = 160;
   const next = Math.min(Math.max(el.scrollHeight, minH), maxH);
   el.style.height = `${next}px`;
   el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
@@ -141,25 +141,10 @@ const monthRecords = computed(() =>
         b.createdAt.localeCompare(a.createdAt),
     ),
 );
-const latestRecordLabel = computed(() => {
-  const inMonth = monthRecords.value.find((n) => !!n.happenedOn);
-  if (inMonth?.happenedOn) return formatMonthDay(inMonth.happenedOn, false);
-  const anyDated = activeAll.value
-    .filter((n) => !!n.happenedOn)
-    .sort((a, b) => (b.happenedOn || "").localeCompare(a.happenedOn || ""))[0];
-  return anyDated?.happenedOn ? formatMonthDay(anyDated.happenedOn, false) : "";
-});
-
 const monthTitle = computed(() => formatMonthTitle(month.value));
 const monthDays = computed(() =>
   month.value ? getMonthDays(month.value) : [],
 );
-const workMetaCountLabel = computed(() => {
-  if (!month.value) return `共 ${monthRecords.value.length} 条记录`;
-  if (month.value === currentMonth.value)
-    return `本月 ${monthRecords.value.length} 条记录`;
-  return `${monthTitle.value.label} ${monthRecords.value.length} 条记录`;
-});
 const workActiveTabLabel = computed(() => {
   if (!month.value) return "全部记录";
   if (month.value === currentMonth.value) return "本月记录";
@@ -210,7 +195,7 @@ const activeDay = computed(() =>
     : "",
 );
 
-/* 灵感待办统计与进度环 */
+/* 灵感待办统计 */
 const openIdeas = computed(() => activeAll.value.filter((n) => !n.completedAt));
 const completedIdeas = computed(() =>
   activeAll.value.filter((n) => !!n.completedAt),
@@ -218,35 +203,6 @@ const completedIdeas = computed(() =>
 const ideaTotal = computed(
   () => openIdeas.value.length + completedIdeas.value.length,
 );
-const ideaPercent = computed(() =>
-  ideaTotal.value === 0
-    ? 0
-    : Math.round((completedIdeas.value.length / ideaTotal.value) * 100),
-);
-const progressSegments = computed(() => {
-  const total = ideaTotal.value;
-  const done = completedIdeas.value.length;
-  let lit = 0;
-  if (total > 0 && done > 0) {
-    lit = Math.round((done / total) * 12);
-    if (lit === 0) lit = 1;
-    if (done < total && lit === 12) lit = 11;
-  }
-  const r = 41.5,
-    c = 50;
-  return Array.from({ length: 12 }, (_, i) => {
-    const start = ((-90 + i * 30 + 2.8) * Math.PI) / 180;
-    const end = ((-90 + (i + 1) * 30 - 2.8) * Math.PI) / 180;
-    const x1 = (c + r * Math.cos(start)).toFixed(3);
-    const y1 = (c + r * Math.sin(start)).toFixed(3);
-    const x2 = (c + r * Math.cos(end)).toFixed(3);
-    const y2 = (c + r * Math.sin(end)).toFixed(3);
-    return {
-      d: `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`,
-      done: i < lit,
-    };
-  });
-});
 
 /* 过滤后的列表 */
 const filtered = computed(() => {
@@ -320,10 +276,6 @@ const ideaGroups = computed(() => {
 });
 
 const editorParts = computed(() => splitNoteText(editor.value?.text || ""));
-
-function focusComposer() {
-  composer.value?.focus();
-}
 
 async function canLeave() {
   return (
@@ -676,16 +628,9 @@ async function restore() {
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>工作记录</h1>
-        <div class="h-meta">
-          <span>{{ workMetaCountLabel }}</span>
-          <template v-if="latestRecordLabel">
-            <i class="sep-dot" aria-hidden="true" />
-            <span>最近记录于 {{ latestRecordLabel }}</span>
-          </template>
-        </div>
       </div>
       <form
-        class="quick-entry"
+        class="quick-entry quick-entry-inline"
         :class="{ focus: !!text.trim() }"
         @submit.prevent="add"
       >
@@ -693,59 +638,45 @@ async function restore() {
           ref="composer"
           v-model="text"
           class="entry-input"
-          rows="2"
-          placeholder="记录今天处理的工作，支持多行输入，首行将作为列表标题…"
+          rows="1"
+          placeholder="记录今天的工作…"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
         />
-        <div class="entry-bar">
-          <div class="entry-bar-left">
-            <span class="entry-icon"><Icon name="penbox" :size="14" /></span>
-            <span class="entry-label">
-              {{ text.trim() ? "草稿已暂存" : "新建工作记录" }}
-            </span>
-            <label
-              class="entry-date-chip"
-              :class="{ invalid: !validComposerDate }"
-              title="设置这条工作记录的发生日期"
-            >
-              <span class="entry-date-label">日期</span>
-              <input
-                v-model="composerDate"
-                type="date"
-                required
-                aria-label="新记录发生日期"
-              />
-            </label>
-          </div>
-          <div class="entry-bar-right">
-            <span v-if="text.trim()" class="entry-char-count">
-              {{ text.trim().length }} 字
-            </span>
-            <button
-              v-if="text.trim()"
-              type="button"
-              class="text-action entry-clear"
-              @click="clearComposer"
-            >
-              清空
-            </button>
-            <span class="key-pair" aria-hidden="true">
-              <span class="mini-key">Ctrl</span>
-              <span class="key-plus">+</span>
-              <span class="mini-key">Enter</span>
-            </span>
-            <button
-              type="submit"
-              class="btn primary compact"
-              :disabled="busy || !text.trim() || !validComposerDate"
-              :aria-busy="busy"
-              title="Ctrl+Enter 快捷保存"
-            >
-              保存记录
-            </button>
-          </div>
+        <div class="entry-inline-actions">
+          <label
+            class="entry-date-chip"
+            :class="{ invalid: !validComposerDate }"
+            title="发生日期"
+          >
+            <input
+              v-model="composerDate"
+              type="date"
+              required
+              aria-label="新记录发生日期"
+            />
+          </label>
+          <span v-if="text.trim()" class="entry-char-count">
+            {{ text.trim().length }} 字
+          </span>
+          <button
+            v-if="text.trim()"
+            type="button"
+            class="text-action entry-clear"
+            @click="clearComposer"
+          >
+            清空
+          </button>
+          <button
+            type="submit"
+            class="btn primary compact"
+            :disabled="busy || !text.trim() || !validComposerDate"
+            :aria-busy="busy"
+            title="保存记录（Ctrl+Enter）"
+          >
+            保存记录
+          </button>
         </div>
       </form>
     </div>
@@ -983,20 +914,12 @@ async function restore() {
                   : tab === "deleted"
                     ? "没有已删除记录"
                     : month
-                      ? `${monthTitle.label}还没有工作记录`
-                      : "还没有工作记录"
+                      ? `${monthTitle.label}暂无工作记录`
+                      : "暂无工作记录"
               }}
             </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
-            </button>
-            <button
-              v-else-if="tab === 'active'"
-              type="button"
-              class="link"
-              @click="focusComposer"
-            >
-              在顶部写下第一条
             </button>
           </div>
 
@@ -1076,18 +999,6 @@ async function restore() {
             </button>
           </template>
         </div>
-
-        <div class="footnote">
-          <Icon name="note" :size="13" />
-          <span>{{
-            month
-              ? `所有月份共 ${activeAll.length} 条工作记录`
-              : `已显示全部 ${activeAll.length} 条工作记录`
-          }}</span>
-          <span class="push" />
-          <span>按发生日期降序</span>
-          <Icon name="sort" :size="13" />
-        </div>
       </section>
 
       <section class="card pane note-detail">
@@ -1114,6 +1025,7 @@ async function restore() {
                 type="button"
                 class="btn primary compact"
                 :disabled="!canSaveEdit"
+                title="保存修改（Ctrl+Enter）"
                 @click="save"
               >
                 保存修改
@@ -1132,7 +1044,7 @@ async function restore() {
                     ref="editTextarea"
                     v-model="editor.text"
                     rows="6"
-                    placeholder="填写工作内容，第一行将作为摘要标题…"
+                    placeholder="输入工作内容…"
                     required
                   />
                 </label>
@@ -1151,25 +1063,14 @@ async function restore() {
                     发生日期不能为空，请选择有效日期
                   </p>
                 </div>
-                <div class="actions" style="margin: 4px 0 0">
-                  <button
-                    type="button"
-                    class="btn primary"
-                    :disabled="!canSaveEdit"
-                    @click="save"
-                  >
-                    保存修改
-                  </button>
-                  <button type="button" class="btn" @click="cancelEdit">
-                    取消修改
-                  </button>
-                </div>
               </div>
             </template>
 
             <template v-else>
               <article
                 class="record-sheet"
+                :class="{ editable: !editor.deletedAt }"
+                :title="!editor.deletedAt ? '双击编辑' : undefined"
                 @dblclick="!editor.deletedAt && startEdit()"
               >
                 <div class="sheet-kind">
@@ -1222,7 +1123,7 @@ async function restore() {
             </p>
           </div>
 
-          <div class="detail-foot">
+          <div v-if="!editing" class="detail-foot">
             <button
               v-if="editor.deletedAt"
               type="button"
@@ -1244,32 +1145,23 @@ async function restore() {
           </div>
         </template>
 
-        <div v-else class="empty" style="margin: auto">
-          <span class="empty-icon"><Icon name="document" :size="16" /></span>
-          <p class="empty-title">
-            {{ filtered.length ? "选择一条工作记录" : "暂无可展示的记录详情" }}
-          </p>
-          <p class="empty-hint">点击左侧列表中的记录，在此查看或编辑完整正文。</p>
+        <div v-else class="empty empty-subtle" style="margin: auto">
+          <span>{{ filtered.length ? "未选择记录" : "暂无详情" }}</span>
         </div>
       </section>
     </div>
   </template>
 
   <!-- ======================================================================
-       灵感待办页（02-灵感待办.png）
+       灵感待办页
        ====================================================================== -->
   <template v-else>
     <div class="page-head notes-head">
       <div class="page-head-title">
         <h1>灵感待办</h1>
-        <div class="h-meta">
-          <span>共 {{ ideaTotal }} 项待办</span>
-          <i class="sep-dot" aria-hidden="true" />
-          <span>{{ openIdeas.length }} 项待完成</span>
-        </div>
       </div>
       <form
-        class="quick-entry"
+        class="quick-entry quick-entry-inline"
         :class="{ focus: !!text.trim() }"
         @submit.prevent="add"
       >
@@ -1277,46 +1169,33 @@ async function restore() {
           ref="composer"
           v-model="text"
           class="entry-input"
-          rows="2"
-          placeholder="想到的事，先记下来，支持多行输入…"
+          rows="1"
+          placeholder="记个想法…"
           aria-label="新记录内容"
           @input="resizeComposer"
           @keydown="onComposerKeydown"
         />
-        <div class="entry-bar">
-          <div class="entry-bar-left">
-            <span class="entry-icon"><Icon name="idea" :size="14" /></span>
-            <span class="entry-label">
-              {{ text.trim() ? "草稿已暂存" : "新建待办" }}
-            </span>
-          </div>
-          <div class="entry-bar-right">
-            <span v-if="text.trim()" class="entry-char-count">
-              {{ text.trim().length }} 字
-            </span>
-            <button
-              v-if="text.trim()"
-              type="button"
-              class="text-action entry-clear"
-              @click="clearComposer"
-            >
-              清空
-            </button>
-            <span class="key-pair" aria-hidden="true">
-              <span class="mini-key">Ctrl</span>
-              <span class="key-plus">+</span>
-              <span class="mini-key">Enter</span>
-            </span>
-            <button
-              type="submit"
-              class="btn primary compact"
-              :disabled="busy || !text.trim()"
-              :aria-busy="busy"
-              title="Ctrl+Enter 快捷添加"
-            >
-              添加待办
-            </button>
-          </div>
+        <div class="entry-inline-actions">
+          <span v-if="text.trim()" class="entry-char-count">
+            {{ text.trim().length }} 字
+          </span>
+          <button
+            v-if="text.trim()"
+            type="button"
+            class="text-action entry-clear"
+            @click="clearComposer"
+          >
+            清空
+          </button>
+          <button
+            type="submit"
+            class="btn primary compact"
+            :disabled="busy || !text.trim()"
+            :aria-busy="busy"
+            title="添加待办（Ctrl+Enter）"
+          >
+            添加待办
+          </button>
         </div>
       </form>
     </div>
@@ -1380,22 +1259,14 @@ async function restore() {
                 query
                   ? "没有匹配的待办"
                   : tab === "completed"
-                    ? "还没有已完成的待办"
+                    ? "暂无已完成待办"
                     : tab === "deleted"
                       ? "没有已删除待办"
-                      : "待办清单目前为空"
+                      : "暂无待办"
               }}
             </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
               清除搜索
-            </button>
-            <button
-              v-else-if="tab === 'active'"
-              type="button"
-              class="link"
-              @click="focusComposer"
-            >
-              记下第一条想法
             </button>
           </div>
 
@@ -1433,7 +1304,7 @@ async function restore() {
                     ? '已删除'
                     : n.completedAt
                       ? '重新打开待办'
-                      : '标记完成（不自动生成工作记录）'
+                      : '标记完成'
                 "
                 @click.stop="toggleComplete(n)"
               >
@@ -1452,237 +1323,174 @@ async function restore() {
             </div>
           </section>
         </div>
-
-        <div class="footnote">
-          <Icon name="check-circle" :size="14" />
-          <span>{{
-            tab === "completed"
-              ? "点击条目前的圆圈可重新打开待办"
-              : tab === "deleted"
-                ? "已删除待办可在右侧详情中恢复"
-                : "点击条目前的圆圈可标记完成"
-          }}</span>
-        </div>
       </section>
 
-      <!-- 右栏：完成进度 + 待办详情 -->
-      <div class="inbox-col">
-        <section class="card goal-card">
-          <div class="goal-copy">
-            <h2>完成进度</h2>
-            <div class="goal-stat">
-              <i class="dot" style="color: var(--progress-done)" />
-              <span>已完成 <b>{{ completedIdeas.length }}</b> 项</span>
-            </div>
-            <div class="goal-stat">
-              <i class="dot" style="color: var(--progress-open)" />
-              <span>未完成 <b>{{ openIdeas.length }}</b> 项</span>
-            </div>
+      <!-- 右栏：待办详情（撑满高度，与左栏齐平） -->
+      <section class="card pane idea-detail note-detail">
+        <div class="panel-head spaced-head">
+          <div class="head-title">
+            <Icon name="idea" :size="17" />
+            <h2>待办详情</h2>
+            <span v-if="dirty" class="badge pending">未保存</span>
           </div>
-          <div
-            class="goal-visual"
-            role="img"
-            :aria-label="`待办完成进度 ${ideaPercent}%，已完成 ${completedIdeas.length} 项，未完成 ${openIdeas.length} 项`"
-          >
-            <svg viewBox="0 0 100 100" width="99" height="99" aria-hidden="true">
-              <path
-                v-for="(seg, idx) in progressSegments"
-                :key="idx"
-                :d="seg.d"
-                :stroke="
-                  seg.done ? 'var(--progress-done)' : 'var(--progress-open)'
-                "
-                stroke-width="8"
-                fill="none"
-              />
-            </svg>
-            <div class="goal-center">
-              <strong>{{ ideaPercent }}</strong>
-              <small>%</small>
-            </div>
-          </div>
-        </section>
-
-        <section class="card pane idea-detail note-detail">
-          <div class="panel-head spaced-head">
-            <div class="head-title">
-              <Icon name="idea" :size="17" />
-              <h2>待办详情</h2>
-              <span v-if="dirty" class="badge pending">未保存</span>
-            </div>
-            <template v-if="editor && !editor.deletedAt">
-              <button
-                v-if="!editing"
-                type="button"
-                class="btn compact"
-                @click="startEdit"
-              >
-                <Icon name="penbox" :size="14" />编辑
+          <template v-if="editor && !editor.deletedAt">
+            <button
+              v-if="!editing"
+              type="button"
+              class="btn compact"
+              @click="startEdit"
+            >
+              <Icon name="penbox" :size="14" />编辑
+            </button>
+            <div v-else class="row" style="gap: 6px">
+              <button type="button" class="btn compact" @click="cancelEdit">
+                取消
               </button>
-              <div v-else class="row" style="gap: 6px">
-                <button type="button" class="btn compact" @click="cancelEdit">
-                  取消
-                </button>
-                <button
-                  type="button"
-                  class="btn primary compact"
-                  :disabled="busy || !dirty || !editor.text.trim()"
-                  @click="save"
-                >
-                  保存修改
-                </button>
-              </div>
-            </template>
-          </div>
-
-          <template v-if="editor">
-            <div class="idea-article">
-              <template v-if="editing && !editor.deletedAt">
-                <div class="detail-edit-form" @keydown="onEditKeydown">
-                  <label style="margin: 0">
-                    待办内容
-                    <textarea
-                      ref="editTextarea"
-                      v-model="editor.text"
-                      rows="5"
-                      placeholder="填写待办详情…"
-                      required
-                    />
-                  </label>
-                  <div class="actions" style="margin: 4px 0 0">
-                    <button
-                      type="button"
-                      class="btn primary"
-                      :disabled="busy || !dirty || !editor.text.trim()"
-                      @click="save"
-                    >
-                      保存修改
-                    </button>
-                    <button type="button" class="btn" @click="cancelEdit">
-                      取消修改
-                    </button>
-                  </div>
-                </div>
-              </template>
-
-              <template v-else>
-                <span
-                  class="badge"
-                  :class="
-                    editor.deletedAt
-                      ? 'neutral'
-                      : editor.completedAt
-                        ? 'live'
-                        : 'pending'
-                  "
-                >
-                  <i class="dot" />
-                  {{
-                    editor.deletedAt
-                      ? "已删除"
-                      : editor.completedAt
-                        ? "已完成"
-                        : "未完成"
-                  }}
-                </span>
-                <h3
-                  :class="{
-                    'long-single':
-                      !editorParts.body && editorParts.title.length > 60,
-                  }"
-                  @dblclick="!editor.deletedAt && startEdit()"
-                >
-                  {{ editorParts.title }}
-                </h3>
-                <p v-if="editorParts.body" class="idea-body">
-                  {{ editorParts.body }}
-                </p>
-              </template>
-
-              <dl class="record-fields">
-                <div>
-                  <dt>
-                    <Icon name="clockplus" :size="14" />{{
-                      editor.importBatch ? "导入时间" : "创建时间"
-                    }}
-                  </dt>
-                  <dd>{{ formatDateTime(editor.createdAt) }}</dd>
-                </div>
-                <div>
-                  <dt><Icon name="history" :size="14" />最近修改</dt>
-                  <dd>{{ formatDateTime(editor.updatedAt) }}</dd>
-                </div>
-                <div v-if="editor.completedAt">
-                  <dt><Icon name="check-circle" :size="14" />完成时间</dt>
-                  <dd>{{ formatDateTime(editor.completedAt) }}</dd>
-                </div>
-              </dl>
-
-              <div class="idea-action-row">
-                <button
-                  v-if="editor.deletedAt"
-                  type="button"
-                  class="btn primary"
-                  :disabled="busy"
-                  @click="restore"
-                >
-                  恢复待办
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="btn"
-                  :class="editor.completedAt ? '' : 'primary'"
-                  :disabled="busy"
-                  title="只改变待办状态，不会自动生成工作记录"
-                  @click="toggleComplete()"
-                >
-                  <Icon
-                    :name="editor.completedAt ? 'refresh' : 'check'"
-                    :size="15"
-                  />
-                  {{ editor.completedAt ? "重新打开" : "标记完成" }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="!editor.deletedAt" class="detail-foot">
               <button
                 type="button"
-                class="text-action"
-                @click="
-                  openRecord({
-                    kind: 'work',
-                    text: editor.text,
-                    sourceId: 'idea:' + editor.id,
-                  })
-                "
+                class="btn primary compact"
+                :disabled="busy || !dirty || !editor.text.trim()"
+                title="保存修改（Ctrl+Enter）"
+                @click="save"
               >
-                <Icon name="penbox" :size="14" />
-                <span>记一条工作记录</span>
-                <Icon name="arrow-right" :size="13" />
-              </button>
-              <span class="push" />
-              <button
-                type="button"
-                class="delete-action"
-                :disabled="busy"
-                @click="remove"
-              >
-                <Icon name="trash" :size="14" />删除
+                保存修改
               </button>
             </div>
           </template>
+        </div>
 
-          <div v-else class="empty" style="margin: auto">
-            <span class="empty-icon"><Icon name="idea" :size="16" /></span>
-            <p class="empty-title">
-              {{ filtered.length ? "选择一条待办" : "暂无可展示的待办详情" }}
-            </p>
-            <p class="empty-hint">点击左侧待办可查看详情、编辑或转为工作记录。</p>
+        <template v-if="editor">
+          <div class="idea-article">
+            <template v-if="editing && !editor.deletedAt">
+              <div class="detail-edit-form" @keydown="onEditKeydown">
+                <label style="margin: 0">
+                  待办内容
+                  <textarea
+                    ref="editTextarea"
+                    v-model="editor.text"
+                    rows="6"
+                    placeholder="输入待办详情…"
+                    required
+                  />
+                </label>
+              </div>
+            </template>
+
+            <template v-else>
+              <span
+                class="badge"
+                :class="
+                  editor.deletedAt
+                    ? 'neutral'
+                    : editor.completedAt
+                      ? 'live'
+                      : 'pending'
+                "
+              >
+                <i class="dot" />
+                {{
+                  editor.deletedAt
+                    ? "已删除"
+                    : editor.completedAt
+                      ? "已完成"
+                      : "未完成"
+                }}
+              </span>
+              <h3
+                :class="{
+                  'long-single':
+                    !editorParts.body && editorParts.title.length > 60,
+                  editable: !editor.deletedAt,
+                }"
+                :title="!editor.deletedAt ? '双击编辑' : undefined"
+                @dblclick="!editor.deletedAt && startEdit()"
+              >
+                {{ editorParts.title }}
+              </h3>
+              <p v-if="editorParts.body" class="idea-body">
+                {{ editorParts.body }}
+              </p>
+            </template>
+
+            <dl class="record-fields">
+              <div>
+                <dt>
+                  <Icon name="clockplus" :size="14" />{{
+                    editor.importBatch ? "导入时间" : "创建时间"
+                  }}
+                </dt>
+                <dd>{{ formatDateTime(editor.createdAt) }}</dd>
+              </div>
+              <div>
+                <dt><Icon name="history" :size="14" />最近修改</dt>
+                <dd>{{ formatDateTime(editor.updatedAt) }}</dd>
+              </div>
+              <div v-if="editor.completedAt">
+                <dt><Icon name="check-circle" :size="14" />完成时间</dt>
+                <dd>{{ formatDateTime(editor.completedAt) }}</dd>
+              </div>
+            </dl>
+
+            <div v-if="!editing" class="idea-action-row">
+              <button
+                v-if="editor.deletedAt"
+                type="button"
+                class="btn primary"
+                :disabled="busy"
+                @click="restore"
+              >
+                恢复待办
+              </button>
+              <button
+                v-else
+                type="button"
+                class="btn"
+                :class="editor.completedAt ? '' : 'primary'"
+                :disabled="busy"
+                title="只改变待办状态，不会自动生成工作记录"
+                @click="toggleComplete()"
+              >
+                <Icon
+                  :name="editor.completedAt ? 'refresh' : 'check'"
+                  :size="15"
+                />
+                {{ editor.completedAt ? "重新打开" : "标记完成" }}
+              </button>
+            </div>
           </div>
-        </section>
-      </div>
+
+          <div v-if="!editor.deletedAt && !editing" class="detail-foot">
+            <button
+              type="button"
+              class="text-action"
+              @click="
+                openRecord({
+                  kind: 'work',
+                  text: editor.text,
+                  sourceId: 'idea:' + editor.id,
+                })
+              "
+            >
+              <Icon name="penbox" :size="14" />
+              <span>记一条工作记录</span>
+              <Icon name="arrow-right" :size="13" />
+            </button>
+            <span class="push" />
+            <button
+              type="button"
+              class="delete-action"
+              :disabled="busy"
+              @click="remove"
+            >
+              <Icon name="trash" :size="14" />删除
+            </button>
+          </div>
+        </template>
+
+        <div v-else class="empty empty-subtle" style="margin: auto">
+          <span>{{ filtered.length ? "未选择待办" : "暂无详情" }}</span>
+        </div>
+      </section>
     </div>
   </template>
 </template>

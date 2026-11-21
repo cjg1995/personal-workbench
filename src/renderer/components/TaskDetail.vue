@@ -189,7 +189,7 @@ function openOperation() {
       <dt>
         {{ task.result.commitSkipped ? "跳过提交，当前 HEAD" : "本地提交" }}
       </dt>
-      <dd class="path">{{ task.result.localCommit || "尚未生成" }}</dd>
+      <dd class="path">{{ task.result.localCommit || "—" }}</dd>
       <dt>
         {{ task.type === 'app' ? task.params.target + ' 推送' : '开发分支推送' }}
       </dt>
@@ -198,10 +198,10 @@ function openOperation() {
           task.result.developmentPushed
             ? "已完成"
             : task.result.pushCompleted
-              ? "推送命令已完成"
+              ? "已推送"
               : task.result.pushSkipped
-                ? "没有领先提交，已跳过"
-                : "尚未完成"
+                ? "无领先提交，已跳过"
+                : "未完成"
         }}
       </dd>
       <dt v-if="task.result.testPath">test 工作目录</dt>
@@ -210,16 +210,16 @@ function openOperation() {
       </dd>
       <dt v-if="task.result.finalBranch">最终所在分支</dt>
       <dd v-if="task.result.finalBranch">{{ task.result.finalBranch }}</dd>
-      <dt v-if="task.type === 'app'">远端核对</dt>
+      <dt v-if="task.type === 'app'">远端状态</dt>
       <dd v-if="task.type === 'app'">
-        {{ task.result.verified ? "已核实与本地 HEAD 一致" : "尚未核实成功" }}
+        {{ task.result.verified ? "与本地 HEAD 一致" : "未确认一致" }}
       </dd>
     </dl>
     <p v-if="task.result.stashId" class="notice warning">
       本次 stash 保留 {{ task.result.stashId }}。{{
         task.result.stashApplying
           ? "恢复时发生冲突，请在原工具处理，不能反复 apply/pop。"
-          : "先处理失败原因，再在原工具核实恢复。"
+          : "先处理失败原因，再在原工具恢复。"
       }}
     </p>
     <p v-if="task.result.recoveryDir" class="path">
@@ -288,8 +288,7 @@ function openOperation() {
       @toggle="($event.target as HTMLDetailsElement).open && attempt(loadLog)"
     >
       <summary>详细日志</summary>
-      <p class="small muted">包含本机目录与当前任务输出，敏感值已过滤。</p>
-      <div class="row">
+      <div class="row" style="margin-top: 8px">
         <button class="link" @click="attempt(loadLog)">刷新日志</button
         ><button
           class="link"
@@ -335,7 +334,7 @@ function openOperation() {
         <p class="small">
           <template v-if="r.protectedFile !== ''">
             {{ r.protectedFile || 'store/index.js' }}
-            {{ r.restored ? "已经恢复" : "待核实" }} · </template
+            {{ r.restored ? "已恢复" : "待处理" }} · </template
           >阶段 {{ r.phase }}
         </p>
         <p class="path">{{ r.directory }}</p>
@@ -353,7 +352,7 @@ function openOperation() {
                     projectId: task.projectId,
                     id: r.id,
                   }),
-                '配置保护已核实恢复',
+                '配置保护已恢复',
               )
             "
           >
