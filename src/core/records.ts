@@ -18,7 +18,14 @@ export class RecordsService {
   constructor(
     public store: Store,
     public dataDir: string,
-  ) {}
+  ) {
+    this.purgeDeleted();
+  }
+  purgeDeleted() {
+    for (const n of this.store.list<Note>("note")) {
+      if (n.deletedAt) this.store.delete("note", n.id);
+    }
+  }
   list(kind: RecordKind, deleted = false) {
     return this.store
       .list<Note>("note")
@@ -83,15 +90,8 @@ export class RecordsService {
   }
   remove(noteId: string) {
     const n = this.get(noteId);
-    n.deletedAt = now();
-    n.updatedAt = now();
-    return this.store.set("note", n.id, n);
-  }
-  restore(noteId: string) {
-    const n = this.get(noteId);
-    n.deletedAt = null;
-    n.updatedAt = now();
-    return this.store.set("note", n.id, n);
+    this.store.delete("note", n.id);
+    return n;
   }
   month(month: string, projectId?: string) {
     this.checkMonth(month);

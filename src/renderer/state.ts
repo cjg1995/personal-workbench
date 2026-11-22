@@ -41,7 +41,6 @@ export const model = reactive<{
 export const route = ref("work"),
   context = ref<Record<string, any>>({});
 export const toast = ref<{ text: string; error: boolean } | null>(null);
-export const recordModal = ref<Partial<Note> | null>(null);
 type LeaveGuard = (reason?: "navigate" | "close") => Promise<boolean>;
 export let leaveGuard: LeaveGuard | null = null;
 export const setGuard = (guard: LeaveGuard | null) => {
@@ -122,16 +121,6 @@ export const confirm = (
   }).then((idx) => idx === 1);
 };
 export const choose = (options: OpenDialogOptions) => openUiDialog(options);
-export function openRecord(preset: Partial<Note> = {}) {
-  recordModal.value = {
-    kind: "work",
-    text: "",
-    projectId: null,
-    happenedOn: model.today,
-    result: "",
-    ...preset,
-  };
-}
 export function dateLabel(value: string | null | undefined) {
   return value
     ? new Date(value).toLocaleString("zh-CN", {

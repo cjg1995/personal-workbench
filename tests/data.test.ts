@@ -24,7 +24,7 @@ function fixture(beforeRestore?: () => Promise<void>) {
     backup = new BackupService(store, tasks, dir, beforeRestore);
   return { dir, store, records, tasks, backup };
 }
-test("记录内容唯一必填；编辑保留 ID；待办完成独立；软删除可恢复；重启保留", () => {
+test("记录内容唯一必填；编辑保留 ID；待办完成独立；删除直接彻底移除；重启保留", () => {
   const f = fixture();
   const idea = f.records.save({ kind: "idea", text: "想法" });
   f.records.complete(idea.id, true);
@@ -48,12 +48,12 @@ test("记录内容唯一必填；编辑保留 ID；待办完成独立；软删�
     /发生日期不能为空/,
   );
   assert.equal(f.records.list("work").length, 1);
-  f.records.remove(work.id);
-  assert.equal(f.records.list("work").length, 0);
-  f.records.restore(work.id);
-  assert.equal(f.records.list("work")[0].id, work.id);
+  f.records.remove(idea.id);
+  assert.equal(f.records.list("idea").length, 0);
+  assert.throws(() => f.records.get(idea.id), /记录不存在/);
   f.store.close();
   const reopened = new Store(path.join(f.dir, "data.sqlite"));
+  assert.equal(reopened.get<any>("note", idea.id), undefined);
   assert.equal(reopened.get<any>("note", work.id).text, "编辑后的工作");
   reopened.close();
 });

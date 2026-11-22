@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
-import type { Configuration } from "../../shared/types";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import type { Configuration, ProjectConfig } from "../../shared/types";
+import {
+  defaultUntrackedRuleByProject,
+  formatUntrackedList,
+  parseUntrackedInput,
+} from "../../shared/git-untracked";
 import {
   attempt,
   call,
@@ -14,15 +19,57 @@ import {
 } from "../state";
 import Icon from "../components/Icon.vue";
 
-const tab = ref(context.value.tab || "data"),
+function buildUntrackedDrafts(projects: ProjectConfig[]) {
+  return Object.fromEntries(
+    projects.map((p) => [
+      p.id,
+      {
+        include: formatUntrackedList(p.gitUntrackedInclude),
+        exclude: formatUntrackedList(p.gitUntrackedExclude),
+      },
+    ]),
+  );
+}
+
+const settingsRoot = ref<HTMLElement>(),
+  tab = ref(context.value.tab || "data"),
   form = ref<Configuration>(JSON.parse(JSON.stringify(model.config))),
   saved = ref(JSON.stringify(form.value)),
+  untrackedDrafts = ref<Record<string, { include: string; exclude: string }>>(
+    buildUntrackedDrafts(form.value.projects),
+  ),
   busy = ref(false),
   checks = ref<any[]>([]),
   backups = ref<any[]>([]),
   restorePreview = ref<any>(null);
 
 const dirty = computed(() => JSON.stringify(form.value) !== saved.value);
+
+function syncUntracked(project: ProjectConfig, field: "include" | "exclude") {
+  const raw = untrackedDrafts.value[project.id]?.[field] ?? "";
+  const list = parseUntrackedInput(raw);
+  const key =
+    field === "include" ? "gitUntrackedInclude" : "gitUntrackedExclude";
+  const hadPreset = !!defaultUntrackedRuleByProject[project.id];
+  if (list.length) {
+    project[key] = list;
+  } else {
+    project[key] = hadPreset ? [] : undefined;
+  }
+}
+
+onMounted(async () => {
+  if (tab.value === "projects" && typeof context.value.projectId === "string") {
+    await nextTick();
+    const target = settingsRoot.value?.querySelector<HTMLDetailsElement>(
+      `details.settings-project[data-project-id="${CSS.escape(context.value.projectId)}"]`,
+    );
+    if (target) {
+      target.open = true;
+      target.scrollIntoView({ block: "nearest" });
+    }
+  }
+});
 
 const labels: Record<string, string> = {
   git: "Git 可执行文件",
@@ -87,6 +134,7 @@ async function save() {
   await attempt(async () => {
     form.value = await call("settings.save", form.value);
     saved.value = JSON.stringify(form.value);
+    untrackedDrafts.value = buildUntrackedDrafts(form.value.projects);
     await reload();
     await check();
     notify("本地配置已保存");
@@ -96,6 +144,7 @@ async function save() {
 
 function discard() {
   form.value = JSON.parse(saved.value);
+  untrackedDrafts.value = buildUntrackedDrafts(form.value.projects);
   notify("已放弃未保存修改");
   void attempt(refreshChecks);
 }
@@ -165,6 +214,7 @@ async function restore() {
       await reload();
       form.value = JSON.parse(JSON.stringify(model.config));
       saved.value = JSON.stringify(form.value);
+      untrackedDrafts.value = buildUntrackedDrafts(form.value.projects);
       await check();
       notify("恢复完成，原数据保护备份：" + result.protectedBackup);
     }
@@ -173,7 +223,7 @@ async function restore() {
 }
 </script>
 <template>
-  <div class="subpage-wrap">
+  <div ref="settingsRoot" class="subpage-wrap">
     <div class="page-head">
       <div class="page-head-inline">
         <h1>设置</h1>
@@ -226,6 +276,7 @@ async function restore() {
           <details
             v-for="p in form.projects"
             :key="p.id"
+            :data-project-id="p.id"
             class="settings-project"
           >
             <summary>
@@ -314,6 +365,24 @@ async function restore() {
             <label v-if="p.type === 'spring'" class="form-line">
               <span>Spring Profile</span>
               <input v-model="p.springProfile" placeholder="留空沿用原运行配置" />
+            </label>
+            <label class="form-line">
+              <span>未跟踪显示范围</span>
+              <input
+                v-model="untrackedDrafts[p.id].include"
+                :aria-label="p.id + ' 未跟踪显示范围'"
+                placeholder="留空按已有受跟踪目录，填 * 显示全部，逗号分隔，如 src/, WebRoot/"
+                @input="syncUntracked(p, 'include')"
+              />
+            </label>
+            <label class="form-line">
+              <span>未跟踪排除规则</span>
+              <input
+                v-model="untrackedDrafts[p.id].exclude"
+                :aria-label="p.id + ' 未跟踪排除规则'"
+                placeholder="留空不额外排除，填 * 全部隐藏，逗号分隔，如 *.rar, *.zip"
+                @input="syncUntracked(p, 'exclude')"
+              />
             </label>
           </details>
         </section>

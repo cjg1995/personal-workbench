@@ -8,8 +8,8 @@ import {
   confirm,
   context,
   model,
+  navigate,
   notify,
-  openRecord,
   projectName,
   reload,
   setGuard,
@@ -30,15 +30,24 @@ import Icon from "../components/Icon.vue";
 
 const props = defineProps<{ kind: "idea" | "work" }>();
 const draft = model.formDrafts["note-add-" + props.kind] || {};
+const prefilledText =
+  props.kind === "work" && typeof context.value.draftText === "string"
+    ? context.value.draftText
+    : "";
+const prefilledSourceId =
+  props.kind === "work" && typeof context.value.sourceId === "string"
+    ? context.value.sourceId
+    : null;
 const initialTab =
-  props.kind === "work" && context.value.tab === "undated"
-    ? "active"
-    : context.value.tab || "active";
+  props.kind === "idea" && context.value.tab === "completed"
+    ? "completed"
+    : "active";
 const initialMonth =
   typeof context.value.month === "string"
     ? context.value.month
     : model.today.slice(0, 7);
-const text = ref<string>(draft.text || ""),
+const text = ref<string>(prefilledText || draft.text || ""),
+  composerSourceId = ref<string | null>(prefilledSourceId),
   composerDate = ref<string>(model.today),
   busy = ref(false),
   query = ref(""),
@@ -76,6 +85,7 @@ function resizeComposer() {
 
 function clearComposer() {
   text.value = "";
+  composerSourceId.value = null;
   void nextTick(() => {
     resizeComposer();
     composer.value?.focus();
@@ -129,7 +139,6 @@ const canSaveEdit = computed(
 
 const all = computed(() => model.notes.filter((n) => n.kind === props.kind));
 const activeAll = computed(() => all.value.filter((n) => !n.deletedAt));
-const deletedAll = computed(() => all.value.filter((n) => !!n.deletedAt));
 
 /* 工作记录统计与月份索引 */
 const monthRecords = computed(() =>
@@ -151,7 +160,7 @@ const workActiveTabLabel = computed(() => {
   if (month.value.startsWith(`${currentYear.value}-`)) {
     return `${monthTitle.value.monthNum}月记录`;
   }
-  return `${monthTitle.value.year.replace(/\s+/g, "")}${monthTitle.value.monthNum}月`;
+  return `${monthTitle.value.year.replace(/\s+/g, "")}${monthTitle.value.monthNum}月记录`;
 });
 const dayCounts = computed(() => {
   const counts = new Map<string, number>();
@@ -188,9 +197,7 @@ const monthSummaryList = computed(() => {
     });
 });
 const activeDay = computed(() =>
-  month.value &&
-  tab.value === "active" &&
-  editor.value?.happenedOn?.startsWith(month.value)
+  month.value && editor.value?.happenedOn?.startsWith(month.value)
     ? editor.value.happenedOn
     : "",
 );
@@ -200,17 +207,12 @@ const openIdeas = computed(() => activeAll.value.filter((n) => !n.completedAt));
 const completedIdeas = computed(() =>
   activeAll.value.filter((n) => !!n.completedAt),
 );
-const ideaTotal = computed(
-  () => openIdeas.value.length + completedIdeas.value.length,
-);
 
 /* 过滤后的列表 */
 const filtered = computed(() => {
   const q = query.value.trim().toLowerCase();
-  return all.value
+  return activeAll.value
     .filter((n) => {
-      if (tab.value === "deleted") return !!n.deletedAt;
-      if (n.deletedAt) return false;
       if (props.kind === "idea") {
         return tab.value === "completed" ? !!n.completedAt : !n.completedAt;
       }
@@ -297,7 +299,13 @@ function closeMonthPicker() {
 onMounted(() => {
   window.addEventListener("click", closeMonthPicker);
   window.addEventListener("resize", resizeComposer);
-  void nextTick(resizeComposer);
+  void nextTick(() => {
+    resizeComposer();
+    if (prefilledText) {
+      saveForm("note-add-" + props.kind, { text: text.value });
+      composer.value?.focus();
+    }
+  });
   if (!selected.value || !filtered.value.some((n) => n.id === selected.value)) {
     const first = filtered.value[0];
     if (first) selected.value = first.id;
@@ -443,8 +451,10 @@ async function add() {
       kind: props.kind,
       text: text.value,
       happenedOn: props.kind === "work" ? composerDate.value : model.today,
+      sourceId: props.kind === "work" ? composerSourceId.value : null,
     });
     text.value = "";
+    composerSourceId.value = null;
     if (props.kind === "work") {
       composerDate.value = model.today;
     }
@@ -595,28 +605,44 @@ async function remove() {
       await reload();
       selected.value = filtered.value[0]?.id || null;
       loadEditor();
-      notify("已移入已删除列表，可随时恢复");
+      notify(props.kind === "idea" ? "待办已删除" : "记录已删除");
     }
   });
   busy.value = false;
 }
 
-async function restore() {
-  if (!editor.value || busy.value) return;
-  busy.value = true;
-  await attempt(async () => {
-    const id = editor.value!.id;
-    await call("record.restore", { id });
-    await reload();
-    tab.value =
-      props.kind === "idea" && editor.value?.completedAt
-        ? "completed"
-        : "active";
-    selected.value = id;
-    loadEditor();
-    notify("记录已恢复");
+async function createWorkFromIdea() {
+  if (!editor.value) return;
+  const sourceId = "idea:" + editor.value.id;
+  const existing = model.notes.filter(
+    (n) => !n.deletedAt && n.kind === "work" && n.sourceId === sourceId,
+  );
+  if (
+    existing.length &&
+    !(await confirm(
+      "已存在同来源工作记录",
+      `该待办已生成 ${existing.length} 条工作记录，仍要前往再记一条吗？`,
+      "继续记录",
+    ))
+  ) {
+    return;
+  }
+  const pendingDraft = String(model.formDrafts["note-add-work"]?.text || "").trim();
+  if (
+    pendingDraft &&
+    pendingDraft !== editor.value.text.trim() &&
+    !(await confirm(
+      "覆盖工作记录输入框内容",
+      "工作记录顶部输入框已有未保存草稿，继续将替换为当前待办内容。",
+      "覆盖草稿",
+    ))
+  ) {
+    return;
+  }
+  await navigate("work", {
+    draftText: editor.value.text,
+    sourceId,
   });
-  busy.value = false;
 }
 </script>
 
@@ -700,15 +726,6 @@ async function restore() {
             全部
             <Icon name="down" :size="13" />
           </strong>
-        </button>
-        <button
-          v-if="month"
-          type="button"
-          class="month-clear-btn"
-          title="清空月份筛选，查看所有月份的工作记录"
-          @click="selectMonth('')"
-        >
-          <span>查看全部</span>
         </button>
 
         <div
@@ -865,10 +882,11 @@ async function restore() {
     <!-- 左右分栏 -->
     <div class="duo work-layout">
       <section class="card pane">
-        <div class="panel-head">
+        <div class="panel-head spaced-head">
           <div class="head-title">
             <Icon name="list" :size="17" />
-            <h2>记录列表</h2>
+            <h2>{{ workActiveTabLabel }}</h2>
+            <span class="count">{{ monthRecords.length }}</span>
           </div>
           <label class="search-box" style="margin: 0">
             <Icon name="search" :size="14" />
@@ -881,27 +899,6 @@ async function restore() {
           </label>
         </div>
 
-        <div class="tabs" role="tablist" aria-label="记录状态">
-          <button
-            type="button"
-            role="tab"
-            :class="{ active: tab === 'active' }"
-            :aria-selected="tab === 'active'"
-            @click="switchTab('active')"
-          >
-            {{ workActiveTabLabel }}<span class="count">{{ monthRecords.length }}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            :class="{ active: tab === 'deleted' }"
-            :aria-selected="tab === 'deleted'"
-            @click="switchTab('deleted')"
-          >
-            已删除<span class="count">{{ deletedAll.length }}</span>
-          </button>
-        </div>
-
         <div ref="workListRef" class="work-list">
           <div v-if="!filtered.length" class="empty">
             <span class="empty-icon">
@@ -911,11 +908,9 @@ async function restore() {
               {{
                 query
                   ? "没有匹配的工作记录"
-                  : tab === "deleted"
-                    ? "没有已删除记录"
-                    : month
-                      ? `${monthTitle.label}暂无工作记录`
-                      : "暂无工作记录"
+                  : month
+                    ? `${monthTitle.label}暂无工作记录`
+                    : "暂无工作记录"
               }}
             </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
@@ -923,7 +918,7 @@ async function restore() {
             </button>
           </div>
 
-          <template v-else-if="!month && tab === 'active'">
+          <template v-else-if="!month">
             <section
               v-for="group in workGroups"
               :key="group.key"
@@ -979,11 +974,7 @@ async function restore() {
                   n.happenedOn ? n.happenedOn.slice(8, 10) : "--"
                 }}</strong>
                 <small>{{
-                  n.happenedOn
-                    ? tab === "deleted"
-                      ? `${Number(n.happenedOn.slice(5, 7))}月`
-                      : "周" + weekdayChar(n.happenedOn)
-                    : "未填"
+                  n.happenedOn ? "周" + weekdayChar(n.happenedOn) : "未填"
                 }}</small>
               </div>
               <div class="grow">
@@ -1008,7 +999,7 @@ async function restore() {
             <h2>记录详情</h2>
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
-          <template v-if="editor && !editor.deletedAt">
+          <template v-if="editor">
             <button
               v-if="!editing"
               type="button"
@@ -1036,7 +1027,7 @@ async function restore() {
 
         <template v-if="editor">
           <div class="detail-main">
-            <template v-if="editing && !editor.deletedAt">
+            <template v-if="editing">
               <div class="detail-edit-form" @keydown="onEditKeydown">
                 <label style="margin: 0">
                   正文内容
@@ -1068,20 +1059,13 @@ async function restore() {
 
             <template v-else>
               <article
-                class="record-sheet"
-                :class="{ editable: !editor.deletedAt }"
-                :title="!editor.deletedAt ? '双击编辑' : undefined"
-                @dblclick="!editor.deletedAt && startEdit()"
+                class="record-sheet editable"
+                title="双击编辑"
+                @dblclick="startEdit()"
               >
                 <div class="sheet-kind">
                   <Icon name="note" :size="14" />
                   <span>正文</span>
-                  <span
-                    v-if="editor.deletedAt"
-                    class="badge neutral"
-                    style="margin-left: 6px"
-                    >已删除</span
-                  >
                 </div>
                 <h3
                   :class="{
@@ -1125,16 +1109,6 @@ async function restore() {
 
           <div v-if="!editing" class="detail-foot">
             <button
-              v-if="editor.deletedAt"
-              type="button"
-              class="btn primary compact"
-              :disabled="busy"
-              @click="restore"
-            >
-              恢复记录
-            </button>
-            <button
-              v-else
               type="button"
               class="delete-action"
               :disabled="busy"
@@ -1238,15 +1212,6 @@ async function restore() {
           >
             已完成<span class="count">{{ completedIdeas.length }}</span>
           </button>
-          <button
-            type="button"
-            role="tab"
-            :class="{ active: tab === 'deleted' }"
-            :aria-selected="tab === 'deleted'"
-            @click="switchTab('deleted')"
-          >
-            已删除<span class="count">{{ deletedAll.length }}</span>
-          </button>
         </div>
 
         <div class="idea-groups">
@@ -1260,9 +1225,7 @@ async function restore() {
                   ? "没有匹配的待办"
                   : tab === "completed"
                     ? "暂无已完成待办"
-                    : tab === "deleted"
-                      ? "没有已删除待办"
-                      : "暂无待办"
+                    : "暂无待办"
               }}
             </p>
             <button v-if="query" type="button" class="link" @click="query = ''">
@@ -1295,17 +1258,11 @@ async function restore() {
                 type="button"
                 class="radio-btn"
                 :class="{ checked: !!n.completedAt }"
-                :disabled="busy || !!n.deletedAt"
+                :disabled="busy"
                 :aria-label="
                   n.completedAt ? '重新打开此待办' : '标记此待办完成'
                 "
-                :title="
-                  n.deletedAt
-                    ? '已删除'
-                    : n.completedAt
-                      ? '重新打开待办'
-                      : '标记完成'
-                "
+                :title="n.completedAt ? '重新打开待办' : '标记完成'"
                 @click.stop="toggleComplete(n)"
               >
                 <Icon name="check" :size="11" />
@@ -1333,7 +1290,7 @@ async function restore() {
             <h2>待办详情</h2>
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
-          <template v-if="editor && !editor.deletedAt">
+          <template v-if="editor">
             <button
               v-if="!editing"
               type="button"
@@ -1361,7 +1318,7 @@ async function restore() {
 
         <template v-if="editor">
           <div class="idea-article">
-            <template v-if="editing && !editor.deletedAt">
+            <template v-if="editing">
               <div class="detail-edit-form" @keydown="onEditKeydown">
                 <label style="margin: 0">
                   待办内容
@@ -1379,31 +1336,19 @@ async function restore() {
             <template v-else>
               <span
                 class="badge"
-                :class="
-                  editor.deletedAt
-                    ? 'neutral'
-                    : editor.completedAt
-                      ? 'live'
-                      : 'pending'
-                "
+                :class="editor.completedAt ? 'live' : 'pending'"
               >
                 <i class="dot" />
-                {{
-                  editor.deletedAt
-                    ? "已删除"
-                    : editor.completedAt
-                      ? "已完成"
-                      : "未完成"
-                }}
+                {{ editor.completedAt ? "已完成" : "未完成" }}
               </span>
               <h3
+                class="editable"
                 :class="{
                   'long-single':
                     !editorParts.body && editorParts.title.length > 60,
-                  editable: !editor.deletedAt,
                 }"
-                :title="!editor.deletedAt ? '双击编辑' : undefined"
-                @dblclick="!editor.deletedAt && startEdit()"
+                title="双击编辑"
+                @dblclick="startEdit()"
               >
                 {{ editorParts.title }}
               </h3>
@@ -1433,16 +1378,6 @@ async function restore() {
 
             <div v-if="!editing" class="idea-action-row">
               <button
-                v-if="editor.deletedAt"
-                type="button"
-                class="btn primary"
-                :disabled="busy"
-                @click="restore"
-              >
-                恢复待办
-              </button>
-              <button
-                v-else
                 type="button"
                 class="btn"
                 :class="editor.completedAt ? '' : 'primary'"
@@ -1459,17 +1394,11 @@ async function restore() {
             </div>
           </div>
 
-          <div v-if="!editor.deletedAt && !editing" class="detail-foot">
+          <div v-if="!editing" class="detail-foot">
             <button
               type="button"
               class="text-action"
-              @click="
-                openRecord({
-                  kind: 'work',
-                  text: editor.text,
-                  sourceId: 'idea:' + editor.id,
-                })
-              "
+              @click="createWorkFromIdea"
             >
               <Icon name="penbox" :size="14" />
               <span>记一条工作记录</span>

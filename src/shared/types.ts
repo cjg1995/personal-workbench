@@ -82,6 +82,8 @@ export interface ProjectConfig {
   expectedPort?: number;
   context?: string;
   springProfile?: string;
+  gitUntrackedInclude?: string[];
+  gitUntrackedExclude?: string[];
 }
 export interface ToolsConfig {
   git: string;

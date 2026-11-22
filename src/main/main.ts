@@ -185,12 +185,18 @@ if (!app.requestSingleInstanceLock()) {
       );
   });
   const gitClient = new GitClientService(git, tasks, dataDir, (repo) => {
-    const project = config.get().projects.find((project) =>
-      path.resolve(project.path).toLowerCase() === path.resolve(repo).toLowerCase());
-    if (project?.id === "refsys") return ["src/main/", "pom.xml"];
-    if (project?.id === "refsys-ui")
-      return ["src/"];
-    return undefined;
+    const project = config
+      .get()
+      .projects.find(
+        (project) =>
+          path.resolve(project.path).toLowerCase() ===
+          path.resolve(repo).toLowerCase(),
+      );
+    if (!project) return undefined;
+    return {
+      include: project.gitUntrackedInclude,
+      exclude: project.gitUntrackedExclude,
+    };
   });
   const diffEntry = path.resolve(here, "../renderer/diff.html");
   const diffAllowed = pathToFileURL(diffEntry).href;
@@ -1176,7 +1182,7 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "删除记录",
-            "将此记录移入已删除列表，可在工作台随时恢复。",
+            "删除后该记录将永久移除，无法恢复。",
             "删除这条记录",
             {
               detail: note.text.slice(0, 300),
@@ -1187,11 +1193,6 @@ if (!app.requestSingleInstanceLock()) {
         )
           return null;
         const n = records.remove(p.id);
-        changed();
-        return n;
-      }
-      case "record.restore": {
-        const n = records.restore(p.id);
         changed();
         return n;
       }
@@ -1731,6 +1732,7 @@ if (!app.requestSingleInstanceLock()) {
         )
           return null;
         const result = await backup.restore(p.token);
+        records.purgeDeleted();
         git.executable = config.get().tools.git;
         changed();
         return result;

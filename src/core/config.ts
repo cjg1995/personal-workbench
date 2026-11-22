@@ -1,8 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Configuration, ProjectConfig } from "../shared/types.js";
+import {
+  defaultUntrackedRuleByProject,
+  normalizeUntrackedList,
+} from "../shared/git-untracked.js";
 import { Store } from "./store.js";
 import { ensureDir } from "./util.js";
+
+function applyDefaultUntrackedRules(projects: ProjectConfig[]) {
+  let changed = false;
+  for (const project of projects) {
+    const preset = defaultUntrackedRuleByProject[project.id];
+    if (!preset) continue;
+    if (project.gitUntrackedInclude === undefined) {
+      project.gitUntrackedInclude = [...preset.include];
+      changed = true;
+    }
+    if (project.gitUntrackedExclude === undefined) {
+      project.gitUntrackedExclude = [...preset.exclude];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export function defaults(dataDir: string): Configuration {
   const hp = "HomeProject",
     ref = "推荐官";
@@ -24,9 +46,7 @@ export function defaults(dataDir: string): Configuration {
     appId,
     packageName,
   });
-  return {
-    name: "陈嘉庚",
-    projects: [
+  const projects: ProjectConfig[] = [
       {
         id: "homeproject",
         logicalId: "homeproject",
@@ -115,7 +135,11 @@ export function defaults(dataDir: string): Configuration {
         path: "D:/HBuilderProjects/refsys-wechatproject",
         type: "uni-wechat",
       },
-    ],
+    ];
+  applyDefaultUntrackedRules(projects);
+  return {
+    name: "陈嘉庚",
+    projects,
     tools: {
       git: "C:/Program Files/Git/cmd/git.exe",
       hbNode: "D:/HBuilderX/plugins/node/node.exe",
@@ -149,6 +173,7 @@ export class ConfigService {
       store.set("config", "main", defaults(dataDir));
       return;
     }
+    let migrated = false;
     const customerIndex = existing.projects.findIndex(
       (project) => project.id === "customer",
     );
@@ -161,11 +186,15 @@ export class ConfigService {
         (project) => project.id === "wecom",
       );
       existing.projects.splice(nextWecom + 1, 0, customer);
-      store.set("config", "main", existing);
+      migrated = true;
     }
+    if (applyDefaultUntrackedRules(existing.projects)) migrated = true;
+    if (migrated) store.set("config", "main", existing);
   }
   get() {
-    return this.store.get<Configuration>("config", "main")!;
+    const value = this.store.get<Configuration>("config", "main")!;
+    applyDefaultUntrackedRules(value.projects);
+    return value;
   }
   project(projectId: string) {
     const p = this.get().projects.find((p) => p.id === projectId);
@@ -200,11 +229,38 @@ export class ConfigService {
       if (p.vmArgs && /[\r\n]/.test(p.vmArgs))
         throw new Error("VM 参数不能换行");
     }
+    const projects = value.projects.map((p) => {
+      const next: ProjectConfig = { ...p };
+      const hasPreset = !!defaultUntrackedRuleByProject[p.id];
+      if (next.gitUntrackedInclude !== undefined) {
+        const list = normalizeUntrackedList(
+          next.gitUntrackedInclude,
+          `${p.name} 未跟踪显示范围`,
+        );
+        if (list.length || hasPreset) {
+          next.gitUntrackedInclude = list;
+        } else {
+          delete next.gitUntrackedInclude;
+        }
+      }
+      if (next.gitUntrackedExclude !== undefined) {
+        const list = normalizeUntrackedList(
+          next.gitUntrackedExclude,
+          `${p.name} 未跟踪排除规则`,
+        );
+        if (list.length || hasPreset) {
+          next.gitUntrackedExclude = list;
+        } else {
+          delete next.gitUntrackedExclude;
+        }
+      }
+      return next;
+    });
     for (const [key, val] of Object.entries(value.tools)) {
       if (typeof val !== "string" || (val && !path.isAbsolute(val)))
         throw new Error(`工具配置需要绝对路径：${key}`);
     }
-    this.store.set("config", "main", value);
+    this.store.set("config", "main", { ...value, projects });
     return this.get();
   }
   check(input?: {

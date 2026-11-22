@@ -22,6 +22,7 @@ import {
   confirm,
   context,
   model,
+  navigate,
   notify,
   route,
   setGuard,
@@ -29,6 +30,7 @@ import {
 } from "../state";
 import { submitTabForProject } from "../../shared/submit-policy";
 import { gitOperationLabel } from "../../shared/git-labels";
+import { describeUntrackedRule } from "../../shared/git-untracked";
 import ProjectSelect from "../components/ProjectSelect.vue";
 import Icon from "../components/Icon.vue";
 import VirtualFiles from "../components/VirtualFiles.vue";
@@ -137,8 +139,18 @@ const branches = ref<GitBranch[]>([]),
   branchQuery = ref(""),
   logQuery = ref(""),
   logFile = ref(""),
+  logFollowFile = ref(""),
+  appliedLogQuery = ref(""),
+  appliedLogFile = ref(""),
   logAll = ref(true),
+  logLoading = ref(false),
   logMore = ref(false);
+const hasLogFilter = computed(
+  () => !!logQuery.value.trim() || !!logFile.value.trim(),
+);
+const hasAppliedLogFilter = computed(
+  () => !!appliedLogQuery.value || !!appliedLogFile.value,
+);
 const quickBranchOpen = ref(false),
   quickBranchLoading = ref(false),
   quickBranchQuery = ref(""),
@@ -258,7 +270,48 @@ const chosenCommit = ref<GitCommit>(),
     message: string;
     files: { path: string; oldPath?: string; status: string }[];
   }>(),
-  compareCommit = ref("");
+  logLayoutRef = ref<HTMLElement>(),
+  resizingDetail = ref(false),
+  detailWidth = ref<number | null>(readSavedDetailWidth());
+
+function readSavedDetailWidth(): number | null {
+  try {
+    const raw = Number(localStorage.getItem("git-log-detail-width"));
+    return Number.isFinite(raw) && raw >= 300 && raw <= 900 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function startResizeDetail(event: PointerEvent) {
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  resizingDetail.value = true;
+}
+
+function moveResizeDetail(event: PointerEvent) {
+  if (!resizingDetail.value || !logLayoutRef.value) return;
+  const rect = logLayoutRef.value.getBoundingClientRect();
+  const maxWidth = Math.max(360, Math.floor(rect.width - 440));
+  const next = Math.max(300, Math.min(maxWidth, Math.round(rect.right - event.clientX)));
+  detailWidth.value = next;
+}
+
+function stopResizeDetail() {
+  if (!resizingDetail.value) return;
+  resizingDetail.value = false;
+  if (detailWidth.value) {
+    try {
+      localStorage.setItem("git-log-detail-width", String(detailWidth.value));
+    } catch {}
+  }
+}
+
+function resetDetailWidth() {
+  detailWidth.value = null;
+  try {
+    localStorage.removeItem("git-log-detail-width");
+  } catch {}
+}
 const dialog = ref(""),
   form = ref<Record<string, any>>({}),
   preview = ref<any>(),
@@ -309,6 +362,17 @@ const hiddenUntrackedCount = computed(
       (file) => file.untracked && file.inTrackedDirectory === false,
     ).length || 0,
 );
+const untrackedRuleHint = computed(() => {
+  const project = model.config?.projects.find((p) => p.id === projectId.value);
+  return describeUntrackedRule(
+    project
+      ? {
+          include: project.gitUntrackedInclude,
+          exclude: project.gitUntrackedExclude,
+        }
+      : undefined,
+  );
+});
 const stagedCount = computed(
     () => state.value?.files.filter((f) => f.staged).length || 0,
   ),
@@ -563,13 +627,22 @@ async function submitDialog() {
 async function loadLog(append = false) {
   const id = ++logId,
     project = projectId.value,
-    offset = append ? commits.value.length : 0;
+    offset = append ? commits.value.length : 0,
+    queryText = logQuery.value.trim(),
+    fileText = logFile.value.trim(),
+    follow = !!logFollowFile.value && fileText === logFollowFile.value;
+  logLoading.value = true;
+  if (!append) {
+    appliedLogQuery.value = queryText;
+    appliedLogFile.value = fileText;
+  }
   try {
     const rows = await call<GitCommit[]>("git.log", {
       projectId: project,
       offset,
-      query: logQuery.value,
-      file: logFile.value || undefined,
+      query: queryText || undefined,
+      file: fileText || undefined,
+      follow,
       all: logAll.value,
     });
     if (id !== logId || disposed || project !== projectId.value) return;
@@ -577,6 +650,32 @@ async function loadLog(append = false) {
     logMore.value = rows.length === 150;
   } catch (e) {
     if (id === logId) notify(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    if (id === logId) logLoading.value = false;
+  }
+}
+
+function setLogScope(all: boolean) {
+  if (logAll.value === all) return;
+  logAll.value = all;
+  void loadLog();
+}
+
+function clearLogFilters() {
+  logQuery.value = "";
+  logFile.value = "";
+  logFollowFile.value = "";
+  void loadLog();
+}
+
+function onLogQuerySearch() {
+  if (!logQuery.value.trim() && appliedLogQuery.value) void loadLog();
+}
+
+function onLogFileSearch() {
+  if (!logFile.value.trim() && appliedLogFile.value) {
+    logFollowFile.value = "";
+    void loadLog();
   }
 }
 
@@ -596,11 +695,13 @@ async function selectCommit(commit: GitCommit) {
 }
 
 function history(file: ChangeFile) {
+  const wasLog = tab.value === "log";
   tab.value = "log";
   logFile.value = file.path;
+  logFollowFile.value = file.path;
   logAll.value = false;
   menu.value = undefined;
-  void loadLog();
+  if (wasLog) void loadLog();
 }
 
 function historicalDiff(file: { path: string; status: string }) {
@@ -710,7 +811,12 @@ watch(projectId, () => {
   stashes.value = [];
   details.value = undefined;
   chosenCommit.value = undefined;
+  logQuery.value = "";
   logFile.value = "";
+  logFollowFile.value = "";
+  appliedLogQuery.value = "";
+  appliedLogFile.value = "";
+  logLoading.value = false;
   output.value = "";
   message.value = "";
   amend.value = false;
@@ -1235,13 +1341,26 @@ onBeforeUnmount(() => {
         <div
           v-if="hiddenUntrackedCount"
           class="git-info"
-          title="项目根目录及全新子目录中的未跟踪文件默认隐藏。"
+          :title="untrackedRuleHint"
         >
           <Icon name="eye-off" :size="14" />
           <span
             >已按项目规则隐藏
             {{ hiddenUntrackedCount.toLocaleString() }} 个未跟踪文件</span
           >
+          <span class="push" />
+          <button
+            type="button"
+            class="text-action"
+            @click="
+              navigate('settings', {
+                tab: 'projects',
+                projectId,
+              })
+            "
+          >
+            规则设置
+          </button>
         </div>
       </section>
 
@@ -1268,33 +1387,80 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Git Log -->
-    <div v-else-if="tab === 'log'" class="git-log-layout card">
+    <div
+      v-else-if="tab === 'log'"
+      ref="logLayoutRef"
+      class="git-log-layout card"
+      :class="{ resizing: resizingDetail }"
+    >
       <div class="git-log-main">
-        <form class="git-filterbar" @submit.prevent="loadLog()">
-          <input
-            v-model="logQuery"
-            aria-label="搜索提交说明"
-            placeholder="搜索提交说明"
-          />
-          <input
-            v-model="logFile"
-            aria-label="文件历史路径"
-            placeholder="文件路径（可选）"
-          />
-          <label class="git-checkbox">
-            <input v-model="logAll" type="checkbox" />全部分支
+        <form class="git-filterbar git-log-filterbar" @submit.prevent="loadLog()">
+          <div
+            class="segmented git-log-scope"
+            role="group"
+            aria-label="提交分支范围"
+          >
+            <button
+              type="button"
+              :class="{ active: !logAll }"
+              :aria-pressed="!logAll"
+              :title="`仅显示当前分支${state?.branch ? '（' + state.branch + '）' : ''}的提交`"
+              @click="setLogScope(false)"
+            >
+              当前分支
+            </button>
+            <button
+              type="button"
+              :class="{ active: logAll }"
+              :aria-pressed="logAll"
+              title="显示所有本地与远程分支的提交"
+              @click="setLogScope(true)"
+            >
+              全部分支
+            </button>
+          </div>
+          <label
+            class="search-box git-log-input"
+            title="按提交说明关键词搜索提交"
+          >
+            <Icon name="search" :size="14" />
+            <input
+              v-model="logQuery"
+              type="search"
+              aria-label="搜索提交说明"
+              placeholder="搜索提交说明"
+              @search="onLogQuerySearch"
+            />
           </label>
-          <button type="submit" class="btn primary compact">筛选</button>
+          <label
+            class="search-box git-log-file-input"
+            title="按改动过的文件名或路径筛选提交（支持模糊搜索，不区分大小写）"
+          >
+            <Icon name="file" :size="14" />
+            <input
+              v-model="logFile"
+              type="search"
+              aria-label="按改动文件名或路径筛选"
+              placeholder="按改动文件名/路径筛选"
+              @input="logFollowFile = ''"
+              @search="onLogFileSearch"
+            />
+          </label>
           <button
+            type="submit"
+            class="btn primary compact"
+            :disabled="logLoading"
+          >
+            搜索
+          </button>
+          <button
+            v-if="hasLogFilter"
             type="button"
             class="btn compact"
-            @click="
-              logQuery = '';
-              logFile = '';
-              loadLog();
-            "
+            :disabled="logLoading"
+            @click="clearLogFilters"
           >
-            重置
+            清空
           </button>
         </form>
         <div class="git-log-scroll">
@@ -1308,64 +1474,57 @@ onBeforeUnmount(() => {
             v-if="logMore"
             type="button"
             class="btn compact git-load-more"
+            :disabled="logLoading"
             @click="loadLog(true)"
           >
             加载更多历史
           </button>
-          <p v-if="!commits.length" class="git-empty">没有匹配的提交</p>
-        </div>
-      </div>
-      <aside class="git-log-detail">
-        <template v-if="details">
-          <code>{{ details.commit }}</code>
-          <pre>{{ details.message }}</pre>
-          <div class="git-detail-actions">
+          <p v-if="logLoading && !commits.length" class="git-empty">
+            正在加载提交历史…
+          </p>
+          <div v-else-if="!commits.length" class="git-empty">
+            <p>
+              {{
+                !logAll && hasAppliedLogFilter
+                  ? "当前分支没有匹配的提交"
+                  : "没有匹配的提交"
+              }}
+            </p>
             <button
+              v-if="!logAll && hasAppliedLogFilter"
               type="button"
-              class="btn compact"
-              :disabled="repositoryBusy"
-              @click="execute('revert', { ref: details.commit })"
+              class="link"
+              @click="setLogScope(true)"
             >
-              Revert
-            </button>
-            <button
-              type="button"
-              class="btn compact"
-              :disabled="repositoryBusy"
-              @click="execute('cherry-pick', { ref: details.commit })"
-            >
-              Cherry-pick
-            </button>
-            <button
-              type="button"
-              class="btn compact"
-              @click="open('create-branch', { ref: details.commit })"
-            >
-              创建分支
-            </button>
-            <button
-              type="button"
-              class="btn compact"
-              @click="compareCommit = details.commit"
-            >
-              选为比较起点
-            </button>
-            <button
-              v-if="compareCommit"
-              type="button"
-              class="btn light-brand compact"
-              @click="
-                open('compare', {
-                  base: compareCommit,
-                  target: details.commit,
-                })
-              "
-            >
-              比较两个提交
+              在全部分支中搜索
             </button>
           </div>
-          <p class="git-help">{{ details.files.length }} 个文件</p>
+        </div>
+      </div>
+      <div
+        class="git-log-splitter"
+        role="separator"
+        aria-label="调整提交详情宽度"
+        aria-orientation="vertical"
+        title="拖动调整详情栏宽度，双击恢复默认"
+        @pointerdown="startResizeDetail"
+        @pointermove="moveResizeDetail"
+        @pointerup="stopResizeDetail"
+        @pointercancel="stopResizeDetail"
+        @dblclick="resetDetailWidth"
+      />
+      <aside
+        class="git-log-detail"
+        :style="detailWidth ? { width: detailWidth + 'px' } : undefined"
+      >
+        <template v-if="details">
+          <div class="git-log-detail-head">
+            <code>{{ details.commit }}</code>
+            <pre>{{ details.message }}</pre>
+            <p class="git-help">{{ details.files.length }} 个文件</p>
+          </div>
           <VirtualFiles
+            variant="detail"
             :files="detailFiles"
             :selected="selected"
             @select="selected = $event.path"

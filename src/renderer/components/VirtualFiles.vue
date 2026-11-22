@@ -10,7 +10,7 @@ const props = withDefaults(
     selected?: string;
     checked?: string[];
     multiple?: boolean;
-    variant?: "compact" | "rich";
+    variant?: "compact" | "rich" | "detail";
     busy?: boolean;
   }>(),
   {
@@ -35,7 +35,9 @@ const viewport = ref<HTMLElement>(),
   top = ref(0),
   height = ref(400);
 
-const rowHeight = computed(() => (props.variant === "rich" ? 64 : 32));
+const rowHeight = computed(() =>
+  props.variant === "rich" ? 64 : props.variant === "detail" ? 48 : 32,
+);
 const start = computed(() =>
   Math.max(0, Math.floor(top.value / rowHeight.value) - 8),
 );
@@ -252,6 +254,59 @@ onBeforeUnmount(() => observer?.disconnect());
               <Icon name="plus" :size="12" />
             </button>
           </div>
+        </div>
+      </template>
+
+      <template v-else-if="variant === 'detail'">
+        <div
+          v-for="(file, index) in visible"
+          :id="'file-' + (start + index)"
+          :key="file.path"
+          class="git-file-row detail"
+          :class="{
+            active: file.path === selected,
+            conflicted: file.conflicted,
+          }"
+          :style="{ top: (start + index) * rowHeight + 'px' }"
+          role="option"
+          :aria-selected="file.path === selected"
+          :title="
+            (file.oldPath ? file.oldPath + ' → ' : '') +
+            file.path +
+            '（双击或按 Enter 查看差异）'
+          "
+          @click="emit('select', file)"
+          @dblclick="emit('show', file)"
+          @contextmenu.prevent="emit('menu', file, $event)"
+        >
+          <span
+            class="git-status-code"
+            :class="
+              file.conflicted
+                ? 'conflict'
+                : file.untracked || file.status.startsWith('A')
+                  ? 'added'
+                  : file.status.startsWith('D')
+                    ? 'deleted'
+                    : ''
+            "
+            >{{ file.conflicted ? "!" : file.status }}</span
+          >
+          <span class="git-file-path detail-path">
+            <small v-if="splitFilePath(file.path).dir">{{
+              splitFilePath(file.path).dir
+            }}</small>
+            <strong>{{ splitFilePath(file.path).name }}</strong>
+          </span>
+          <button
+            type="button"
+            class="icon-btn small blank file-diff-btn"
+            title="查看差异（双击 / Enter）"
+            :aria-label="'查看差异 ' + file.path"
+            @click.stop="emit('show', file)"
+          >
+            <Icon name="eye" :size="13" />
+          </button>
         </div>
       </template>
 

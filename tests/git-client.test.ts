@@ -6,9 +6,16 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { Git } from "../src/core/git.js";
 import { GitClientService } from "../src/core/git-client.js";
+import { ConfigService, defaults } from "../src/core/config.js";
 import { Store } from "../src/core/store.js";
 import { TaskManager } from "../src/core/tasks.js";
 import { conflictBlocks } from "../src/shared/conflicts.js";
+import {
+  defaultUntrackedRuleByProject,
+  describeUntrackedRule,
+  parseUntrackedInput,
+  type GitUntrackedFilter,
+} from "../src/shared/git-untracked.js";
 const root = path.resolve(".local/git-client-fixtures", randomUUID());
 fs.mkdirSync(root, { recursive: true });
 let sequence = 0;
@@ -24,7 +31,10 @@ function write(repo: string, file: string, text: string | Buffer) {
   fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
   fs.writeFileSync(path.join(repo, file), text);
 }
-function fixture(unborn = false, untrackedPaths?: string[]) {
+function fixture(
+  unborn = false,
+  untrackedFilter?: GitUntrackedFilter | string[],
+) {
   const repo = path.join(root, String(++sequence));
   fs.mkdirSync(repo);
   git(repo, "init", "-b", "dev");
@@ -39,7 +49,7 @@ function fixture(unborn = false, untrackedPaths?: string[]) {
   fs.mkdirSync(data);
   const store = new Store(path.join(data, "test.sqlite")),
     tasks = new TaskManager(store, data),
-    client = new GitClientService(new Git(), tasks, data, () => untrackedPaths);
+    client = new GitClientService(new Git(), tasks, data, () => untrackedFilter);
   if (!unborn) {
     write(
       repo,
@@ -941,4 +951,272 @@ test("修改/删除冲突可明确接受删除并完成 Merge", async () => {
   } finally {
     f.store.close();
   }
+});
+test("Git Log 支持按文件名/路径模糊筛选、分支范围生效与精确文件重命名跟踪", async () => {
+  const f = fixture();
+  try {
+    write(f.repo, "src/pages/CustomerController.java", "v1\n");
+    write(f.repo, "src/reports/itemPlan.jrxml", "r1\n");
+    git(f.repo, "add", ".");
+    git(f.repo, "commit", "-m", "add controller and report");
+    git(f.repo, "switch", "-c", "feature/contract");
+    write(f.repo, "WebRoot/WEB-INF/jsp/ContractDetail.jsp", "c1\n");
+    git(f.repo, "add", ".");
+    git(f.repo, "commit", "-m", "add contract jsp");
+    git(f.repo, "switch", "dev");
+    git(f.repo, "mv", "src/reports/itemPlan.jrxml", "src/reports/itemPlanV2.jrxml");
+    git(f.repo, "commit", "-m", "rename itemPlan report");
+    write(f.repo, "src/pages/CustomerController.java", "v2\n");
+    git(f.repo, "commit", "-am", "update controller");
+
+    // 模糊文件名与大小写不敏感
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "customercontroller", all: false })).map(
+        (c) => c.subject,
+      ),
+      ["update controller", "add controller and report"],
+    );
+    // 反斜杠路径片段与通配符
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "pages\\Customer", all: false })).map(
+        (c) => c.subject,
+      ),
+      ["update controller", "add controller and report"],
+    );
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "*.java", all: false })).map(
+        (c) => c.subject,
+      ),
+      ["update controller", "add controller and report"],
+    );
+    // 方括号字符按字面匹配，不误触发字符类
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "[1].txt", all: false })).map(
+        (c) => c.subject,
+      ),
+      ["base"],
+    );
+    // 文件筛选同时尊重当前分支 / 全部分支范围
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "ContractDetail", all: false })).map(
+        (c) => c.subject,
+      ),
+      [],
+    );
+    assert.deepEqual(
+      (await f.client.log(f.repo, { file: "ContractDetail", all: true })).map(
+        (c) => c.subject,
+      ),
+      ["add contract jsp"],
+    );
+    // 组合提交说明 + 模糊文件名筛选
+    assert.deepEqual(
+      (
+        await f.client.log(f.repo, {
+          query: "update",
+          file: "Controller.java",
+          all: true,
+        })
+      ).map((c) => c.subject),
+      ["update controller"],
+    );
+    // 精确文件历史支持 --follow 跟踪重命名
+    assert.deepEqual(
+      (
+        await f.client.log(f.repo, {
+          file: "src/reports/itemPlanV2.jrxml",
+          follow: true,
+          all: false,
+        })
+      ).map((c) => c.subject),
+      ["rename itemPlan report", "add controller and report"],
+    );
+    // 非法控制字符被拒绝
+    await assert.rejects(
+      f.client.log(f.repo, { file: "bad\0name" }),
+      /文件筛选条件无效/,
+    );
+  } finally {
+    f.store.close();
+  }
+});
+test("项目未跟踪规则支持显示范围、排除规则、通配符与 * 兜底", async () => {
+  // 1) 默认受跟踪目录 + 排除压缩包（典型 homeproject 场景）
+  const f1 = fixture(false, {
+    exclude: ["*.rar", "*.zip", "WebRoot/WEB-INF/temp/"],
+  });
+  try {
+    write(f1.repo, "WebRoot/WEB-INF/web.xml", "<web-app/>\n");
+    git(f1.repo, "add", ".");
+    git(f1.repo, "commit", "-m", "track web-inf");
+    const expected: Record<string, boolean> = {
+      "WebRoot/WEB-INF/jsp.rar": false,
+      "WebRoot/WEB-INF/LIB.RAR": false,
+      "WebRoot/WEB-INF/archive.zip": false,
+      "WebRoot/WEB-INF/temp/debug.jsp": false,
+      "WebRoot/WEB-INF/new.jsp": true,
+      "WebRoot/WEB-INF/newsub/page.jsp": false,
+      "root.txt": false,
+    };
+    for (const file of Object.keys(expected)) write(f1.repo, file, "new\n");
+    const rows = (await f1.client.status(f1.repo)).files;
+    for (const [file, visible] of Object.entries(expected)) {
+      assert.equal(
+        rows.find((row) => row.path === file)?.inTrackedDirectory,
+        visible,
+        file,
+      );
+    }
+  } finally {
+    f1.store.close();
+  }
+
+  // 2) 白名单 + 排除叠加（排除优先于包含，支持路径通配和 **/ 目录匹配）
+  const f2 = fixture(false, {
+    include: ["src/", "WebRoot/WEB-INF/"],
+    exclude: ["*.rar", "WebRoot/WEB-INF/*.bak", "**/cache/"],
+  });
+  try {
+    const expected: Record<string, boolean> = {
+      "src/newpkg/Service.java": true,
+      "src/cache/tmp.java": false,
+      "WebRoot/WEB-INF/jsp/index.jsp": true,
+      "WebRoot/WEB-INF/jsp.rar": false,
+      "WebRoot/WEB-INF/web.xml.bak": false,
+      "WebRoot/WEB-INF/sub/keep.bak": true,
+      "docs/readme.md": false,
+    };
+    for (const file of Object.keys(expected)) write(f2.repo, file, "new\n");
+    const rows = (await f2.client.status(f2.repo)).files;
+    for (const [file, visible] of Object.entries(expected)) {
+      assert.equal(
+        rows.find((row) => row.path === file)?.inTrackedDirectory,
+        visible,
+        file,
+      );
+    }
+  } finally {
+    f2.store.close();
+  }
+
+  // 3) include: ["*"] 显示全部（除 exclude）与 exclude: ["*"] 全部隐藏（保留已跟踪修改）
+  const f3 = fixture(false, { include: ["*"], exclude: ["*.rar"] });
+  try {
+    write(f3.repo, "root-new.txt", "new\n");
+    write(f3.repo, "brand-new/file.ts", "new\n");
+    write(f3.repo, "brand-new/dump.rar", "new\n");
+    const rows = (await f3.client.status(f3.repo)).files;
+    assert.equal(rows.find((r) => r.path === "root-new.txt")?.inTrackedDirectory, true);
+    assert.equal(rows.find((r) => r.path === "brand-new/file.ts")?.inTrackedDirectory, true);
+    assert.equal(rows.find((r) => r.path === "brand-new/dump.rar")?.inTrackedDirectory, false);
+  } finally {
+    f3.store.close();
+  }
+
+  const f4 = fixture(false, { include: ["src/"], exclude: ["*"] });
+  try {
+    write(f4.repo, "src/App.java", "new\n");
+    write(f4.repo, "other.js", "tracked edit\n");
+    const rows = (await f4.client.status(f4.repo)).files;
+    assert.equal(rows.find((r) => r.path === "src/App.java")?.inTrackedDirectory, false);
+    assert.equal(rows.find((r) => r.path === "other.js")?.untracked, false);
+  } finally {
+    f4.store.close();
+  }
+});
+test("ConfigService 自动迁移全部项目默认未跟踪规则、保留用户清空与校验非法路径", () => {
+  const dir = path.join(root, "config-" + ++sequence);
+  fs.mkdirSync(dir, { recursive: true });
+  const dbPath = path.join(dir, "workbench.sqlite");
+  // 模拟旧版本已落盘配置（未包含 gitUntrackedInclude / gitUntrackedExclude 字段）
+  const legacyStore = new Store(dbPath);
+  const legacy = defaults(dir);
+  for (const project of legacy.projects) {
+    delete project.gitUntrackedInclude;
+    delete project.gitUntrackedExclude;
+  }
+  legacyStore.set("config", "main", legacy);
+  legacyStore.close();
+
+  const store1 = new Store(dbPath);
+  try {
+    const cfg1 = new ConfigService(store1, dir);
+    const loaded = cfg1.get();
+    for (const project of loaded.projects) {
+      const preset = defaultUntrackedRuleByProject[project.id];
+      assert.ok(preset, `missing preset for ${project.id}`);
+      assert.deepEqual(project.gitUntrackedInclude, preset.include, project.id);
+      assert.deepEqual(project.gitUntrackedExclude, preset.exclude, project.id);
+    }
+    assert.deepEqual(
+      loaded.projects.find((p) => p.id === "homeproject")?.gitUntrackedInclude,
+      ["src/", "WebRoot/"],
+    );
+    assert.deepEqual(
+      loaded.projects.find((p) => p.id === "refsys")?.gitUntrackedInclude,
+      ["src/main/", "pom.xml"],
+    );
+
+    // 清洗、去重；手动清空 include 与 exclude 后均持久保留空数组
+    const hp = loaded.projects.find((p) => p.id === "homeproject")!;
+    hp.gitUntrackedExclude = [" *.rar ", ".\\WebRoot\\WEB-INF\\temp\\", "*.rar"];
+    const refsys = loaded.projects.find((p) => p.id === "refsys")!;
+    refsys.gitUntrackedInclude = [];
+    refsys.gitUntrackedExclude = [];
+    const saved = cfg1.save(loaded);
+    assert.deepEqual(
+      saved.projects.find((p) => p.id === "homeproject")?.gitUntrackedExclude,
+      ["*.rar", "WebRoot/WEB-INF/temp/"],
+    );
+    assert.deepEqual(
+      saved.projects.find((p) => p.id === "refsys")?.gitUntrackedInclude,
+      [],
+    );
+    assert.deepEqual(
+      saved.projects.find((p) => p.id === "refsys")?.gitUntrackedExclude,
+      [],
+    );
+
+    // 非法规则被拦截
+    const invalid = cfg1.get();
+    invalid.projects[0].gitUntrackedExclude = ["../outside"];
+    assert.throws(() => cfg1.save(invalid), /不能包含上级目录/);
+
+    invalid.projects[0].gitUntrackedExclude = ["D:/abs/path"];
+    assert.throws(() => cfg1.save(invalid), /必须使用相对路径/);
+
+    invalid.projects[0].gitUntrackedExclude = ["/"];
+    assert.throws(() => cfg1.save(invalid), /包含无效路径/);
+  } finally {
+    store1.close();
+  }
+
+  // 重新打开数据库后，用户手动清空的 refsys 仍保持 []，不被默认规则覆盖
+  const store2 = new Store(dbPath);
+  try {
+    const cfg2 = new ConfigService(store2, dir);
+    assert.deepEqual(
+      cfg2.get().projects.find((p) => p.id === "refsys")?.gitUntrackedInclude,
+      [],
+    );
+    assert.deepEqual(
+      cfg2.get().projects.find((p) => p.id === "refsys")?.gitUntrackedExclude,
+      [],
+    );
+  } finally {
+    store2.close();
+  }
+
+  assert.deepEqual(
+    parseUntrackedInput("src/main/, pom.xml，*.rar\n*.zip"),
+    ["src/main/", "pom.xml", "*.rar", "*.zip"],
+  );
+  assert.match(
+    describeUntrackedRule({ include: ["src/"], exclude: ["*.rar"] }),
+    /src\/.*已排除：\*\.rar/,
+  );
+  assert.match(
+    describeUntrackedRule({ exclude: ["*"] }),
+    /隐藏全部未跟踪文件/,
+  );
 });

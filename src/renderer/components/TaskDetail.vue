@@ -6,10 +6,8 @@ import {
   attempt,
   call,
   dateLabel,
-  model,
   navigate,
   notify,
-  openRecord,
   taskLabels,
 } from "../state";
 import Icon from "./Icon.vue";
@@ -20,7 +18,12 @@ const stageLabels: Record<string, string> = {
   failed: "失败 / 待处理",
   skipped: "未执行",
 };
-const props = defineProps<{ task: Task; compact?: boolean }>();
+const props = defineProps<{
+  task: Task;
+  compact?: boolean;
+  hideStatus?: boolean;
+  hideProjectFolder?: boolean;
+}>();
 const log = ref<{ text: string; path: string; truncated?: boolean } | null>(
     null,
   ),
@@ -52,6 +55,13 @@ const conflicts = computed(
 );
 const isActive = computed(() =>
   ["running", "awaiting", "cancelling"].includes(props.task.state),
+);
+const showActionBar = computed(
+  () =>
+    isActive.value ||
+    (!props.compact &&
+      ["app", "erp", "apk", "run", "wechat"].includes(props.task.type)) ||
+    (!!props.task.projectId && !props.hideProjectFolder),
 );
 watch(
   () => props.task.id,
@@ -99,7 +109,7 @@ function openOperation() {
           }}
         </p>
       </div>
-      <span class="status" :class="task.state">{{
+      <span v-if="!hideStatus" class="status" :class="task.state">{{
         taskLabels[task.state]
       }}</span>
     </div>
@@ -165,18 +175,6 @@ function openOperation() {
           <Icon name="copy" />复制 APK 路径
         </button>
       </div>
-      <button
-        class="link"
-        @click="
-          openRecord({
-            text: task.title + '，版本 ' + task.result.versionName,
-            sourceId: 'task:' + task.id,
-            projectId: task.projectId,
-          })
-        "
-      >
-        记一条工作 →
-      </button>
     </div>
     <dl
       v-if="
@@ -254,7 +252,7 @@ function openOperation() {
         </button>
       </div>
     </section>
-    <div class="actions wrap">
+    <div v-if="showActionBar" class="actions wrap">
       <button
         v-if="isActive"
         :disabled="busy || task.state === 'cancelling'"
@@ -275,7 +273,7 @@ function openOperation() {
           task.state === "awaiting" ? "返回核对并继续" : "返回功能页重新检查"
         }}</button
       ><button
-        v-if="task.projectId"
+        v-if="task.projectId && !hideProjectFolder"
         @click="
           attempt(() => call('projects.folder', { projectId: task.projectId }))
         "

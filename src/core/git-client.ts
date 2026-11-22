@@ -3,6 +3,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Git, inTrackedDirectory, trackedDirectoryTree } from "./git.js";
 import { gitOperationLabel } from "../shared/git-labels.js";
+import {
+  compileUntrackedMatchers,
+  type GitUntrackedFilter,
+} from "../shared/git-untracked.js";
 import type { TaskManager } from "./tasks.js";
 import { hash, inside, redact } from "./util.js";
 import type {
@@ -18,6 +22,17 @@ import type {
 
 const maxContent = 4 * 1024 * 1024;
 const literal = (file: string) => `:(literal)${file}`;
+function fuzzyFilePathspec(file: unknown) {
+  if (typeof file !== "string") return "";
+  const raw = file.trim();
+  if (!raw) return "";
+  if (raw.length > 1000 || /[\0\r\n]/.test(raw))
+    throw new Error("文件筛选条件无效");
+  const normalized = raw.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+  if (!normalized) return "";
+  const escaped = normalized.replace(/([[\]])/g, "\\$1");
+  return `:(top,icase)*${escaped}*`.replace(/\*+/g, "*");
+}
 const cleanOutput = (value: string) => redact(value).slice(-48000);
 interface Snapshot {
   repo: string;
@@ -49,7 +64,9 @@ export class GitClientService {
     private git: Git,
     private tasks: TaskManager,
     private dataDir: string,
-    private untrackedPaths?: (repo: string) => string[] | undefined,
+    private untrackedFilter?: (
+      repo: string,
+    ) => GitUntrackedFilter | string[] | undefined,
   ) {}
 
   private async head(repo: string) {
@@ -176,21 +193,39 @@ export class GitClientService {
       });
     }
     if (files.some((file) => file.untracked)) {
-      const allowed = this.untrackedPaths?.(repo);
-      const trackedPaths = allowed ? [] : await this.git.paths(repo, [
-        "ls-files",
-        "--cached",
-        "-z",
-      ]);
+      const rawFilter = this.untrackedFilter?.(repo);
+      const filter: GitUntrackedFilter | undefined = Array.isArray(rawFilter)
+        ? { include: rawFilter }
+        : rawFilter;
+      const caseInsensitive = process.platform === "win32";
+      const include = compileUntrackedMatchers(filter?.include, caseInsensitive);
+      const exclude = compileUntrackedMatchers(filter?.exclude, caseInsensitive);
+      const needTrackedDirs =
+        !include &&
+        files.some(
+          (file) =>
+            file.untracked && !exclude?.some((match) => match(file.path)),
+        );
       // Git tracks files, so build the existing tree from every indexed path,
       // including unchanged files. Explicit project scopes take precedence.
-      const trackedDirectories = trackedDirectoryTree(trackedPaths);
-      for (const file of files)
-        if (file.untracked)
-          file.inTrackedDirectory = allowed
-            ? allowed.some((entry) => entry.endsWith("/")
-                ? file.path.startsWith(entry) : file.path === entry)
-            : inTrackedDirectory(file.path, trackedDirectories);
+      const trackedDirectories = needTrackedDirs
+        ? trackedDirectoryTree(
+            await this.git.paths(repo, ["ls-files", "--cached", "-z"]),
+          )
+        : new Set<string>();
+      for (const file of files) {
+        if (!file.untracked) continue;
+        if (exclude?.some((match) => match(file.path))) {
+          file.inTrackedDirectory = false;
+        } else if (include) {
+          file.inTrackedDirectory = include.some((match) => match(file.path));
+        } else {
+          file.inTrackedDirectory = inTrackedDirectory(
+            file.path,
+            trackedDirectories,
+          );
+        }
+      }
     }
     return files;
   }
@@ -940,6 +975,7 @@ export class GitClientService {
       offset?: number;
       query?: string;
       file?: string;
+      follow?: boolean;
       ref?: string;
       all?: boolean;
     } = {},
@@ -948,7 +984,19 @@ export class GitClientService {
     if (!Number.isInteger(offset) || offset < 0 || offset > 1000000)
       throw new Error("历史分页无效");
     if (!(await this.head(repo))) return [];
-    if (options.file) await this.filePath(repo, options.file);
+    const rawFile = typeof options.file === "string" ? options.file.trim() : "";
+    let fileArgs: string[] = [];
+    if (rawFile) {
+      if (options.follow) {
+        await this.filePath(repo, rawFile);
+        fileArgs = ["--follow", "--", literal(rawFile)];
+      } else {
+        const spec = fuzzyFilePathspec(rawFile);
+        if (spec) fileArgs = ["--", spec];
+      }
+    }
+    const query =
+      typeof options.query === "string" ? options.query.trim() : "";
     const revision = options.ref ? await this.ref(repo, options.ref) : "HEAD";
     const raw = await this.git.text(repo, [
       "log",
@@ -956,15 +1004,15 @@ export class GitClientService {
       "--max-count=150",
       `--skip=${offset}`,
       "--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D%x00",
-      ...(options.all && !options.file ? ["--all"] : [revision]),
-      ...(options.query
+      ...(options.all ? ["--all"] : [revision]),
+      ...(query
         ? [
             "--regexp-ignore-case",
             "--fixed-strings",
-            "--grep=" + String(options.query).slice(0, 1000),
+            "--grep=" + query.slice(0, 1000),
           ]
         : []),
-      ...(options.file ? ["--follow", "--", literal(options.file)] : []),
+      ...fileArgs,
     ]);
     const fields = raw.split("\0"),
       result: GitCommit[] = [];

@@ -6,12 +6,10 @@ import {
   model,
   navigate,
   notify,
-  openRecord,
   reload,
   route,
   taskLabels,
   toast,
-  recordModal,
   leaveGuard,
 } from "./state";
 import { formatChromeDate } from "./format";
@@ -19,7 +17,6 @@ import Icon from "./components/Icon.vue";
 import CloseButton from "./components/CloseButton.vue";
 import workbenchIcon from "../../assets/workbench-v2-64.png";
 import MessageDialog from "./components/MessageDialog.vue";
-import RecordDialog from "./components/RecordDialog.vue";
 import NotesPage from "./pages/NotesPage.vue";
 import MonthlyPage from "./pages/MonthlyPage.vue";
 import PromptsPage from "./pages/PromptsPage.vue";
@@ -131,11 +128,6 @@ async function openNotificationTask() {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
-    if (recordModal.value) return;
-    event.preventDefault();
-    openRecord();
-  }
   if (event.key === "Escape" && navOpen.value) navOpen.value = false;
 }
 
@@ -173,15 +165,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <img :src="workbenchIcon" alt="" width="33" height="33" />
         <strong>个人工作台</strong>
       </div>
-      <button
-        type="button"
-        class="quick"
-        title="快速记录（Ctrl+N）"
-        @click="openRecord()"
-      >
-        <Icon name="penbox" :size="16" />
-        <span class="nav-label">快速记录</span>
-      </button>
       <nav aria-label="主导航">
         <div v-for="group in groups" :key="group.name" class="navgroup">
           <h2>{{ group.name }}</h2>
@@ -375,7 +358,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       <span class="toast-text">{{ toast.text }}</span>
       <CloseButton class="inverse" label="关闭提示" @click="toast = null" />
     </div>
-    <RecordDialog v-if="recordModal" />
     <MessageDialog />
   </div>
 </template>

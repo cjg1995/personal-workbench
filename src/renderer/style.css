@@ -334,54 +334,6 @@ small {
   white-space: nowrap;
 }
 
-.quick {
-  flex: none;
-  width: calc(100% - 8px);
-  height: 37px;
-  min-height: 37px;
-  margin: 0 4px 25px;
-  padding: 0 11px;
-  border: 1px solid var(--control-line);
-  border-radius: var(--r-sm);
-  background: var(--paper);
-  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.035);
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 10px;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 520;
-  cursor: pointer;
-  transition: background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease), color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
-}
-
-.quick:hover:not(:disabled) {
-  background: var(--blue-wash);
-  border-color: var(--tint-line);
-  color: var(--brand-dark);
-}
-
-.quick:active:not(:disabled) {
-  background: var(--tint);
-}
-
-.quick > .ico {
-  color: #4072ae;
-}
-
-.quick kbd {
-  margin-left: auto;
-  color: #5d6b7e;
-  background: var(--nav);
-  border: 1px solid #dfe4ec;
-  border-radius: 4px;
-  padding: 0 5px 1px;
-  font: 10px/15px var(--sans);
-}
-
 .rail nav {
   flex: 1 1 auto;
   min-height: 0;
@@ -2011,8 +1963,7 @@ details > summary:hover {
   }
 }
 
-/* 弹窗（快速记录、项目规则等） */
-.record-dialog,
+/* 弹窗（项目规则等） */
 .rules-dialog {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -2020,15 +1971,6 @@ details > summary:hover {
   background: var(--paper);
   color: var(--text);
   box-shadow: var(--shadow-lg);
-}
-
-.record-dialog {
-  width: min(580px, 92vw);
-  max-height: 86vh;
-  overflow: auto;
-}
-
-.rules-dialog {
   width: min(860px, 94vw);
   max-height: 86vh;
   overflow: hidden;
@@ -2038,14 +1980,9 @@ details > summary:hover {
   display: flex;
   flex-direction: column;
   height: min(86vh, max-content);
-}
-
-.record-dialog[open],
-.rules-dialog[open] {
   animation: dialog-in 0.16s var(--ease);
 }
 
-.record-dialog::backdrop,
 .rules-dialog::backdrop {
   background: var(--overlay);
   backdrop-filter: blur(2px);
@@ -2070,16 +2007,6 @@ details > summary:hover {
   margin: 0;
   font-size: 16px;
   font-weight: 660;
-}
-
-.record-dialog .tabs {
-  padding: 0;
-  margin-bottom: 14px;
-}
-
-.record-dialog-actions {
-  justify-content: flex-end;
-  margin: 14px 0 0;
 }
 
 .dialog-hint {
@@ -2419,29 +2346,6 @@ details > summary:hover {
 .month-name-btn strong small {
   font-size: 17px;
   font-weight: 630;
-}
-
-.month-clear-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  min-height: 22px;
-  margin-left: 4px;
-  padding: 0 7px;
-  border: 1px solid #d2e0f4;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: none;
-  color: #46658c;
-  font-size: 11px;
-  font-weight: 540;
-}
-
-.month-clear-btn:hover:not(:disabled) {
-  background: var(--tint);
-  border-color: #aac9f5;
-  color: var(--brand-dark);
 }
 
 .month-popover {
@@ -3105,12 +3009,6 @@ button.month-chip:hover:not(:disabled) {
 
 .idea-line.selected:hover {
   background: var(--tint);
-}
-
-.idea-line.completed .item-title {
-  text-decoration: line-through;
-  color: var(--soft);
-  font-weight: 520;
 }
 
 .tabs .tab-ratio {
@@ -4753,12 +4651,16 @@ button.month-chip:hover:not(:disabled) {
   margin: 10px 0;
 }
 
-.form-line > span {
+.form-line > span:first-child {
   width: 148px;
   flex-shrink: 0;
   font-size: 12.5px;
   color: var(--soft);
   font-weight: 500;
+}
+
+.form-line > .pill {
+  flex-shrink: 0;
 }
 
 .form-line > input {
@@ -4805,7 +4707,7 @@ button.month-chip:hover:not(:disabled) {
   color: var(--brand-dark);
 }
 
-.settings-project summary span {
+.settings-project summary span:not(.pill) {
   font-size: 12px;
   color: var(--soft);
   font-weight: 400;

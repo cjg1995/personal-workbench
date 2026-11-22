@@ -74,11 +74,6 @@ async function start() {
       <div>
         <h1>APK 打包</h1>
       </div>
-      <div v-if="active" class="h-actions">
-        <span class="badge brand">
-          <i class="dot" />打包执行中
-        </span>
-      </div>
     </div>
 
     <div class="duo apk-layout">
@@ -199,7 +194,13 @@ async function start() {
           <p class="empty-title">暂无构建记录</p>
         </div>
         <div v-else class="pane-scroll">
-          <TaskDetail v-if="task" :task="task" compact />
+          <TaskDetail
+            v-if="task"
+            :task="task"
+            compact
+            hide-status
+            hide-project-folder
+          />
 
           <section :class="{ 'section-rule': !!task }">
             <div v-if="task" class="section-head">
