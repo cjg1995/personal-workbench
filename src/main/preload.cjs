@@ -30,6 +30,11 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("workbench:git-diff", listener);
     return () => ipcRenderer.removeListener("workbench:git-diff", listener);
   },
+  onCommitDraft: (callback) => {
+    const listener = (_event, draft) => callback(draft);
+    ipcRenderer.on("workbench:commit-draft", listener);
+    return () => ipcRenderer.removeListener("workbench:commit-draft", listener);
+  },
   onEditorLsp: (callback) => {
     const listener = (_event, method, params) => callback(method, params);
     ipcRenderer.on("workbench:editor-lsp", listener);

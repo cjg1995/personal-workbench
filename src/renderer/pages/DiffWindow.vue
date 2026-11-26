@@ -16,15 +16,27 @@ import type {
 } from "../../shared/git-client";
 import { conflictBlocks } from "../../shared/conflicts";
 import { comparisonLabels, gitOperationLabel } from "../../shared/git-labels";
-import { revertLines } from "../../shared/diff-edit";
-import { monaco, language, diffCodeOptions, ideaLineDecorations } from "../monaco";
+import { appendDiffLines, revertLines } from "../../shared/diff-edit";
+import {
+  diffChangePosition,
+  diffCodeOptions,
+  ideaLineDecorations,
+  language,
+  monaco,
+  revealDiffCaret,
+} from "../monaco";
 import { DiffScrollbar } from "../diff-scrollbar";
+import { IdeaSplitEditor, type DiffAction, type Whitespace } from "../idea-split-editor";
+import { useGitCommitDraft } from "../git-commit-draft";
+import { matchInclusions, type Inclusion } from "../diff-inclusion";
 import VirtualFiles from "../components/VirtualFiles.vue";
 import Icon from "../components/Icon.vue";
 import CloseButton from "../components/CloseButton.vue";
 import MessageDialog from "../components/MessageDialog.vue";
 const request = ref<DiffWindowRequest>(),
   projectName = ref(""),
+  projectPath = ref(""),
+  windowTitle = ref("Git 对比"),
   files = ref<ChangeFile[]>([]),
   file = ref(""),
   query = ref(""),
@@ -32,6 +44,10 @@ const request = ref<DiffWindowRequest>(),
   data = ref<FileComparison>(),
   conflict = ref<ConflictContent>();
 const repository = ref<RepositoryState>();
+const commitDraft = useGitCommitDraft(computed(() => request.value?.projectId));
+const localCommit = computed(() => ["local", "unstaged", "staged"].includes(request.value?.comparison.mode || "") && !conflict.value);
+const currentFile = computed(() => repository.value?.files.find(entry => entry.path === file.value));
+const messageExpanded = ref(true);
 const loading = ref(false),
   busy = ref(false),
   error = ref(""),
@@ -58,22 +74,26 @@ const host = ref<HTMLElement>(),
 const settings = ref({
   split: true,
   dark: false,
-  fontSize: 14,
+  fontSize: 13,
   wrap: false,
-  ignoreWhitespace: false,
+  whitespace: "ignore" as Whitespace,
   fold: false,
   highlight: "words",
 });
 try {
-  const current = localStorage.getItem("git-diff-settings-v2");
-  Object.assign(
-    settings.value,
-    JSON.parse(current || localStorage.getItem("git-diff-settings") || "{}"),
-  );
-  if (!current) settings.value.dark = false;
-  localStorage.setItem("git-diff-settings-v2", JSON.stringify(settings.value));
+  const current = localStorage.getItem("git-diff-settings-v3");
+  if (current) Object.assign(settings.value, JSON.parse(current));
+  else {
+    const v2 = localStorage.getItem("git-diff-settings-v2");
+    const old = JSON.parse(v2 || localStorage.getItem("git-diff-settings") || "{}");
+    const { fontSize, ignoreWhitespace, ...other } = old;
+    Object.assign(settings.value, other);
+    if (!v2) settings.value.dark = false;
+    if (fontSize && fontSize !== 14) settings.value.fontSize = fontSize;
+    if (ignoreWhitespace) settings.value.whitespace = "trim";
+  }
 } catch {}
-let editor: monaco.editor.IStandaloneDiffEditor | undefined,
+let editor: monaco.editor.IStandaloneDiffEditor | IdeaSplitEditor | undefined,
   mergeEditors: monaco.editor.IStandaloneCodeEditor[] = [],
   models: monaco.editor.ITextModel[] = [],
   listeners: monaco.IDisposable[] = [],
@@ -88,10 +108,11 @@ let originalHighlights: string[] = [],
   originalSelections: string[] = [],
   modifiedSelections: string[] = [];
 let savedText = "", saveRequested = false, saving: Promise<void> | undefined;
-let originalGutter: HTMLDivElement | undefined;
 let outerScrollbars: DiffScrollbar[] = [];
+let inclusionSources: { file: FileComparison; included: boolean }[] = [];
+let inclusions = new Map<number, Inclusion>();
 const glyphHunks = new Map<number, number>();
-let pendingReveal: { id: number; edge: "first" | "last" } | undefined;
+let pendingReveal: { id: number; edge: "first" | "last"; focusCaret: boolean } | undefined;
 const filtered = computed(() =>
   files.value.filter(
     (f) =>
@@ -127,26 +148,51 @@ const api = <T = any,>(name: string, p: Record<string, any> = {}) =>
       if (!r.ok) throw new Error(r.error || "操作失败");
       return r.data as T;
     });
-function disposeModels() {
+function detachEditors() {
   for (const listener of listeners) listener.dispose();
   listeners = [];
+  if (models.length === 2) {
+    models[0].deltaDecorations([...originalSelections, ...originalHighlights], []);
+    models[1].deltaDecorations([...modifiedSelections, ...modifiedHighlights, ...revertGlyphs], []);
+  }
+  outerScrollbars.forEach(bar => bar.dispose());
+  outerScrollbars = [];
   editor?.setModel(null);
-  for (const e of mergeEditors) e.setModel(null);
-  for (const model of models) model.dispose();
-  models = [];
+  editor?.dispose();
+  editor = undefined;
   originalHighlights = [];
   modifiedHighlights = [];
   revertGlyphs = [];
   originalSelections = [];
   modifiedSelections = [];
-  if (originalGutter) originalGutter.replaceChildren();
-  outerScrollbars.forEach((bar) => bar.setChanges([]));
   glyphHunks.clear();
 }
+function disposeModels() {
+  detachEditors();
+  for (const e of mergeEditors) e.setModel(null);
+  for (const model of models) model.dispose();
+  models = [];
+}
 function commonOptions() {
-  return diffCodeOptions(settings.value.fontSize, settings.value.wrap);
+  const size = settings.value.fontSize;
+  return { ...diffCodeOptions(size, settings.value.wrap),
+    fontFamily: '"Workbench JetBrains Mono", Consolas, "Microsoft YaHei", monospace',
+    lineHeight: Math.round(size * 22 / 13),
+    letterSpacing: Math.round(size * 0.6) - size * 0.6,
+    padding: { top: 0, bottom: 0 } };
 }
 function applySettings() {
+  if (editor && settings.value.split !== (editor instanceof IdeaSplitEditor)) {
+    const position = editor.getModifiedEditor().getPosition();
+    const oldVisibleLine = editor.getModifiedEditor().getVisibleRanges()[0]?.startLineNumber;
+    const focused = editor.getModifiedEditor().hasTextFocus();
+    detachEditors();
+    diffCount.value = 0;
+    attachComparison();
+    if (position) editor.getModifiedEditor().setPosition(position);
+    if (oldVisibleLine) editor.getModifiedEditor().revealLineNearTop(oldVisibleLine);
+    if (focused) editor.getModifiedEditor().focus();
+  }
   monaco.editor.setTheme(
     settings.value.dark ? "workbench-dark" : "workbench-light",
   );
@@ -155,7 +201,7 @@ function applySettings() {
     readOnly: !canEdit.value,
     renderSideBySide: settings.value.split,
     useInlineViewWhenSpaceIsLimited: false,
-    ignoreTrimWhitespace: settings.value.ignoreWhitespace,
+    ignoreTrimWhitespace: settings.value.whitespace !== "all",
     hideUnchangedRegions: {
       enabled: settings.value.fold,
       contextLineCount: 3,
@@ -168,15 +214,11 @@ function applySettings() {
     enableSplitViewResizing: true,
     renderOverviewRuler: false,
   });
-  editor
+  if (editor instanceof IdeaSplitEditor) editor.configure(settings.value.whitespace, settings.value.highlight);
+  else editor
     ?.getModifiedEditor()
     .updateOptions({ glyphMargin: true, lineNumbersMinChars: 3, overviewRulerLanes: 0,
       scrollbar: { vertical: "hidden", verticalScrollbarSize: 14 } });
-  editor
-    ?.getOriginalEditor()
-    .updateOptions({ glyphMargin: false, lineNumbers: settings.value.split ? "off" : "on", lineDecorationsWidth: 22, scrollBeyondLastColumn: 8, overviewRulerLanes: 0,
-      scrollbar: { vertical: "hidden", verticalScrollbarSize: 0 } });
-  outerScrollbars[0]?.setVisible(settings.value.split);
   mergeEditors.forEach((e, index) =>
     e.updateOptions({
       ...commonOptions(),
@@ -190,13 +232,47 @@ watch(
   () => {
     applySettings();
     localStorage.setItem(
-      "git-diff-settings-v2",
+      "git-diff-settings-v3",
       JSON.stringify(settings.value),
     );
   },
   { deep: true },
 );
 watch([busy, stale, loading], updateRevertGlyphs);
+watch(dirty, updateRevertGlyphs);
+watch(() => [data.value?.token, settings.value.split, busy.value, dirty.value], async (_, __, invalidate) => {
+  const comparison = data.value, mode = request.value?.comparison.mode;
+  let active = true;
+  invalidate(() => { active = false; });
+  inclusionSources = [];
+  inclusions.clear();
+  updateRevertGlyphs();
+  if (!comparison || busy.value || dirty.value || !settings.value.split || !localCommit.value || comparison.binary || comparison.limited) return;
+  const current = currentFile.value;
+  if (!current || current.oldPath || current.untracked || current.conflicted) return;
+  const sources = (["staged", "unstaged"] as const).filter(side => current[side] && (mode === "local" || mode === side));
+  if (mode === "local") {
+    await new Promise(resolve => setTimeout(resolve, 150));
+    if (!active) return;
+  }
+  const snapshots = await Promise.allSettled(sources.map(async side => ({
+    included: side === "staged",
+    file: mode === side ? comparison : await api<FileComparison>("git.content", { file: comparison.path, comparison: { mode: side }, watch: false }),
+  })));
+  if (!active || disposed || data.value?.token !== comparison.token) return;
+  inclusionSources = snapshots.flatMap(item => item.status === "fulfilled" ? [item.value] : []);
+  updateInclusions();
+});
+function updateInclusions() {
+  if (!(editor instanceof IdeaSplitEditor) || !data.value) return;
+  inclusions = dirty.value ? new Map() : matchInclusions(data.value, editor.getLineChanges() || [], inclusionSources);
+  updateRevertGlyphs();
+}
+function toggleInclusion(index: number) {
+  const item = inclusions.get(index);
+  if (!item || dirty.value || busy.value || stale.value || loading.value) return;
+  void write("git.patch", { token: item.token, hunk: item.hunk, operation: item.included ? "unstage" : "stage" });
+}
 function updateRevertGlyphs() {
   if (!editor || conflict.value || models.length !== 2 || !data.value) return;
   glyphHunks.clear();
@@ -205,6 +281,13 @@ function updateRevertGlyphs() {
     !busy.value &&
     !stale.value &&
     !loading.value;
+  if (editor instanceof IdeaSplitEditor) {
+    editor.setRevertState(!canEdit.value ? "hidden" : available ? "enabled" : "disabled");
+    const current = currentFile.value;
+    editor.setInclusions(inclusions, localCommit.value && current ? (current.staged && current.unstaged ? "mixed" : current.staged) : null,
+      !busy.value && !dirty.value && !stale.value && !loading.value);
+    return;
+  }
   const decorations: monaco.editor.IModelDeltaDecoration[] = [];
   for (const [index, chunk] of (canEdit.value ? liveReverts() : []).entries()) {
     const line = Math.max(
@@ -230,13 +313,10 @@ function updateRevertGlyphs() {
 function syncCursor(line: number) {
   const changes = editor?.getLineChanges() || [];
   currentDifference.value = changes.findIndex(
-    (change) =>
-      line >= Math.max(1, change.modifiedStartLineNumber) &&
-      line <=
-        Math.max(
-          1,
-          change.modifiedEndLineNumber || change.modifiedStartLineNumber,
-        ),
+    (change) => {
+      const first = diffChangePosition(models[1], change).lineNumber;
+      return line >= first && line <= (change.modifiedEndLineNumber || first);
+    },
   );
   let index = 0;
   liveReverts().forEach((chunk, i) => {
@@ -244,42 +324,48 @@ function syncCursor(line: number) {
   });
   currentRevert.value = index;
 }
-function revealDifference(index: number) {
+function revealDifference(index: number, focusCaret: boolean) {
   const changes = editor?.getLineChanges(),
     change = changes?.[index];
   if (!editor || !change) return;
+  const code = editor.getModifiedEditor();
+  const position = diffChangePosition(code.getModel()!, change);
+  if (editor instanceof IdeaSplitEditor) {
+    code.setPosition(position);
+    editor.revealChange(change);
+    if (focusCaret) {
+      code.revealPosition(position, monaco.editor.ScrollType.Immediate);
+      code.focus();
+    }
+  } else {
+    revealDiffCaret(code, position, focusCaret);
+  }
   currentDifference.value = index;
-  const line = Math.max(
-    1,
-    Math.min(
-      editor.getModifiedEditor().getModel()!.getLineCount(),
-      change.modifiedStartLineNumber,
-    ),
-  );
-  editor.getModifiedEditor().setPosition({ lineNumber: line, column: 1 });
-  editor.getModifiedEditor().revealLineInCenter(line);
+  currentRevert.value = index;
 }
 function updateDiffPresentation() {
   if (!editor || conflict.value || models.length !== 2) return;
   const changes = editor.getLineChanges();
   if (!changes) return;
   diffCount.value = changes.length;
-  const { original, modified } = ideaLineDecorations(settings.value.dark ? [] : changes);
-  originalHighlights = models[0].deltaDecorations(originalHighlights, original);
-  modifiedHighlights = models[1].deltaDecorations(modifiedHighlights, modified);
+  if (!(editor instanceof IdeaSplitEditor)) {
+    const { original, modified } = ideaLineDecorations(settings.value.dark ? [] : changes);
+    originalHighlights = models[0].deltaDecorations(originalHighlights, original);
+    modifiedHighlights = models[1].deltaDecorations(modifiedHighlights, modified);
+  }
   if (pendingReveal?.id === requestId) {
-    const edge = pendingReveal.edge;
+    const { edge, focusCaret } = pendingReveal;
     pendingReveal = undefined;
     if (changes.length)
-      revealDifference(edge === "last" ? changes.length - 1 : 0);
+      revealDifference(edge === "last" ? changes.length - 1 : 0, focusCaret);
+  } else {
+    syncCursor(editor.getModifiedEditor().getPosition()?.lineNumber || 1);
   }
-  syncCursor(editor.getModifiedEditor().getPosition()?.lineNumber || 1);
-  updateRevertGlyphs();
-  updateOriginalGutter();
+  if (editor instanceof IdeaSplitEditor) updateInclusions();
+  else updateRevertGlyphs();
   outerScrollbars.forEach((bar) => bar.setChanges(changes));
 }
 function liveReverts() {
-  if (!dirty.value && data.value?.revertHunks.length) return data.value.revertHunks;
   return (editor?.getLineChanges() || []).map((change, index) => ({
     index,
     oldStart: change.originalEndLineNumber ? change.originalStartLineNumber : change.originalStartLineNumber + 1,
@@ -288,19 +374,21 @@ function liveReverts() {
     newCount: change.modifiedEndLineNumber ? change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1 : 0,
   }));
 }
-function revertAt(index: number) {
+function applyDifference(index: number, action: DiffAction = "revert") {
   if (!canEdit.value || !data.value || busy.value || stale.value || loading.value) return;
   const change = liveReverts()[index], modified = editor?.getModifiedEditor();
   if (!change || !modified) return;
-  const text = revertLines(models[0].getValue(), models[1].getValue(), change);
+  const original = models[0].getValue();
   const before = models[1].getValue();
+  const text = action === "append" ? appendDiffLines(original, before, change) : revertLines(original, before, change);
+  if (text === before) return;
   let start = 0, oldEnd = before.length, newEnd = text.length;
   while (start < oldEnd && start < newEnd && before[start] === text[start]) start++;
   while (oldEnd > start && newEnd > start && before[oldEnd - 1] === text[newEnd - 1]) { oldEnd--; newEnd--; }
   const from = models[1].getPositionAt(start), to = models[1].getPositionAt(oldEnd);
   // One editor operation is one undo step; preserve the model when saving.
   modified.pushUndoStop();
-  modified.executeEdits("workbench.revert", [{ range: new monaco.Range(from.lineNumber, from.column, to.lineNumber, to.column), text: text.slice(start, newEnd) }]);
+  modified.executeEdits(`workbench.${action}`, [{ range: new monaco.Range(from.lineNumber, from.column, to.lineNumber, to.column), text: text.slice(start, newEnd) }]);
   modified.pushUndoStop();
   modified.focus();
   void persistEditor();
@@ -315,22 +403,6 @@ function updateSelection(side: "original" | "modified") {
   })));
   if (side === "original") originalSelections = next;
   else modifiedSelections = next;
-}
-function updateOriginalGutter() {
-  if (!editor || !originalGutter || !models[0]) return;
-  originalGutter.hidden = !settings.value.split;
-  const code = editor.getOriginalEditor(), lineHeight = code.getOption(monaco.editor.EditorOption.lineHeight);
-  originalGutter.style.height = code.getLayoutInfo().height + "px";
-  const fragment = document.createDocumentFragment();
-  for (const range of code.getVisibleRanges())
-    for (let line = range.startLineNumber; line <= range.endLineNumber; line++) {
-      const number = document.createElement("span");
-      number.textContent = String(line);
-      number.style.top = code.getTopForLineNumber(line) - code.getScrollTop() + "px";
-      number.style.height = number.style.lineHeight = lineHeight + "px";
-      fragment.append(number);
-    }
-  originalGutter.replaceChildren(fragment);
 }
 function updateHistory() {
   const model = isConflict.value ? mergeEditors[1]?.getModel() : editor?.getModifiedEditor().getModel();
@@ -471,113 +543,100 @@ async function mountData(id: number) {
     );
     updateBlocks();
     if (pendingReveal?.id === id) {
+      const { edge, focusCaret } = pendingReveal;
       block.value =
-        pendingReveal.edge === "last" ? Math.max(0, blockCount.value - 1) : 0;
+        edge === "last" ? Math.max(0, blockCount.value - 1) : 0;
       pendingReveal = undefined;
       const chosen = conflictBlocks(models[1].getValue())[block.value];
-      if (chosen) mergeEditors[1].revealLineInCenter(chosen.startLine);
+      if (chosen) revealDiffCaret(mergeEditors[1], { lineNumber: chosen.startLine, column: 1 }, focusCaret);
     }
   } else if (data.value) {
-    if (!editor) {
-      editor = monaco.editor.createDiffEditor(host.value!, {
-        ...commonOptions(),
-        renderSideBySide: true,
-        renderMarginRevertIcon: false,
-        originalEditable: false,
-      });
-      originalGutter = document.createElement("div");
-      originalGutter.className = "idea-original-gutter";
-      editor.getOriginalEditor().addOverlayWidget({
-        getId: () => "idea-original-line-numbers",
-        getDomNode: () => originalGutter!,
-        getPosition: () => ({ preference: monaco.editor.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER }),
-      });
-      outerScrollbars = [
-        new DiffScrollbar(editor.getOriginalEditor(), "original"),
-        new DiffScrollbar(editor.getModifiedEditor(), "modified"),
-      ];
-    }
     models = [
       createModel(data.value.oldText, "original"),
       createModel(data.value.newText, "modified"),
     ];
-    editor.setModel({ original: models[0], modified: models[1] });
     savedText = data.value.newText;
-    listeners.push(models[1].onDidChangeContent((event) => {
-      dirty.value = models[1].getValue() !== savedText;
-      crossFileHint.value = "";
-      queueMicrotask(updateHistory);
-      if (event.isUndoing || event.isRedoing) void persistEditor();
-    }));
-    for (const side of ["original", "modified"] as const) {
-      const code = side === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor();
-      listeners.push(code.onDidChangeCursorSelection(() => updateSelection(side)));
-    }
-    listeners.push(editor.getOriginalEditor().onDidScrollChange(updateOriginalGutter));
-    listeners.push(editor.getOriginalEditor().onDidLayoutChange(updateOriginalGutter));
-    listeners.push(
-      editor.onDidUpdateDiff(() => {
-        if (id === requestId) updateDiffPresentation();
-      }),
-    );
-    listeners.push(
-      editor.getModifiedEditor().onDidChangeCursorPosition((event) => {
-        crossFileHint.value = "";
-        syncCursor(event.position.lineNumber);
-        const hunks = data.value?.hunks || [];
-        let current = 0;
-        hunks.forEach((v, i) => {
-          if (v.newStart <= event.position.lineNumber) current = i;
-        });
-        hunk.value = current;
-      }),
-    );
-    listeners.push(
-      editor.getModifiedEditor().onMouseDown((event) => {
-        if (
-          event.target.type ===
-            monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
-          event.target.position &&
-          event.event.leftButton
-        ) {
-          const index = glyphHunks.get(event.target.position.lineNumber);
-          if (index !== undefined) revertAt(index);
-        }
-      }),
-    );
-    listeners.push(
-      editor
-        .getModifiedEditor()
-        .addAction({
-          id: "workbench.revert-change",
-          label: "Revert 此处差异",
-          contextMenuGroupId: "navigation",
-          contextMenuOrder: 1,
-          keybindings: [
-            monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
-          ],
-          run: () => revertAt(currentRevert.value),
-        }),
-    );
+    attachComparison();
   }
   dirty.value = false;
   updateHistory();
   applySettings();
 }
+function attachComparison() {
+  editor = settings.value.split
+    ? new IdeaSplitEditor(host.value!, commonOptions(), applyDifference, toggleInclusion)
+    : monaco.editor.createDiffEditor(host.value!, { ...commonOptions(), renderSideBySide: false,
+        renderMarginRevertIcon: false, originalEditable: false, renderOverviewRuler: false });
+  if (editor instanceof IdeaSplitEditor) outerScrollbars.push(new DiffScrollbar(editor.getOriginalEditor(), "original"));
+  outerScrollbars.push(new DiffScrollbar(editor.getModifiedEditor(), "modified"));
+  editor.setModel({ original: models[0], modified: models[1] });
+  listeners.push(models[1].onDidChangeContent((event) => {
+    dirty.value = models[1].getValue() !== savedText;
+    crossFileHint.value = "";
+    queueMicrotask(updateHistory);
+    if (event.isUndoing || event.isRedoing) void persistEditor();
+  }));
+  for (const side of ["original", "modified"] as const) {
+    const code = side === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    listeners.push(code.onDidChangeCursorSelection(() => updateSelection(side)));
+  }
+  listeners.push(editor.onDidUpdateDiff(updateDiffPresentation));
+  listeners.push(
+    editor.getModifiedEditor().onDidChangeCursorPosition((event) => {
+      crossFileHint.value = "";
+      syncCursor(event.position.lineNumber);
+      const hunks = data.value?.hunks || [];
+      let current = 0;
+      hunks.forEach((v, i) => {
+        if (v.newStart <= event.position.lineNumber) current = i;
+      });
+      hunk.value = current;
+    }),
+  );
+  listeners.push(
+    editor.getModifiedEditor().onMouseDown((event) => {
+      if (
+        event.target.type ===
+          monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+        event.target.position &&
+        event.event.leftButton
+      ) {
+        const index = glyphHunks.get(event.target.position.lineNumber);
+        if (index !== undefined) applyDifference(index);
+      }
+    }),
+  );
+  listeners.push(
+    editor
+      .getModifiedEditor()
+      .addAction({
+        id: "workbench.revert-change",
+        label: "Revert 此处差异",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1,
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
+        ],
+        run: () => applyDifference(currentRevert.value),
+      }),
+  );
+}
 async function loadFile(
   next: string,
   guard = true,
   edge: "first" | "last" = "first",
+  focusCaret = false,
 ) {
   if (!request.value || (guard && !(await canLeave()))) return;
   const id = ++requestId;
-  pendingReveal = { id, edge };
+  pendingReveal = { id, edge, focusCaret };
   currentDifference.value = -1;
   diffCount.value = 0;
   currentRevert.value = 0;
   crossFileHint.value = "";
   file.value = next;
-  document.title = `${next.split(/[\\/]/).pop()} (${projectName.value}) [Git 对比]`;
+  const directory = next.split(/[\\/]/).slice(0, -1).join("\\");
+  document.title = windowTitle.value = `${next.split(/[\\/]/).pop()} (${[projectPath.value || projectName.value, directory].filter(Boolean).join("\\")}) [Git 对比]`;
   loading.value = true;
   error.value = "";
   stale.value = false;
@@ -699,9 +758,18 @@ async function write(name: string, p: Record<string, any>) {
       dirty.value = false;
       result.value = response.output || "操作完成";
       await refreshFiles();
-      if (files.value.some((f) => f.path === file.value))
+      if (files.value.some((f) => f.path === file.value)) {
+        if (["stage", "unstage"].includes(p.operation) && request.value?.comparison.mode === "local" && editor) {
+          const snapshot = await api<FileComparison>("git.content", { comparison: request.value.comparison, file: file.value });
+          if (snapshot.oldText === data.value?.oldText && snapshot.newText === savedText) {
+            data.value = snapshot;
+            stale.value = false;
+            updateDiffPresentation();
+            return;
+          }
+        }
         await loadFile(file.value, false);
-      else {
+      } else {
         disposeModels();
         data.value = undefined;
         conflict.value = undefined;
@@ -724,6 +792,16 @@ async function write(name: string, p: Record<string, any>) {
     busy.value = false;
   }
 }
+async function includeFile(event: Event) {
+  const input = event.target as HTMLInputElement, current = currentFile.value;
+  if (!current) return;
+  const operation = input.checked ? "stage" : "unstage";
+  input.checked = current.staged && !current.unstaged;
+  input.indeterminate = current.staged && current.unstaged;
+  const paths = [current.path];
+  if (current.oldPath && operation === "unstage") paths.push(current.oldPath);
+  await write("git.execute", { operation, files: paths });
+}
 async function navigateDiff(direction: "next" | "previous") {
   if (loading.value || busy.value || navigating.value) return;
   const step = direction === "next" ? 1 : -1;
@@ -732,7 +810,7 @@ async function navigateDiff(direction: "next" | "previous") {
     const next = block.value + step;
     if (next >= 0 && next < blocks.length) {
       block.value = next;
-      mergeEditors[1].revealLineInCenter(blocks[next].startLine);
+      revealDiffCaret(mergeEditors[1], { lineNumber: blocks[next].startLine, column: 1 });
       return;
     }
   } else {
@@ -742,19 +820,16 @@ async function navigateDiff(direction: "next" | "previous") {
       currentDifference.value >= 0
         ? currentDifference.value + step
         : direction === "next"
-          ? changes.findIndex((change) => change.modifiedStartLineNumber > line)
+          ? changes.findIndex((change) => diffChangePosition(models[1], change).lineNumber > line)
           : changes.reduce(
               (last, change, index) =>
-                Math.max(
-                  change.modifiedEndLineNumber,
-                  change.modifiedStartLineNumber,
-                ) < line
+                (change.modifiedEndLineNumber || diffChangePosition(models[1], change).lineNumber) < line
                   ? index
                   : last,
               -1,
             );
     if (next >= 0 && next < changes.length) {
-      revealDifference(next);
+      revealDifference(next, true);
       return;
     }
   }
@@ -783,6 +858,7 @@ async function navigateDiff(direction: "next" | "previous") {
       filtered.value[next].path,
       true,
       direction === "next" ? "first" : "last",
+      true,
     );
   } catch (value) {
     error.value = value instanceof Error ? value.message : String(value);
@@ -876,13 +952,14 @@ async function validate() {
     !(data.value?.token || conflict.value?.token)
   )
     return;
+  const token = data.value?.token || conflict.value?.token;
   try {
     await api("git.validate-token", {
-      token: data.value?.token || conflict.value?.token,
+      token,
       conflict: isConflict.value,
     });
   } catch {
-    stale.value = true;
+    if (token === (data.value?.token || conflict.value?.token)) stale.value = true;
   }
 }
 onMounted(async () => {
@@ -895,11 +972,14 @@ onMounted(async () => {
   );
   unsubscribeChanged = window.workbench.onChanged(() => void validate());
   try {
+    await Promise.all([document.fonts.load('13px "Workbench JetBrains Mono"'), document.fonts.load('italic 13px "Workbench JetBrains Mono"')]);
     const initial = await api<{
       request: DiffWindowRequest;
       projectName: string;
+      projectPath: string;
     }>("git.window-context");
     projectName.value = initial.projectName;
+    projectPath.value = initial.projectPath;
     await acceptRequest(initial.request);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -915,49 +995,44 @@ function disposeViewer() {
   window.removeEventListener("focus", validate);
   window.removeEventListener("beforeunload", disposeViewer);
   disposeModels();
-  outerScrollbars.forEach((bar) => bar.dispose());
-  editor?.dispose();
   mergeEditors.forEach((e) => e.dispose());
   delete window.__workbenchCanClose;
 }
 onBeforeUnmount(disposeViewer);
 </script>
 <template>
-  <div class="diff-window" :class="{ 'diff-light': !settings.dark, 'diff-unified': !settings.split, 'diff-line-highlights': settings.highlight === 'lines', 'diff-no-highlights': settings.highlight === 'none' }">
+  <div class="diff-window" :class="{ 'diff-light': !settings.dark, 'diff-readonly': isConflict ? !conflict?.editable : !canEdit,
+    'diff-unified': !settings.split, 'diff-line-highlights': settings.highlight === 'lines', 'diff-no-highlights': settings.highlight === 'none' }">
+    <div class="diff-titlebar"><img src="../../../assets/workbench-v2-64.png" alt="" /><span :title="windowTitle">{{ windowTitle }}</span></div>
     <header class="diff-toolbar">
+      <span class="diff-current-path">{{ file }}</span>
       <button
-        title="显示 / 隐藏文件列表"
-        :aria-pressed="showFiles"
-        @click="showFiles = !showFiles"
-      >
-        ☷</button
-      ><strong class="diff-project">{{ projectName }}</strong
-      ><span class="diff-toolbar-divider" /><span
-        class="diff-current-path"
-        :title="file"
-        >{{ file || "Git 对比" }}</span
-      ><button
         data-action="previous-difference"
         title="上一处差异 / 上一个文件（Shift+F7）"
         :disabled="loading || busy || navigating"
         @click="navigateDiff('previous')"
       >
-        ↑</button
+        <Icon name="arrow-up" :size="16" /></button
       ><button
         data-action="next-difference"
         title="下一处差异 / 下一个文件（F7）"
         :disabled="loading || busy || navigating"
         @click="navigateDiff('next')"
       >
-        ↓</button
-      ><button data-action="undo" title="撤销（Ctrl+Z）" :disabled="!historyState.undo || stale" @click="undoRedo(false)"><Icon name="arrow-left" :size="16" /></button
+        <Icon name="arrow-down" :size="16" /></button>
+      <button v-if="canEdit" data-action="revert-current" :disabled="busy || loading || !diffCount || stale"
+        title="Revert 当前差异（Ctrl+Alt+Z）" @click="applyDifference(currentRevert)"><Icon name="history" :size="15" /></button>
+      <span class="diff-toolbar-divider" />
+      <button data-action="undo" title="撤销（Ctrl+Z）" :disabled="!historyState.undo || stale" @click="undoRedo(false)"><Icon name="arrow-left" :size="16" /></button
       ><button data-action="redo" title="重做（Ctrl+Y）" :disabled="!historyState.redo || stale" @click="undoRedo(true)"><Icon name="arrow-right" :size="16" /></button
-      ><span class="diff-toolbar-divider" />
+      ><button title="显示 / 隐藏文件列表" :aria-pressed="showFiles" @click="showFiles = !showFiles"><Icon name="list" :size="15" /></button>
       <select v-if="!isConflict" v-model="settings.split" aria-label="对比布局">
         <option :value="true">双栏对比</option><option :value="false">单栏对比</option>
       </select>
-      <select v-model="settings.ignoreWhitespace" aria-label="空白处理">
-        <option :value="false">显示空白差异</option><option :value="true">忽略首尾空白</option>
+      <select :value="!settings.split && settings.whitespace === 'ignore' ? 'trim' : settings.whitespace" aria-label="空白处理"
+        @change="settings.whitespace = ($event.target as HTMLSelectElement).value as Whitespace">
+        <option value="all">显示空白差异</option><option value="trim">忽略首尾空白</option>
+        <option v-if="settings.split" value="ignore">忽略空白和空行</option>
       </select>
       <select v-model="settings.highlight" aria-label="差异高亮">
         <option value="words">按单词高亮</option><option value="lines">按行高亮</option><option value="none">不高亮</option>
@@ -970,30 +1045,28 @@ onBeforeUnmount(disposeViewer);
       </select>
       <button
         title="文件内搜索（Ctrl+F）"
+        aria-label="查找"
         @click="
           (isConflict ? mergeEditors[1] : editor?.getModifiedEditor())
             ?.getAction('actions.find')
             ?.run()
         "
       >
-        查找</button
-      ><button
-        v-if="canEdit"
-        data-action="revert-current"
-        :disabled="busy || loading || !diffCount || stale"
-        title="Revert 当前差异（Ctrl+Alt+Z）"
-        @click="revertAt(currentRevert)"
-      >
-        ↶ Revert</button
+        <Icon name="search" :size="15" /></button
       ><button v-if="canEdit" title="保存（Ctrl+S）" :disabled="!dirty || busy || stale" @click="persistEditor"><Icon name="save" :size="15" /></button
-      ><button title="Git 操作" :aria-pressed="showOperations" @click="showOperations = !showOperations">Git 操作</button
-      ><button title="刷新（F5）" :disabled="busy" @click="refresh">↻</button
+      ><button title="Git 操作" :aria-pressed="showOperations" @click="showOperations = !showOperations"><Icon name="branch2" :size="15" /></button
+      ><button title="刷新（F5）" :disabled="busy" @click="refresh"><Icon name="refresh" :size="14" /></button
       ><button
+        aria-label="设置 ⚙" title="对比设置"
         :aria-expanded="settingsOpen"
         @click="settingsOpen = !settingsOpen"
       >
-        设置 ⚙
-      </button><span class="diff-toolbar-count">{{ diffCount }} 处差异</span>
+        <Icon name="settings" :size="15" />
+      </button>
+      <label v-if="localCommit && currentFile" class="diff-include" title="将此文件的修改纳入或移出 Git 暂存区">
+        <input type="checkbox" :checked="currentFile.staged && !currentFile.unstaged" :indeterminate="currentFile.staged && currentFile.unstaged"
+          :disabled="busy || dirty || stale || loading" @change="includeFile" />纳入提交
+      </label>
     </header>
     <div v-if="settingsOpen" class="diff-settings">
       <label><input v-model="settings.dark" type="checkbox" />深色主题</label
@@ -1004,11 +1077,6 @@ onBeforeUnmount(disposeViewer);
           min="10"
           max="28" /></label
       ><label><input v-model="settings.wrap" type="checkbox" />自动换行</label
-      ><label
-        ><input
-          v-model="settings.ignoreWhitespace"
-          type="checkbox"
-        />忽略首尾空白差异</label
       ><label
         ><input v-model="settings.fold" type="checkbox" />折叠未修改区域</label
       >
@@ -1092,7 +1160,7 @@ onBeforeUnmount(disposeViewer);
         @pointercancel="dragging = false"
       />
       <main class="diff-main">
-        <div v-if="loading" class="diff-loading">正在按需读取完整文件…</div>
+        <div v-if="loading" class="diff-loading">正在读取文件…</div>
         <div v-if="isConflict" class="diff-merge-toolbar">
           <span>未解决冲突 {{ blockCount }} 个</span
           ><select v-model.number="block" aria-label="冲突块">
@@ -1136,8 +1204,8 @@ onBeforeUnmount(disposeViewer);
           </button>
         </div>
         <div v-if="!isConflict && data" class="diff-version-labels">
-          <span><Icon name="lock" :size="12" />{{ data.oldLabel }}<small class="diff-eol diff-eol-old">{{ data.oldText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span
-          ><span><Icon :name="data.editable ? 'pencil' : 'lock'" :size="12" />{{ data.newLabel }}{{ data.editable ? " · 你的版本" : "" }}{{ dirty ? " · 未保存" : "" }}<small class="diff-eol diff-eol-new">{{ data.newText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
+          <span :title="data.oldLabel"><Icon name="lock" :size="12" />{{ settings.split && data.oldRevision ? data.oldRevision : data.oldLabel }}<small v-if="!settings.split || data.oldText.includes('\r\n') !== data.newText.includes('\r\n')" class="diff-eol diff-eol-old">{{ data.oldText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
+          <span :title="data.newLabel"><Icon :name="data.editable ? 'pencil' : 'lock'" :size="12" />{{ data.editable ? "你的版本" : data.newLabel }}{{ dirty ? " · 未保存" : "" }}<small v-if="!settings.split || data.oldText.includes('\r\n') !== data.newText.includes('\r\n')" class="diff-eol diff-eol-new">{{ data.newText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
         </div>
         <div
           v-show="!isConflict"
@@ -1176,7 +1244,7 @@ onBeforeUnmount(disposeViewer);
           {{ data?.notice || conflict?.notice }}
         </div>
         <div v-if="!file && !loading" class="diff-empty">
-          当前范围没有变更文件
+          没有变更文件
         </div>
         <div
           v-if="showOperations && !isConflict && data && isLocal"
@@ -1266,6 +1334,12 @@ onBeforeUnmount(disposeViewer);
         </div>
       </main>
     </div>
+    <section v-if="localCommit" class="diff-commit-message">
+      <button type="button" class="diff-message-heading" :aria-expanded="messageExpanded" @click="messageExpanded = !messageExpanded">
+        提交说明<span aria-hidden="true" /><Icon :name="messageExpanded ? 'down' : 'up'" :size="14" />
+      </button>
+      <textarea v-show="messageExpanded" v-model="commitDraft" aria-label="本地提交说明" maxlength="20000" spellcheck="false" />
+    </section>
     <footer class="diff-statusbar">
       <span>{{
         loading

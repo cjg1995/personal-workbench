@@ -7,7 +7,6 @@ export class DiffScrollbar implements IDisposable {
   private thumb = document.createElement("div");
   private listeners: IDisposable[] = [];
   private changes: editor.ILineChange[] = [];
-  private visible = true;
   private drag: { pointer: number; y: number; top: number } | undefined;
   private trackHeight = 0;
   private thumbHeight = 0;
@@ -41,7 +40,7 @@ export class DiffScrollbar implements IDisposable {
       const delta = wheel.deltaY * (wheel.deltaMode === 1 ? 22 : wheel.deltaMode === 2 ? this.trackHeight : 1);
       code.setScrollTop(code.getScrollTop() + delta);
     });
-    this.listeners.push(code.onDidScrollChange(() => this.render()));
+    this.listeners.push(code.onDidScrollChange(event => this.render(event.scrollHeightChanged)));
     this.listeners.push(code.onDidLayoutChange(() => this.render()));
     this.listeners.push(code.onDidContentSizeChange(() => this.render()));
     this.listeners.push(code.onDidChangeModel(() => this.render()));
@@ -53,12 +52,11 @@ export class DiffScrollbar implements IDisposable {
     this.listeners.push({ dispose: () => this.root.removeEventListener(name, handler) });
   }
 
-  setVisible(visible: boolean) { this.visible = visible; this.render(); }
   setChanges(changes: editor.ILineChange[]) { this.changes = changes; this.render(); }
 
-  private render() {
+  private render(updateMarks = true) {
     const model = this.code.getModel();
-    this.root.hidden = !this.visible || !model;
+    this.root.hidden = !model;
     if (!model) return;
     const layout = this.code.getLayoutInfo(), height = this.code.getScrollHeight();
     this.trackHeight = Math.max(0, layout.height - layout.horizontalScrollbarHeight);
@@ -71,6 +69,7 @@ export class DiffScrollbar implements IDisposable {
     this.thumb.hidden = this.maximum === 0;
     this.thumb.style.height = this.thumbHeight + "px";
     this.thumb.style.top = this.maximum ? (this.trackHeight - this.thumbHeight) * this.code.getScrollTop() / this.maximum + "px" : "0px";
+    if (!updateMarks) return;
     const fragment = document.createDocumentFragment();
     for (const change of this.changes) {
       const start = this.side === "original" ? change.originalStartLineNumber : change.modifiedStartLineNumber;

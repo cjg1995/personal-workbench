@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {
   MonthlyDraft,
   MonthlyEntry,
@@ -18,18 +19,9 @@ export class RecordsService {
   constructor(
     public store: Store,
     public dataDir: string,
-  ) {
-    this.purgeDeleted();
-  }
-  purgeDeleted() {
-    for (const n of this.store.list<Note>("note")) {
-      if (n.deletedAt) this.store.delete("note", n.id);
-    }
-  }
-  list(kind: RecordKind, deleted = false) {
-    return this.store
-      .list<Note>("note")
-      .filter((n) => n.kind === kind && !!n.deletedAt === deleted);
+  ) {}
+  list(kind: RecordKind) {
+    return this.store.list<Note>("note").filter((n) => n.kind === kind);
   }
   get(noteId: string) {
     const note = this.store.get<Note>("note", noteId);
@@ -42,6 +34,7 @@ export class RecordsService {
     text: string;
     projectId?: string | null;
     happenedOn?: string | null;
+    dueAt?: string | null;
     result?: string;
     sourceId?: string | null;
   }) {
@@ -50,7 +43,6 @@ export class RecordsService {
     const original = input.id ? this.get(input.id) : undefined;
     if (original && original.kind !== input.kind)
       throw new Error("记录类型不能在编辑中改变");
-    if (original?.deletedAt) throw new Error("此记录已删除，请先恢复");
     let happenedOn: string | null = null;
     if (input.kind === "work") {
       if (input.happenedOn === "") throw new Error("发生日期不能为空");
@@ -59,7 +51,19 @@ export class RecordsService {
           ? (original?.happenedOn ?? localDate())
           : input.happenedOn,
       );
-      if (original && !happenedOn) throw new Error("发生日期不能为空");
+      if (original?.happenedOn && !happenedOn)
+        throw new Error("发生日期不能为空");
+    }
+    let dueAt = original?.dueAt;
+    if (input.kind === "idea" && input.dueAt !== undefined) {
+      if (input.dueAt === null) dueAt = null;
+      else {
+        if (!z.iso.datetime({ offset: true }).safeParse(input.dueAt).success)
+          throw new Error("截止时间无效");
+        const deadline = new Date(input.dueAt);
+        if (!Number.isFinite(deadline.getTime())) throw new Error("截止时间无效");
+        dueAt = deadline.toISOString();
+      }
     }
     const note: Note = {
       id: original?.id || id(),
@@ -67,6 +71,7 @@ export class RecordsService {
       text,
       projectId: input.projectId || null,
       happenedOn,
+      ...(input.kind === "idea" && dueAt !== undefined ? { dueAt } : {}),
       result: input.result || "",
       createdAt: original?.createdAt || now(),
       updatedAt: now(),
@@ -80,13 +85,16 @@ export class RecordsService {
     this.store.set("note", note.id, note);
     return note;
   }
-  complete(noteId: string, done: boolean) {
+  complete(noteId: string, done: boolean, edit?: Pick<Note, "text" | "dueAt">) {
     const n = this.get(noteId);
-    if (n.kind !== "idea" || n.deletedAt)
-      throw new Error("此记录不能修改完成状态");
-    n.completedAt = done ? now() : null;
-    n.updatedAt = now();
-    return this.store.set("note", n.id, n);
+    if (n.kind !== "idea") throw new Error("此记录不能修改完成状态");
+    const finish = (note: Note) => this.store.set("note", note.id, {
+      ...note,
+      completedAt: done ? now() : null,
+      updatedAt: now(),
+    });
+    if (!done || !edit) return finish(n);
+    return this.store.transaction(() => finish(this.save({ ...n, text: edit.text, dueAt: edit.dueAt })));
   }
   remove(noteId: string) {
     const n = this.get(noteId);
@@ -181,7 +189,6 @@ export class RecordsService {
       const n = this.get(source);
       if (
         n.kind !== "work" ||
-        n.deletedAt ||
         !n.happenedOn ||
         n.happenedOn.slice(0, 7) !== month
       )
@@ -205,7 +212,7 @@ export class RecordsService {
         return {
           id: sourceId,
           note: n,
-          deleted: !n || !!n.deletedAt,
+          deleted: !n,
           changed: !n || hash(JSON.stringify(n)) !== e.sourceVersions[sourceId],
         };
       }),

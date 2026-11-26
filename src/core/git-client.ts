@@ -613,7 +613,7 @@ export class GitClientService {
     let revertPatch = "",
       revertHunks: string[] = [];
     if (
-      ["local", "unstaged"].includes(c.mode) &&
+      ["local", "unstaged", "staged"].includes(c.mode) &&
       !binary &&
       !limited &&
       !rename.oldPath &&
@@ -685,6 +685,7 @@ export class GitClientService {
       editable,
       binary,
       limited,
+      oldRevision: c.mode !== "unstaged" && /^[a-f\d]{40,64}$/i.test(refs.base) ? refs.base : undefined,
       oldLabel:
         c.mode === "unstaged"
           ? "暂存区"
@@ -899,9 +900,19 @@ export class GitClientService {
         flag: "wx",
         mode: stat?.mode,
       });
-      if (s.fingerprint !== (await this.identity(repo, s.file)))
-        throw new Error("文件已被外部修改，未保存");
-      await fs.promises.rename(temporary, target);
+      for (let attempt = 0; ; attempt++) {
+        if (s.fingerprint !== (await this.identity(repo, s.file)))
+          throw new Error("文件已被外部修改，未保存");
+        try {
+          await fs.promises.rename(temporary, target);
+          break;
+        } catch (error) {
+          // On Windows a concurrent Git reader can briefly hold the file without delete sharing.
+          const code = (error as NodeJS.ErrnoException).code;
+          if (process.platform !== "win32" || attempt >= 4 || !["EPERM", "EBUSY", "EACCES"].includes(code || "")) throw error;
+          await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
+        }
+      }
     } finally {
       await fs.promises.rm(temporary, { force: true });
     }

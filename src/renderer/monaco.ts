@@ -7,7 +7,6 @@ import "monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching.js"
 import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu.js";
 import "monaco-editor/editor/contrib/hover/browser/hoverContribution.js";
 import "monaco-editor/editor/contrib/suggest/browser/suggestController.js";
-import "monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js";
 import "monaco-editor/languages/definitions/java/register.js";
 import "monaco-editor/languages/definitions/javascript/register.js";
 import "monaco-editor/languages/definitions/typescript/register.js";
@@ -357,7 +356,8 @@ function applyJavaFieldColors(model: monaco.editor.ITextModel) {
   const state = fieldColors.get(model);
   if (!state || model.isDisposed()) return;
   const text = model.getValue();
-  let decorations: monaco.editor.IModelDeltaDecoration[] = [];
+  const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+  const inGit = model.uri.authority === "git";
   let matchedTokens = 0, fieldNames = 0;
   if (text.length <= 300000) {
     const names = new Set<string>();
@@ -367,18 +367,57 @@ function applyJavaFieldColors(model: monaco.editor.ITextModel) {
       const match = declaration.exec(line);
       if (match) names.add(match[1]);
     }
-    if (names.size) {
+    if (names.size || inGit) {
       fieldNames = names.size;
       const tokens = monaco.editor.tokenize(text, "java");
+      type Local = { uses: monaco.Range[]; reassigned: boolean };
+      const scopes: Map<string, Local>[] = [new Map()];
+      const locals: Local[] = [];
       for (let i = 0; i < tokens.length && i < lines.length; i++) {
         const line = lines[i], row = tokens[i];
+        const local = inGit && scopes.length > 2
+          ? /^\s*(?:final\s+)?(?:[A-Z][\w$]*(?:<[^;=]+>)?|int|long|boolean|var)(?:\[\])*\s+([\w$]+)(?=\s*[=;])/.exec(line)
+          : null;
         for (let j = 0; j < row.length; j++) {
-          if (!/^identifier/.test(row[j].type)) continue;
-          matchedTokens++;
           const from = row[j].offset;
           const to = j + 1 < row.length ? row[j + 1].offset : line.length;
           const value = line.slice(from, to);
+          if (inGit && row[j].type.startsWith("delimiter")) {
+            for (const char of value) {
+              if (char === "{") scopes.push(new Map());
+              if (char === "}" && scopes.length > 1) scopes.pop();
+            }
+          }
+          if (inGit && row[j].type.startsWith("comment.doc")) {
+            for (const tag of value.matchAll(/@\w+/g)) {
+              const col = from + tag.index + 1;
+              decorations.push({ range: new monaco.Range(i + 1, col, i + 1, col + tag[0].length), options: { inlineClassName: "idea-java-doc-tag" } });
+            }
+          }
+          if (!row[j].type.startsWith("identifier")) continue;
+          matchedTokens++;
           const range = new monaco.Range(i + 1, from + 1, i + 1, to + 1);
+          if (inGit) {
+            const declaration = local?.[1] === value && local[0].length === to;
+            if (declaration) {
+              const entry: Local = { uses: [], reassigned: false };
+              scopes[scopes.length - 1].set(value, entry);
+              locals.push(entry);
+            }
+            if (!/\.\s*$/.test(line.slice(0, from))) {
+              let binding: Local | undefined;
+              for (let s = scopes.length - 1; s >= 0 && !binding; s--) binding = scopes[s].get(value);
+              if (binding) {
+                binding.uses.push(range);
+                if (!declaration && /^\s*=(?!=)/.test(line.slice(to))) binding.reassigned = true;
+                continue;
+              }
+            }
+            if (/^\s*\(/.test(line.slice(to)) && /\b[A-Z][\w$]*\s*\.\s*(?:<[^;()]+>\s*)?$/.test(line.slice(0, from))) {
+              decorations.push({ range, options: { inlineClassName: "idea-java-static-call" } });
+              continue;
+            }
+          }
           // IDEA 把 null 当作关键字（蓝色加粗）；Java Monarch 词表里缺少它
           if (value === "null") {
             decorations.push({ range, options: { inlineClassName: "idea-java-null" } });
@@ -387,10 +426,15 @@ function applyJavaFieldColors(model: monaco.editor.ITextModel) {
           }
         }
       }
+      for (const binding of locals) {
+        if (binding.reassigned) for (const range of binding.uses) {
+          decorations.push({ range, options: { inlineClassName: "idea-java-reassigned" } });
+        }
+      }
     }
   }
   // 语言定义按需加载：若是首帧还没拿到 Java token，稍后重试而不是永久漏色
-  if (fieldNames && !matchedTokens && (state.retries || 0) < 4) {
+  if ((fieldNames || inGit) && !matchedTokens && (state.retries || 0) < 4) {
     state.retries = (state.retries || 0) + 1;
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(() => { state.timer = undefined; applyJavaFieldColors(model); }, 350);
@@ -456,6 +500,8 @@ export function diffCodeOptions(fontSize: number, wrap: boolean) {
     fontFamily: 'Consolas, "JetBrains Mono", "Microsoft YaHei", monospace',
     fontSize,
     lineHeight: Math.round(fontSize * 1.6),
+    cursorBlinking: "blink" as const,
+    cursorWidth: 2,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     wordWrap: wrap ? ("on" as const) : ("off" as const),
@@ -466,6 +512,29 @@ export function diffCodeOptions(fontSize: number, wrap: boolean) {
     ...ideaFoldingOptions(),
   };
 }
+
+export function diffChangePosition(
+  model: monaco.editor.ITextModel,
+  change: monaco.editor.ILineChange,
+): monaco.IPosition {
+  // An empty modified range is represented by the line preceding the deletion.
+  const first = change.modifiedStartLineNumber + (change.modifiedEndLineNumber ? 0 : 1);
+  const last = model.getLineCount();
+  return first > last
+    ? { lineNumber: last, column: model.getLineMaxColumn(last) }
+    : { lineNumber: Math.max(1, first), column: 1 };
+}
+
+export function revealDiffCaret(
+  code: monaco.editor.ICodeEditor,
+  position: monaco.IPosition,
+  focusCaret = true,
+) {
+  code.setPosition(position);
+  code.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
+  if (focusCaret) code.focus();
+}
+
 export function ideaLineDecorations(changes: monaco.editor.ILineChange[]) {
   const original: monaco.editor.IModelDeltaDecoration[] = [], modified: monaco.editor.IModelDeltaDecoration[] = [];
   for (const change of changes) {

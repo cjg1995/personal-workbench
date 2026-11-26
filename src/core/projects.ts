@@ -3,11 +3,11 @@ import path from "node:path";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DOMParser } from "@xmldom/xmldom";
 import type { ProjectConfig, RunInfo } from "../shared/types.js";
 import { ConfigService } from "./config.js";
 import { Git } from "./git.js";
 import { TaskManager } from "./tasks.js";
+import { ideaJdk, ideaOptions, ideaTomcatHome, readIdeaXml as xml } from "./idea-options.js";
 import {
   command,
   processes,
@@ -26,7 +26,7 @@ import {
   now,
   redact,
 } from "./util.js";
-type XmlDoc = ReturnType<DOMParser["parseFromString"]>;
+type XmlDoc = ReturnType<typeof xml>;
 interface Launch {
   exe: string;
   args: string[];
@@ -47,11 +47,6 @@ interface Launch {
 }
 const normalize = (s: string | undefined | null) =>
   (s || "").replaceAll("\\", "/").toLowerCase();
-const xml = (file: string) =>
-  new DOMParser().parseFromString(
-    fs.readFileSync(file, "utf8"),
-    "application/xml",
-  );
 const options = (node: Element | any) =>
   Object.fromEntries(
     Array.from(node.getElementsByTagName("option") as ArrayLike<any>)
@@ -160,37 +155,6 @@ export class ProjectService {
     private tomcatHelper?: string,
     private openReadyUrl?: (url: string, project: ProjectConfig) => Promise<void>,
   ) {}
-  private ideaOptions() {
-    const base = path.join(process.env.APPDATA || "", "JetBrains");
-    if (!fs.existsSync(base)) throw new Error("未找到 IDEA 用户配置");
-    const dirs = fs
-      .readdirSync(base)
-      .filter((n) => n.startsWith("IntelliJIdea"))
-      .sort()
-      .reverse();
-    const selected =
-      dirs.find((n) =>
-        fs.existsSync(path.join(base, n, "options", "javaeeAppServers.xml")),
-      ) || dirs[0];
-    if (!selected) throw new Error("未找到 IDEA 配置目录");
-    return {
-      root: path.join(base, selected, "options"),
-      system: path.join(process.env.LOCALAPPDATA || "", "JetBrains", selected),
-    };
-  }
-  private jdk(name: string) {
-    const roots = this.ideaOptions();
-    const doc = xml(path.join(roots.root, "jdk.table.xml"));
-    const node = Array.from(doc.getElementsByTagName("jdk")).find(
-      (j) => j.getElementsByTagName("name")[0]?.getAttribute("value") === name,
-    );
-    const home = node
-      ?.getElementsByTagName("homePath")[0]
-      ?.getAttribute("value")
-      ?.replace("$USER_HOME$", process.env.USERPROFILE || "");
-    if (!home || home.includes("$")) throw new Error("无法解析 JDK：" + name);
-    return path.join(home, "bin", "java.exe");
-  }
   private hotReloadArgs(docs: XmlDoc[], java: string, vm: string[]) {
     const selected = docs.some((d) =>
       Array.from(d.getElementsByTagName("component")).some(
@@ -204,7 +168,7 @@ export class ProjectService {
       vm.some((v) => /^-(?:agentpath|javaagent):.*(?:jrebel|rebel)/i.test(v))
     )
       return [];
-    const config = xml(path.join(this.ideaOptions().root, "javarebel.xml"));
+    const config = xml(path.join(ideaOptions().root, "javarebel.xml"));
     const jar = Array.from(config.getElementsByTagName("option"))
       .find((n) => n.getAttribute("name") === "javaRebelPath")
       ?.getAttribute("value");
@@ -252,15 +216,10 @@ export class ProjectService {
         );
       if (!run) throw new Error("未找到实际 Tomcat 运行配置");
       const opts = options(run);
-      const roots = this.ideaOptions();
-      const servers = xml(path.join(roots.root, "javaeeAppServers.xml"));
-      const server = Array.from(servers.getElementsByTagName("ServerDK")).find(
-        (s) =>
-          s.getAttribute("NAME") ===
-          run.getAttribute("APPLICATION_SERVER_NAME"),
-      );
-      if (!server) throw new Error("IDEA Tomcat 工具未配置");
-      const home = p.catalinaHome || options(server).CATALINA_HOME;
+      const roots = ideaOptions();
+      const serverHome = ideaTomcatHome(run.getAttribute("APPLICATION_SERVER_NAME") || "", roots.root);
+      const home = p.catalinaHome || serverHome;
+      if (!home) throw new Error("IDEA Tomcat 工具未配置");
       const base =
         p.catalinaBase ||
         path.join(roots.system, "tomcat", opts.BASE_DIRECTORY_NAME || "");
@@ -305,7 +264,7 @@ export class ProjectService {
           "Tomcat 部署与当前工作目录不一致，停止以保护两个后端的隔离",
         );
       const java =
-        p.java || this.jdk(run.getAttribute("ALTERNATIVE_JRE_PATH") || "");
+        p.java || ideaJdk(run.getAttribute("ALTERNATIVE_JRE_PATH") || "", roots.root);
       const vm = args(
         p.vmArgs?.trim() ? p.vmArgs : opts.COMMON_VM_ARGUMENTS || "",
       );
@@ -393,7 +352,7 @@ export class ProjectService {
       const jdkName = Array.from(misc.getElementsByTagName("component"))
         .find((c) => c.getAttribute("name") === "ProjectRootManager")
         ?.getAttribute("project-jdk-name");
-      const java = p.java || this.jdk(jdkName || "");
+      const java = p.java || ideaJdk(jdkName || "");
       const pom = fs.readFileSync(path.join(p.path, "pom.xml"), "utf8");
       if (!pom.includes("spring-boot-maven-plugin"))
         throw new Error("项目缺少已配置的 Spring Boot Maven 插件");

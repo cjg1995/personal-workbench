@@ -70,12 +70,6 @@ async function start() {
 </script>
 <template>
   <div class="subpage-wrap">
-    <div class="page-head">
-      <div>
-        <h1>APK 打包</h1>
-      </div>
-    </div>
-
     <div class="duo apk-layout">
       <section class="card pane">
         <div class="panel-head spaced-head">
@@ -164,9 +158,6 @@ async function start() {
               <Icon name="box" :size="15" />
               {{ active ? "打包进行中…" : "开始打包" }}
             </button>
-            <span v-if="config" class="badge live">
-              <i class="dot" />预检查通过
-            </span>
           </div>
 
           <button
@@ -185,8 +176,8 @@ async function start() {
         <div class="panel-head spaced-head">
           <div class="head-title">
             <Icon name="tasks" :size="17" />
-            <h2>构建状态与历史</h2>
-            <span v-if="history.length" class="count">{{ history.length }}</span>
+            <h2>构建记录</h2>
+            <span v-if="history.length && !task" class="count">{{ history.length }}</span>
           </div>
         </div>
         <div v-if="!task && !history.length" class="empty" style="margin: auto">

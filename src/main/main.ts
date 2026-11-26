@@ -4,9 +4,12 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   shell,
   screen,
   Notification,
+  powerMonitor,
+  Tray,
 } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,7 +18,10 @@ import { spawn } from "node:child_process";
 import { Store } from "../core/store.js";
 import { ConfigService } from "../core/config.js";
 import { RecordsService } from "../core/records.js";
+import { TodoReminders } from "../core/todo-reminders.js";
 import { PromptsService } from "../core/prompts.js";
+import { startWorkbenchPipe } from "../core/workbench-mcp-pipe.js";
+import { WorkbenchTools } from "../core/workbench-tools.js";
 import { TaskManager } from "../core/tasks.js";
 import { Git } from "../core/git.js";
 import { GitClientService } from "../core/git-client.js";
@@ -33,7 +39,7 @@ import { ReviewService } from "../core/review.js";
 import { ProjectService } from "../core/projects.js";
 import { readLogTail } from "../core/log-tail.js";
 import { ProjectBrowser } from "../core/project-browser.js";
-import { EditorFiles, projectFile } from "../core/editor-files.js";
+import { EditorFiles, encodeEditorText, projectFile } from "../core/editor-files.js";
 import { JavaLanguageService } from "../core/java-language-service.js";
 import {
   activateClientWindow,
@@ -42,10 +48,11 @@ import {
 } from "../core/process.js";
 import { exportWord } from "../core/documents.js";
 import {
-  activationTask,
+  notificationActivation,
   notificationAppId,
   notificationClsid,
   projectNotification,
+  todoNotification,
 } from "../core/notifications.js";
 import {
   atomicWrite,
@@ -62,6 +69,7 @@ import {
 import type {
   Configuration,
   MonthlyDraft,
+  Note,
   RecordKind,
   RunInfo,
   UiDialogButton,
@@ -72,6 +80,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const override = process.argv
   .find((v) => v.startsWith("--data-dir="))
   ?.slice(11);
+const startedForMcp = process.argv.includes("--mcp-start");
 const dataDir = ensureDir(
   override
     ? path.resolve(override)
@@ -113,12 +122,17 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let win: BrowserWindow;
   let exiting = false,
+    quitRequested = false,
     closeDialog = false;
   let restoringData = false,
     pendingActions = 0;
-  let pendingNotificationTask: string | null = null;
+  type NotificationDestination = { taskId: string } | { todoId: string };
+  let pendingNotification: NotificationDestination | null = null;
   let focusNotificationOnReady = false;
+  let reminderTray: Tray | undefined;
+  let supportsTodoReminders = false;
   const notifications = new Map<string, Notification>();
+  const commitDrafts = new Map<string, string>();
   const diffWindows = new Map<
     string,
     {
@@ -142,7 +156,7 @@ if (!app.requestSingleInstanceLock()) {
   const editorFiles = new EditorFiles(app.isPackaged
     ? path.join(process.resourcesPath, "editor-runtime", "rg.exe")
     : path.resolve(here, "../../node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe"));
-  let lastActivation: { taskId: string; at: number } | undefined;
+  let lastActivation: { id: string; at: number } | undefined;
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   const store = new Store(path.join(dataDir, "workbench.sqlite"));
   const config = new ConfigService(store, dataDir);
@@ -178,6 +192,7 @@ if (!app.requestSingleInstanceLock()) {
       undefined,
       (url, project) => projectBrowser.open(project, url),
     );
+  const workbenchTools = new WorkbenchTools(store, records, prompts, config);
   const backup = new BackupService(store, tasks, dataDir, async () => {
     if ((await projects.owned()).length)
       throw new Error(
@@ -261,6 +276,8 @@ if (!app.requestSingleInstanceLock()) {
       minWidth: 850,
       minHeight: 550,
       title: `${project.name} · Git 对比`,
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#00000000", symbolColor: "#818594", height: 38 },
       icon: windowIcon,
       show: false,
       backgroundColor: "#ffffff",
@@ -318,12 +335,13 @@ if (!app.requestSingleInstanceLock()) {
   }
   function attachEditorLanguage(item: EditorWindowEntry, project: ReturnType<typeof knownProject>) {
     if (!["tomcat", "spring"].includes(project.type)) return;
-    item.language = new JavaLanguageService(project, editorRuntime, dataDir,
+    const language = new JavaLanguageService(project, editorRuntime, dataDir,
       (method, params) => {
-        if (!item.window.isDestroyed())
+        if (item.language === language && !item.window.isDestroyed())
           item.window.webContents.send("workbench:editor-lsp", method, params);
       }, config.get().tools.maven);
-    void item.language.start().catch(() => {});
+    item.language = language;
+    void language.start().catch(() => {});
     const fileEvents = new Map<string, number>();
     try {
       item.projectWatcher = fs.watch(project.path, { recursive: true }, (_event, filename) => {
@@ -451,29 +469,68 @@ if (!app.requestSingleInstanceLock()) {
     await child.loadFile(editorEntry);
     return { opened: true };
   }
+  function showMainWindow() {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+  function activateNotification(destination: NotificationDestination) {
+    const activationId = "taskId" in destination ? destination.taskId : destination.todoId;
+    if (lastActivation?.id === activationId && Date.now() - lastActivation.at < 1000) return false;
+    lastActivation = { id: activationId, at: Date.now() };
+    pendingNotification = destination;
+    focusNotificationOnReady = true;
+    showMainWindow();
+    if (win && !win.isDestroyed()) win.webContents.send("workbench:navigate", destination);
+    return true;
+  }
   const activateTask = (taskId: string) => {
     const task = store.get<import("../shared/types.js").Task>("task", taskId);
-    if (!task || !["run", "wechat"].includes(task.type)) return;
-    if (
-      lastActivation?.taskId === taskId &&
-      Date.now() - lastActivation.at < 1000
-    )
-      return;
-    lastActivation = { taskId, at: Date.now() };
+    if (!task || !["run", "wechat"].includes(task.type) || !activateNotification({ taskId })) return;
     task.result.notification = {
       ...((task.result.notification as object) || {}),
       activatedAt: now(),
     };
     tasks.save(task);
-    pendingNotificationTask = taskId;
-    focusNotificationOnReady = true;
-    if (win && !win.isDestroyed()) {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
-      win.webContents.send("workbench:navigate", { taskId });
-    }
   };
+  const activateTodo = (todoId: string) => {
+    if (store.get<Note>("note", todoId)?.kind === "idea") activateNotification({ todoId });
+  };
+  const reminders = new TodoReminders(store, (note) => new Promise((resolve) => {
+    const notificationId = hash(`${note.id}:${note.dueAt}`).slice(0, 24);
+    const notification = new Notification({
+      ...todoNotification(note),
+      icon: notificationIcon,
+      id: notificationId,
+      groupId: "todo-deadline",
+    });
+    const finish = (shown: boolean) => {
+      clearTimeout(timeout);
+      if (!shown) notifications.delete(notificationId);
+      resolve(shown);
+    };
+    const timeout = setTimeout(() => finish(false), 8000);
+    notifications.set(notificationId, notification);
+    notification.once("show", () => finish(true));
+    notification.once("failed", () => finish(false));
+    notification.once("close", () => notifications.delete(notificationId));
+    notification.once("click", () => activateTodo(note.id));
+    try { notification.show(); } catch { finish(false); }
+  }));
+
+  function hideForReminders() {
+    if (!reminderTray) {
+      reminderTray = new Tray(windowIcon);
+      reminderTray.setToolTip("个人工作台");
+      reminderTray.on("click", showMainWindow);
+      reminderTray.setContextMenu(Menu.buildFromTemplate([
+        { label: "打开个人工作台", click: showMainWindow },
+        { label: "退出工作台", click: () => app.quit() },
+      ]));
+    }
+    win.hide();
+  }
   tasks.finished = (task) => {
     const options = projectNotification(task);
     if (!options) return;
@@ -722,7 +779,7 @@ if (!app.requestSingleInstanceLock()) {
           attachEditorLanguage(item, target);
           return { switched: true, projectId: target.id, projectName: target.name };
         }
-        if (name === "editor.tree") return editorFiles.tree(root, String(p.directory || ""));
+        if (name === "editor.tree") return editorFiles.tree(root, String(p.directory || ""), item.language?.sourceFolders);
         if (name === "editor.file-search") return editorFiles.findFiles(root, String(p.query || ""));
         if (name === "editor.code-files") return (await editorFiles.files(root))
           .filter((file) => /\.(?:ts|tsx|js|jsx)$/i.test(file)).slice(0, 3000);
@@ -795,7 +852,12 @@ if (!app.requestSingleInstanceLock()) {
         if (name === "editor.version") return editorFiles.version(root, String(p.file));
         if (name === "editor.blame") {
           const relative = path.relative(root, file).split(path.sep).join("/");
-          return git.blame(root, relative);
+          if (p.text === undefined) return git.blame(root, relative);
+          const { text, encoding, bom } = p;
+          if (typeof text !== "string" || text.length > 8 * 1024 * 1024 ||
+            (encoding !== "utf8" && encoding !== "utf16le" && encoding !== "utf16be" && encoding !== "gb18030") ||
+            typeof bom !== "boolean") throw new Error("提交历史请求无效");
+          return git.blame(root, relative, encodeEditorText(text, encoding, bom));
         }
         if (name === "editor.blame-diff") {
           const hash = String(p.hash || "");
@@ -873,11 +935,24 @@ if (!app.requestSingleInstanceLock()) {
         }
         throw new Error("不支持的代码编辑操作");
       }
+      case "git.commit-draft": {
+        const project = knownProject(p.projectId);
+        if (p.message === undefined) return commitDrafts.get(project.id) || "";
+        if (typeof p.message !== "string" || p.message.length > 20000) throw new Error("提交说明超过长度限制");
+        if (p.message) commitDrafts.set(project.id, p.message);
+        else commitDrafts.delete(project.id);
+        const recipients = [win, ...[...diffWindows.values()].filter(item => item.request.projectId === project.id).map(item => item.window)];
+        for (const target of recipients) {
+          if (target && target !== source && !target.isDestroyed())
+            target.webContents.send("workbench:commit-draft", { projectId: project.id, message: p.message });
+        }
+        return p.message;
+      }
       case "git.window-context": {
         const item = [...diffWindows.values()].find((v) => v.window === source);
         if (!item) throw new Error("对比窗口不存在");
         const project = knownProject(item.request.projectId);
-        return { request: item.request, projectName: project.name };
+        return { request: item.request, projectName: project.name, projectPath: project.path };
       }
       case "git.confirm-save": {
         const result = await showUiDialog(source || win, {
@@ -932,7 +1007,7 @@ if (!app.requestSingleInstanceLock()) {
       case "git.content": {
         const repo = knownProject(p.projectId).path;
         const result = await gitClient.content(repo, p.comparison, p.file);
-        await watchDiff(source, repo, p.file);
+        if (p.watch !== false) await watchDiff(source, repo, p.file);
         return result;
       }
       case "git.branches":
@@ -1132,7 +1207,7 @@ if (!app.requestSingleInstanceLock()) {
         return {
           config: config.get(),
           notes: store.list("note"),
-          prompts: store.list("prompt"),
+          prompts: prompts.list(),
           tasks: tasks.list(),
           dataDir,
           today: localDate(),
@@ -1142,9 +1217,9 @@ if (!app.requestSingleInstanceLock()) {
           formDrafts: store.get("meta", "form-drafts") || {},
         };
       case "notification.take": {
-        const taskId = pendingNotificationTask;
-        pendingNotificationTask = null;
-        return taskId ? { taskId } : null;
+        const destination = pendingNotification;
+        pendingNotification = null;
+        return destination;
       }
       case "form.save": {
         if (
@@ -1169,21 +1244,24 @@ if (!app.requestSingleInstanceLock()) {
       case "record.save": {
         if (p.projectId) knownProject(p.projectId);
         const n = records.save(p);
+        if (n.kind === "idea") reminders.refresh();
         changed();
         return n;
       }
       case "record.complete": {
-        const n = records.complete(p.id, !!p.done);
+        const n = records.complete(p.id, !!p.done, p.edit);
+        reminders.refresh();
         changed();
         return n;
       }
       case "record.delete": {
         const note = records.get(p.id);
+        const label = note.kind === "idea" ? "待办" : "记录";
         if (
           !(await ask(
-            "删除记录",
-            "删除后该记录将永久移除，无法恢复。",
-            "删除这条记录",
+            `删除${label}`,
+            `删除后该${label}将永久移除，无法恢复。`,
+            `删除这条${label}`,
             {
               detail: note.text.slice(0, 300),
               tone: "danger",
@@ -1193,6 +1271,7 @@ if (!app.requestSingleInstanceLock()) {
         )
           return null;
         const n = records.remove(p.id);
+        if (n.kind === "idea") reminders.refresh();
         changed();
         return n;
       }
@@ -1210,10 +1289,11 @@ if (!app.requestSingleInstanceLock()) {
         const prompt = prompts.get(p.id);
         if (
           !(await ask(
-            "移至已删除？",
-            `「${prompt.title}」之后可在已删除列表中恢复。`,
-            "移至已删除",
+            "删除提示词",
+            "删除后该提示词将永久移除，无法恢复。",
+            "删除这条提示词",
             {
+              detail: prompt.title,
               tone: "danger",
               danger: true,
             },
@@ -1223,11 +1303,6 @@ if (!app.requestSingleInstanceLock()) {
         const removed = prompts.remove(prompt.id);
         changed();
         return removed;
-      }
-      case "prompt.restore": {
-        const restored = prompts.restore(p.id);
-        changed();
-        return restored;
       }
       case "monthly.get": {
         const draft = records.draft(p.month, config.get().name);
@@ -1731,8 +1806,13 @@ if (!app.requestSingleInstanceLock()) {
           ))
         )
           return null;
-        const result = await backup.restore(p.token);
-        records.purgeDeleted();
+        await reminders.stop();
+        let result;
+        try {
+          result = await backup.restore(p.token);
+        } finally {
+          if (supportsTodoReminders) reminders.start();
+        }
         git.executable = config.get().tools.git;
         changed();
         return result;
@@ -1837,12 +1917,14 @@ if (!app.requestSingleInstanceLock()) {
     }
     // Register the COM server even when this launch came from an older toast.
     // Merely setting handleActivation does not initialize Electron's presenter.
-    if (process.platform === "win32") Notification.isSupported();
-    if (process.platform === "win32")
+    if (process.platform === "win32") {
+      supportsTodoReminders = Notification.isSupported();
       Notification.handleActivation((details) => {
-        const taskId = activationTask(details.arguments);
-        if (taskId) activateTask(taskId);
+        const activation = notificationActivation(details.arguments);
+        if (activation?.kind === "task") activateTask(activation.id);
+        else if (activation?.kind === "todo") activateTodo(activation.id);
       });
+    }
     const saved = store.get<{ width: number; height: number }>(
       "meta",
       "window",
@@ -1888,6 +1970,7 @@ if (!app.requestSingleInstanceLock()) {
       const source = diff?.window || editorWindow?.window || win;
       const diffActions = new Set([
         "git.window-context",
+        "git.commit-draft",
         "git.confirm-leave",
         "git.fullscreen",
         "git.validate-token",
@@ -1966,7 +2049,7 @@ if (!app.requestSingleInstanceLock()) {
       runLogKeys = false;
     });
     win.once("ready-to-show", () => {
-      win.show();
+      if (!startedForMcp || focusNotificationOnReady) win.show();
       if (focusNotificationOnReady) {
         if (win.isMinimized()) win.restore();
         win.focus();
@@ -1974,6 +2057,10 @@ if (!app.requestSingleInstanceLock()) {
       }
     });
     void win.loadFile(entry);
+    if (supportsTodoReminders) {
+      reminders.start();
+      powerMonitor.on("resume", () => reminders.refresh());
+    }
     win.on("close", (event) => {
       if (exiting) {
         store.set("meta", "window", win.getBounds());
@@ -1991,6 +2078,10 @@ if (!app.requestSingleInstanceLock()) {
             ))
           )
             return;
+          if (!quitRequested && reminders.hasPending()) {
+            hideForReminders();
+            return;
+          }
           for (const item of diffWindows.values())
             if (
               !(await item.window.webContents.executeJavaScript(
@@ -2053,15 +2144,17 @@ if (!app.requestSingleInstanceLock()) {
           });
         } finally {
           closeDialog = false;
+          quitRequested = false;
         }
       })();
     });
-    app.on("second-instance", () => {
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
+    app.on("second-instance", (_event, args) => {
+      if (args.includes("--mcp-start")) return;
+      showMainWindow();
     });
     win.on("closed", () => {
+      reminderTray?.destroy();
+      reminderTray = undefined;
       for (const item of diffWindows.values())
         if (!item.window.isDestroyed()) item.window.close();
       for (const item of editorWindows.values())
@@ -2070,11 +2163,29 @@ if (!app.requestSingleInstanceLock()) {
     app.on("before-quit", (event) => {
       if (exiting || !win || win.isDestroyed()) return;
       event.preventDefault();
+      quitRequested = true;
       win.close();
     });
+    if (process.platform === "win32") {
+      const closeMcp = startWorkbenchPipe(dataDir, (name, args) => {
+        if (restoringData) throw new Error("正在恢复工作台数据，请稍后重试");
+        if (exiting) throw new Error("工作台正在退出，请稍后重试");
+        const result = workbenchTools.call(name, args);
+        if (name !== "find_entries") {
+          reminders.refresh();
+          changed();
+        }
+        return result;
+      }, (error) => {
+        console.error("工作台接入服务启动失败", redact(errorText(error)));
+      });
+      app.once("quit", closeMcp);
+    }
   });
   app.on("window-all-closed", () => {
-    store.close();
-    app.quit();
+    void reminders.stop().finally(() => {
+      store.close();
+      app.quit();
+    });
   });
 }

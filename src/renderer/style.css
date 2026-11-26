@@ -533,22 +533,6 @@ small {
   color: var(--ink);
 }
 
-.crumb .divider {
-  height: 16px;
-  width: 1px;
-  background: var(--line);
-  margin-right: 1px;
-}
-
-.crumb .group {
-  color: #3f4d60;
-  font-weight: 560;
-}
-
-.crumb .slash {
-  color: #98a3b1;
-}
-
 .chrome-date {
   margin-left: auto;
   font-size: 12px;
@@ -610,40 +594,6 @@ small {
   overflow-y: auto;
 }
 
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: none;
-  margin-bottom: 16px;
-  min-height: 44px;
-  gap: 20px;
-}
-
-.page-head h1 {
-  font-size: 27px;
-  line-height: 1.24;
-  letter-spacing: -0.6px;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.page-head-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.h-meta {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 9px;
-  color: var(--soft);
-  font-size: 13px;
-  margin-top: 6px;
-}
-
 .sep-dot {
   display: inline-block;
   width: 3px;
@@ -651,14 +601,6 @@ small {
   border-radius: 50%;
   background: #a4afbd;
   flex: none;
-}
-
-.h-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  flex-shrink: 0;
-  flex-wrap: wrap;
 }
 
 /* 底部任务状态条 */
@@ -1020,6 +962,31 @@ button.danger.text-button:hover:not(:disabled),
   background: var(--danger-bg);
   border-color: transparent;
   color: var(--danger-strong);
+}
+
+button.list-delete-button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 29px;
+  height: 29px;
+  min-height: 29px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: #64758a;
+}
+
+button.list-delete-button:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: transparent;
+  color: var(--danger-strong);
+}
+
+button.list-delete-button:disabled {
+  opacity: 0.55;
 }
 
 /* 组合按钮组（Fetch | Pull | Push） */
@@ -2039,27 +2006,19 @@ details > summary:hover {
 }
 
 /* ==========================================================================
-   顶部撰写卡片（工作记录 / 灵感待办共用）
+   顶部撰写卡片（工作记录 / 待办事项共用）
    ========================================================================== */
-
-.page-head.notes-head {
-  align-items: center;
-  gap: 24px;
-  margin-bottom: 16px;
-  min-height: 52px;
-}
-
-.page-head.notes-head .page-head-title {
-  flex: 0 0 auto;
-  padding-top: 0;
-}
 
 .quick-entry {
   display: flex;
-  flex-direction: column;
-  flex: 1 1 540px;
-  max-width: 880px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  flex: none;
+  width: 100%;
   min-width: 0;
+  margin: 0 0 16px;
+  padding: 5px 10px 5px 4px;
+  column-gap: 10px;
   background: var(--paper);
   border: 1px solid var(--control-line);
   border-radius: var(--r-lg);
@@ -2067,13 +2026,6 @@ details > summary:hover {
   overflow: hidden;
   transition: border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);
-}
-
-.quick-entry.quick-entry-inline {
-  flex-direction: row;
-  align-items: flex-end;
-  padding: 3px 8px 3px 4px;
-  gap: 8px;
 }
 
 .quick-entry:hover {
@@ -2089,11 +2041,10 @@ details > summary:hover {
 }
 
 .quick-entry .entry-input {
-  width: 100%;
-  min-height: 44px;
+  min-height: 50px;
   max-height: 160px;
   margin: 0;
-  padding: 10px 8px 10px 12px;
+  padding: 13px 8px 13px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -2104,16 +2055,20 @@ details > summary:hover {
   resize: none;
   box-shadow: none;
   overflow-y: hidden;
-  flex: 1 1 0;
+  flex: 1 1 min(220px, 100%);
   min-width: 0;
 }
 
 .quick-entry .entry-inline-actions {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
   flex: none;
-  padding: 0 0 6px;
+  max-width: 100%;
+  margin-inline-start: auto;
+  padding: 0 0 9px;
 }
 
 .quick-entry .entry-date-chip .ico {
@@ -2174,8 +2129,8 @@ details > summary:hover {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
-  margin: 0 0 0 2px;
+  height: 30px;
+  margin: 0;
   padding: 0 7px 0 8px;
   border: 1px solid #dfe5ef;
   border-radius: 6px;
@@ -2210,7 +2165,7 @@ details > summary:hover {
   flex: none;
 }
 
-.quick-entry .entry-date-chip > input[type="date"] {
+.quick-entry .entry-date-chip > input:is([type="date"], [type="datetime-local"]) {
   margin: 0;
   padding: 0;
   min-height: 0;
@@ -2225,7 +2180,7 @@ details > summary:hover {
   cursor: pointer;
 }
 
-.quick-entry .entry-date-chip > input[type="date"]:focus {
+.quick-entry .entry-date-chip > input:is([type="date"], [type="datetime-local"]):focus {
   border: 0;
   box-shadow: none;
   outline: none;
@@ -2263,8 +2218,8 @@ details > summary:hover {
 }
 
 .quick-entry .btn {
-  height: 30px;
-  min-height: 30px;
+  height: 32px;
+  min-height: 32px;
   padding: 0 13px;
   flex: none;
 }
@@ -2515,12 +2470,6 @@ button.month-chip:hover:not(:disabled) {
   font-weight: 600;
 }
 
-.all-months-empty {
-  font-size: 12.5px;
-  color: var(--soft);
-  white-space: nowrap;
-}
-
 .all-months-today {
   flex: none;
   white-space: nowrap;
@@ -2678,13 +2627,10 @@ button.month-chip:hover:not(:disabled) {
   width: 100%;
   display: flex;
   flex: none;
-  gap: 15px;
-  padding: 13px 14px;
+  gap: 8px;
+  padding: 0 10px 0 0;
   min-height: 82px;
   align-items: center;
-  justify-content: flex-start;
-  text-align: left;
-  white-space: normal;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -2702,7 +2648,7 @@ button.month-chip:hover:not(:disabled) {
   background: var(--line-light);
 }
 
-.work-item:hover:not(:disabled) {
+.work-item:hover {
   background: #f5f8fc;
   border-color: transparent;
 }
@@ -2712,7 +2658,7 @@ button.month-chip:hover:not(:disabled) {
   border-color: var(--tint-line);
 }
 
-.work-item.selected:hover:not(:disabled) {
+.work-item.selected:hover {
   background: var(--tint);
   border-color: var(--tint-line);
 }
@@ -2720,6 +2666,33 @@ button.month-chip:hover:not(:disabled) {
 .work-item.selected::before,
 .work-item.selected + .work-item::before {
   display: none;
+}
+
+.note-select {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  justify-content: flex-start;
+  flex: 1 1 0;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  white-space: normal;
+}
+
+.note-select:hover:not(:disabled),
+.note-select:active:not(:disabled) {
+  background: transparent;
+}
+
+.work-item .note-select {
+  gap: 15px;
+  padding: 13px 0 13px 14px;
 }
 
 .date-block {
@@ -2765,7 +2738,7 @@ button.month-chip:hover:not(:disabled) {
   overflow: hidden;
 }
 
-.work-item p {
+.work-item .item-description {
   color: #536174;
   font-size: 12.5px;
   line-height: 1.55;
@@ -2774,10 +2747,6 @@ button.month-chip:hover:not(:disabled) {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.work-item.selected > .ico {
-  color: var(--brand);
 }
 
 .detail-main {
@@ -2815,21 +2784,12 @@ button.month-chip:hover:not(:disabled) {
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 73%, 0 100%);
 }
 
-.sheet-kind {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  font-weight: 580;
-  color: #536c86;
-}
-
 .record-sheet h3 {
   font-size: 22px;
   font-weight: 660;
   letter-spacing: -0.5px;
   line-height: 1.45;
-  margin: 9px 0 6px;
+  margin: 0 0 6px;
   color: var(--ink);
   word-break: break-word;
 }
@@ -2915,6 +2875,8 @@ button.month-chip:hover:not(:disabled) {
   width: 180px;
 }
 
+.todo-edit-deadline input { width: 215px; }
+
 .detail-edit-row input[type="date"].invalid {
   border-color: #dd8d87;
   background: var(--danger-bg);
@@ -2940,7 +2902,7 @@ button.month-chip:hover:not(:disabled) {
 }
 
 /* ==========================================================================
-   页面 2：灵感待办（02-灵感待办.png）
+   待办事项
    ========================================================================== */
 
 .ideas-layout {
@@ -2989,11 +2951,10 @@ button.month-chip:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 13px;
+  padding: 0 10px 0 13px;
   border: 1px solid transparent;
   border-radius: 8px;
   min-height: 56px;
-  cursor: pointer;
   transition: background var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
 }
@@ -3071,7 +3032,11 @@ button.month-chip:hover:not(:disabled) {
   font-size: 14.5px;
 }
 
-.idea-line p {
+.idea-line .note-select {
+  padding-block: 12px;
+}
+
+.idea-line .item-description {
   font-size: 12px;
   margin: 3px 0 0;
   color: #536174;
@@ -3090,10 +3055,6 @@ button.month-chip:hover:not(:disabled) {
 
 .idea-line.selected .idea-time {
   color: #496a93;
-}
-
-.idea-line.selected > .ico {
-  color: var(--brand);
 }
 
 .inbox-col {
@@ -3185,7 +3146,7 @@ button.month-chip:hover:not(:disabled) {
   font-size: 23px;
   line-height: 1.42;
   font-weight: 680;
-  margin: 12px 0 10px;
+  margin: 0 0 10px;
   letter-spacing: -0.4px;
   word-break: break-word;
 }
@@ -3251,6 +3212,8 @@ button.month-chip:hover:not(:disabled) {
   min-height: 50px;
   padding: 13px 16px 8px;
 }
+
+.project-layout .panel-head > .badge { flex: none; }
 
 .project-filter {
   display: flex;
@@ -3500,6 +3463,10 @@ button.month-chip:hover:not(:disabled) {
   height: 32px;
   min-height: 32px;
   font-size: 12.5px;
+}
+
+.service-header-actions .service-listener-action {
+  min-width: 100px;
 }
 
 .service-facts {
@@ -3832,16 +3799,6 @@ button.month-chip:hover:not(:disabled) {
   font-size: 11px;
 }
 
-.term-foot .dot {
-  color: #439267;
-  width: 5px;
-  height: 5px;
-}
-
-.term-foot .dot.paused {
-  color: #9ba7b8;
-}
-
 .term-empty {
   flex: 1 1 0;
   display: flex;
@@ -3880,13 +3837,24 @@ button.month-chip:hover:not(:disabled) {
   min-height: 0;
 }
 
+.month-actions {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 9px;
+  background: var(--paper);
+}
+
 .month-actions .saved {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: #45745b;
-  margin-right: 4px;
+  margin-inline-end: auto;
 }
 
 .month-actions .saved.pending {
@@ -4059,23 +4027,25 @@ button.month-chip:hover:not(:disabled) {
 
 .paper-desk {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  flex-direction: column;
   min-height: 0;
   background: #eff2f6;
   border-color: #dde3ea;
   border-radius: 11px;
-  padding: 14px 23px 16px;
   overflow-y: auto;
 }
 
+.paper-desk.full { grid-column: 1 / -1; }
+
+.monthly-empty { flex: 1 0 auto; }
+
 .paper {
   background: var(--paper);
-  width: 100%;
-  min-height: 100%;
+  flex: 1 0 auto;
   border: 1px solid #dfe4eb;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(39, 59, 81, 0.045);
+  margin: 14px 23px 16px;
   padding: 24px 32px 26px;
 }
 
@@ -4492,15 +4462,6 @@ button.month-chip:hover:not(:disabled) {
   padding: 8px 10px;
 }
 
-.list-label {
-  margin: 10px 0 5px;
-  padding: 0 8px;
-  color: var(--soft);
-  font-size: 11px;
-  font-weight: 620;
-  letter-spacing: 0.4px;
-}
-
 .task-select {
   display: block;
   width: 100%;
@@ -4621,14 +4582,37 @@ button.month-chip:hover:not(:disabled) {
 .settings-card {
   display: flex;
   flex-direction: column;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
 }
 
+.settings-toolbar {
+  display: flex;
+  align-items: stretch;
+  min-height: 54px;
+  flex: none;
+  border-bottom: 1px solid var(--line-light);
+}
+
+.settings-toolbar .tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.settings-version {
+  align-self: center;
+  flex: none;
+  padding-inline: 18px;
+  color: var(--soft);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-body {
-  flex: 0 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 24px;
@@ -4725,17 +4709,11 @@ button.month-chip:hover:not(:disabled) {
   flex: none;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   padding: 12px 24px;
   border-top: 1px solid var(--line);
   background: var(--blue-wash);
-}
-
-.save-bar .save-hint {
-  margin-right: auto;
-  font-size: 12.5px;
-  color: var(--brand-dark);
-  font-weight: 520;
 }
 
 /* 拆分视图与文件列表（提测 / 审查用） */
@@ -4863,17 +4841,6 @@ button.month-chip:hover:not(:disabled) {
   .workarea {
     padding: 18px 22px;
   }
-  .page-head {
-    margin-bottom: 16px;
-    gap: 16px;
-  }
-  .page-head h1 {
-    font-size: 27px;
-  }
-  .quick-entry {
-    flex: 1 1 480px;
-    max-width: none;
-  }
   .project-layout {
     grid-template-columns: 274px minmax(0, 1fr);
   }
@@ -4896,15 +4863,6 @@ button.month-chip:hover:not(:disabled) {
 }
 
 @media (max-width: 1080px) {
-  .page-head {
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-  .quick-entry {
-    flex: 1 0 100%;
-    width: 100%;
-    max-width: none;
-  }
   .days {
     overflow-x: auto;
     padding-bottom: 0;
@@ -4916,7 +4874,6 @@ button.month-chip:hover:not(:disabled) {
   .work-layout,
   .ideas-layout,
   .project-layout,
-  .monthly-layout,
   .apk-layout,
   .tasks-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -4938,9 +4895,16 @@ button.month-chip:hover:not(:disabled) {
   .terminal {
     min-height: 300px;
   }
-  .paper-desk {
-    min-height: 460px;
+  .monthly-layout {
+    flex: 1 1 0;
+    grid-template-columns: minmax(205px, 0.62fr) minmax(0, 1fr);
   }
+  .monthly-layout > .pane { min-height: 0; }
+  .paper {
+    margin-inline: 12px;
+    padding-inline: 18px;
+  }
+  .month-actions { padding-inline: 12px; }
 }
 
 @media (max-width: 920px) {
@@ -4980,6 +4944,15 @@ button.month-chip:hover:not(:disabled) {
   .service-facts {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+@media (max-width: 740px) {
+  .monthly-layout {
+    flex: none;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .monthly-layout > .pane { min-height: 320px; }
+  .paper-desk { order: -1; min-height: 460px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

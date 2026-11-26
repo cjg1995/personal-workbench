@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowReactive, shallowRef, watch } from "vue";
 import { monaco, language, diffCodeOptions, ideaFoldingOptions, ideaImportHiddenAreas } from "../monaco";
+import { completeJavaStatement, expandJavaOutput, isJavaOutputAbbreviation, javaCallArguments, preserveJavaCallSuffix, type JavaEdit } from "../java-editing";
+import { installParameterHints } from "../parameter-hints";
+import type { GitBlameLine } from "../../shared/types";
+import type { EditorTreeEntry, JavaFileKind } from "../../shared/editor-tree";
+import { showJavaDiagnostic } from "../../shared/java-diagnostics";
 import * as tsLanguage from "monaco-editor/languages/features/typescript/register.js";
 import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker.js?worker";
 import "monaco-editor/editor/contrib/documentSymbols/browser/outlineModel.js";
@@ -30,6 +35,7 @@ interface DiskFile {
   encoding: "utf8" | "utf16le" | "utf16be" | "gb18030";
   bom: boolean;
   eol: "\n" | "\r\n";
+  javaKind?: JavaFileKind;
 }
 interface Tab {
   file: string;
@@ -42,6 +48,7 @@ interface Tab {
   dirty: boolean;
   stale: boolean;
   readonly: boolean;
+  javaKind?: JavaFileKind;
   view?: monaco.editor.ICodeEditorViewState | null;
   restore?: { lineNumber: number; column: number; scrollTop: number };
   changeTimer?: ReturnType<typeof setTimeout>;
@@ -49,37 +56,19 @@ interface Tab {
   saving?: Promise<boolean>;
   reloadId?: number;
   dispose?: monaco.IDisposable;
-  blame?: BlameLine[];
+  blame?: BlameState;
 }
 interface Position { file: string; line: number; column: number; uri?: string }
 interface LspRange { start: { line: number; character: number }; end: { line: number; character: number } }
 interface Target extends Position { uri: string; label: string; snippet?: string; range?: LspRange }
 interface SearchHit { file: string; line: number; column: number; text: string }
 interface ProjectOption { id: string; name: string; group?: string; type: string; path: string }
-interface BlameLine { line: number; hash: string; author: string; date: string; summary: string; uncommitted?: boolean }
-interface BlameRow { key: string; top: number; height: number; date: string; author: string; hash: string; summary: string; uncommitted?: boolean; bg: string; fg: string }
-const blamePalette = [
-  { bg: "#fff5cc", fg: "#755d00" },
-  { bg: "#e4f3e8", fg: "#256b3a" },
-  { bg: "#e6effc", fg: "#24518f" },
-  { bg: "#f2e8fb", fg: "#5b2d8e" },
-  { bg: "#fdeaea", fg: "#8a2f2f" },
-  { bg: "#e2f4f4", fg: "#1f6666" },
-  { bg: "#fdeee2", fg: "#834a20" },
-  { bg: "#eef1f6", fg: "#45505e" },
-];
-const blamePaletteDark = [
-  { bg: "#403a22", fg: "#ddca8f" },
-  { bg: "#233a2b", fg: "#a9d2b7" },
-  { bg: "#243349", fg: "#a9c5e9" },
-  { bg: "#352a45", fg: "#cbb0e8" },
-  { bg: "#452a2a", fg: "#e0aaaa" },
-  { bg: "#223c3c", fg: "#a5d0d0" },
-  { bg: "#3d2f24", fg: "#d7b591" },
-  { bg: "#2e3238", fg: "#b3bcc8" },
-];
-const blameUncommitted = { bg: "#f6f0e6", fg: "#8a6a3b" };
-const blameUncommittedDark = { bg: "#3a3324", fg: "#d8bd8a" };
+interface BlameState {
+  snapshot?: { version: number; lines: ReadonlyMap<number, GitBlameLine> };
+  loading: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+}
+interface BlameRow extends GitBlameLine { top: number; height: number; lineHeight: number; authorLabel: string; ageBand: number }
 
 const context = ref<Context>();
 const rootNodes = ref<TreeNode[]>([]);
@@ -133,9 +122,9 @@ const tabListOpen = ref(false);
 const tabListFiles = ref<string[]>([]);
 const tabListPos = ref({ top: 0, right: 12 });
 const switcher = ref<{ open: boolean; files: string[]; index: number }>({ open: false, files: [], index: 0 });
-const blameLines = ref<BlameLine[]>([]);
+const activeBlame = computed(() => tabs.value.find((tab) => tab.file === activeFile.value)?.blame);
+const showBlame = computed(() => !!activeBlame.value?.snapshot?.lines.size);
 const blameTick = ref(0);
-const blameBusy = ref(false);
 const ctrlLink = ref(false);
 const filteredProjects = computed(() => {
   const q = projectQuery.value.trim().toLowerCase();
@@ -184,48 +173,46 @@ const searchGroups = computed(() => {
 const switcherEntries = computed(() => switcher.value.files.map((file) => ({
   file,
   name: displayName(file),
+  javaKind: tabs.value.find((tab) => tab.file === file)?.javaKind,
   active: file === activeFile.value,
 })));
-const blameColorMap = computed(() => {
-  const map = new Map<string, number>();
-  let next = 0;
-  for (const line of blameLines.value) {
-    if (!line.hash || map.has(line.hash)) continue;
-    map.set(line.hash, next++ % blamePalette.length);
+const blameTimeRange = computed(() => {
+  let oldest = Infinity;
+  let newest = -Infinity;
+  for (const line of activeBlame.value?.snapshot?.lines.values() || []) {
+    if (line.uncommitted) continue;
+    oldest = Math.min(oldest, line.authoredAt);
+    newest = Math.max(newest, line.authoredAt);
   }
-  return map;
+  return { oldest, span: Math.max(0, newest - oldest) };
 });
 const blameRows = computed<BlameRow[]>(() => {
   blameTick.value;
   const instance = editor;
   const model = instance?.getModel();
-  if (!instance || !model || !blameLines.value.length) return [];
+  const snapshot = activeBlame.value?.snapshot;
+  if (!instance || !model || model !== current.value?.model || snapshot?.version !== model.getVersionId()) return [];
   const rows: BlameRow[] = [];
-  const palette = dark.value ? blamePaletteDark : blamePalette;
-  const local = dark.value ? blameUncommittedDark : blameUncommitted;
-  // 每行都显示日期/作者，不同提交用不同底色区分；折叠隐藏行不渲染
-  const seen = new Set<number>();
+  const { oldest, span } = blameTimeRange.value;
+  const scrollTop = instance.getScrollTop();
+  const viewportHeight = instance.getLayoutInfo().height;
   for (const range of instance.getVisibleRanges()) {
+    // Include partially visible rows at either edge of the viewport.
     const from = Math.max(1, range.startLineNumber - 1);
     const to = Math.min(model.getLineCount(), range.endLineNumber + 1);
     for (let line = from; line <= to; line++) {
-      if (seen.has(line)) continue;
-      seen.add(line);
-      const info = blameLines.value[line - 1];
+      const info = snapshot.lines.get(line);
       if (!info) continue;
-      const color = info.uncommitted ? local : palette[blameColorMap.value.get(info.hash) || 0];
-      const top = instance.getTopForLineNumber(line);
+      const lineHeight = instance.getLineHeightForPosition({ lineNumber: line, column: 1 });
+      if (lineHeight <= 0) continue;
+      const documentTop = instance.getTopForLineNumber(line);
+      const top = documentTop - scrollTop;
+      const height = instance.getBottomForLineNumber(line) - documentTop;
+      if (top >= viewportHeight || top + height <= 0) continue;
       rows.push({
-        key: String(line),
-        top,
-        height: Math.max(0, instance.getBottomForLineNumber(line) - top),
-        date: info.date,
-        author: info.author,
-        hash: info.hash,
-        summary: info.summary,
-        uncommitted: info.uncommitted,
-        bg: color.bg,
-        fg: color.fg,
+        ...info, top, height, lineHeight,
+        ageBand: span > 0 && !info.uncommitted ? Math.round(4 * (info.authoredAt - oldest) / span) : 0,
+        authorLabel: info.author.replace(/^\p{Ll}/u, (initial) => initial.toUpperCase()),
       });
     }
   }
@@ -338,9 +325,16 @@ function openBlameMenuAt(x: number, y: number) {
 }
 function toggleBlameFromMenu() {
   const tab = current.value;
-  const open = !!tab?.blame?.length;
   blameMenu.value = null;
-  if (tab) void toggleBlame(tab, !open);
+  if (!tab || tab.readonly) return;
+  if (tab.blame) {
+    closeBlame(tab);
+    message("已关闭提交历史标注");
+  } else {
+    tab.blame = shallowReactive<BlameState>({ loading: false });
+    void refreshBlame(tab, tab.blame);
+  }
+  refreshTabs();
 }
 function tabIndex(file: string) {
   return tabs.value.findIndex((tab) => tab.file === file);
@@ -414,12 +408,10 @@ async function closeTabs(files: string[], fallbackIndex = 0) {
     }
   }
   const activeClosed = set.has(activeFile.value);
-  if (activeClosed) {
-    editor?.setModel(null);
-    blameLines.value = [];
-  }
+  if (activeClosed) editor?.setModel(null);
   for (const tab of tabs.value) {
     if (!set.has(tab.file)) continue;
+    closeBlame(tab);
     tab.dispose?.dispose();
     tab.model.dispose();
     tabOrder = tabOrder.filter((file) => file !== tab.file);
@@ -433,42 +425,50 @@ async function closeTabs(files: string[], fallbackIndex = 0) {
   } else refreshTabs();
   persistSession();
 }
-function blameEnabled(tab = current.value) {
-  return !!tab?.blame?.length;
+function closeBlame(tab: Tab) {
+  if (tab.blame?.timer) clearTimeout(tab.blame.timer);
+  tab.blame = undefined;
 }
-async function toggleBlame(tab = current.value, force?: boolean) {
-  if (!tab || tab.readonly || tab.file.startsWith("jdt:")) { message("当前文件不支持提交历史"); return; }
-  const enable = force ?? !blameEnabled(tab);
-  if (!enable) {
-    tab.blame = undefined;
-    if (tab === current.value) {
-      blameLines.value = [];
-      blameTick.value++;
-      await nextTick();
-      editor?.layout();
+function queueBlame(tab: Tab) {
+  const state = tab.blame;
+  if (!state) return;
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = setTimeout(() => {
+    state.timer = undefined;
+    void refreshBlame(tab, state);
+  }, 300);
+}
+async function refreshBlame(tab: Tab, state: BlameState) {
+  const { model } = tab;
+  if (tab.blame !== state || state.loading || model.isDisposed()) return;
+  const version = model.getVersionId();
+  state.loading = true;
+  try {
+    const lines = await call<GitBlameLine[]>("editor.blame", {
+      file: tab.file, text: model.getValue(), encoding: tab.encoding, bom: tab.bom,
+    });
+    if (tab.blame !== state || model.isDisposed() || version !== model.getVersionId()) return;
+    state.snapshot = { version, lines: new Map(lines.map((line) => [line.line, line])) };
+    if (!lines.length && tab === current.value) message("当前文件没有可标注的行");
+  } catch (error) {
+    if (tab.blame === state && !model.isDisposed() && version === model.getVersionId()) {
+      closeBlame(tab);
+      refreshTabs();
+      if (tab === current.value) message(error instanceof Error ? error.message : String(error));
     }
-    message("已关闭提交历史标注");
-    return;
+  } finally {
+    state.loading = false;
+    if (tab.blame === state && !state.timer && !model.isDisposed() && version !== model.getVersionId()) queueBlame(tab);
   }
-  blameBusy.value = true;
-  try {
-    const lines = await call<BlameLine[]>("editor.blame", { file: tab.file });
-    tab.blame = lines;
-    if (tab === current.value) {
-      blameLines.value = lines;
-      blameTick.value++;
-      await nextTick();
-      editor?.layout();
-    }
-  } catch (error) { message(error instanceof Error ? error.message : String(error)); }
-  finally { blameBusy.value = false; }
 }
-async function refreshBlame(tab: Tab) {
-  if (!blameEnabled(tab)) return;
-  try {
-    tab.blame = await call<BlameLine[]>("editor.blame", { file: tab.file });
-    if (tab === current.value) { blameLines.value = tab.blame || []; blameTick.value++; }
-  } catch { /* 保存后刷新历史失败不阻塞编辑 */ }
+function scrollBlame(event: WheelEvent) {
+  if (!editor) return;
+  const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? editor.getOption(monaco.editor.EditorOption.lineHeight)
+    : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? editor.getLayoutInfo().height : 1;
+  editor.setScrollPosition({
+    scrollTop: editor.getScrollTop() + event.deltaY * unit,
+    scrollLeft: editor.getScrollLeft() + event.deltaX * unit,
+  });
 }
 async function showBlameDiff(row: BlameRow) {
   const tab = current.value;
@@ -674,7 +674,7 @@ function persistSession() {
   } catch { /* Storage may be unavailable. */ }
 }
 async function loadTree(directory = "") {
-  return (await call<{ name: string; file: string; directory: boolean }[]>("editor.tree", { directory }))
+  return (await call<EditorTreeEntry[]>("editor.tree", { directory }))
     .map((entry) => ({ ...entry, expanded: false, loaded: false, children: [] as TreeNode[] }));
 }
 async function toggleNode(node: TreeNode) {
@@ -724,12 +724,13 @@ async function openFile(file: string, position?: { line: number; column: number 
       if (disk.eol === "\r\n") model.setEOL(monaco.editor.EndOfLineSequence.CRLF);
       tab = {
         file, uri: uri.toString(), model, savedText: model.getValue(), version: disk.version,
-        encoding: disk.encoding, bom: disk.bom, dirty: false, stale: false, readonly: false,
+        encoding: disk.encoding, bom: disk.bom, javaKind: disk.javaKind, dirty: false, stale: false, readonly: false,
       };
       const opened = tab;
       tab.dispose = model.onDidChangeContent(() => {
         opened.dirty = model.getValue() !== opened.savedText;
         refreshTabs();
+        queueBlame(opened);
         if (file.endsWith(".java") && context.value?.java) queueSync(opened);
         queueAutoSave(opened);
       });
@@ -748,8 +749,6 @@ async function openFile(file: string, position?: { line: number; column: number 
   rememberTab(file);
   editor.setModel(tab.model);
   editor.updateOptions({ readOnly: tab.readonly });
-  blameLines.value = tab.blame || [];
-  blameTick.value++;
   clearCtrlHover();
   if (isNew) preFoldImports(tab);
   if (tab.restore && !position) {
@@ -785,8 +784,6 @@ async function openVirtual(uri: string, position: { line: number; column: number
   rememberTab(tab.file);
   editor.setModel(tab.model);
   editor.updateOptions({ readOnly: true });
-  blameLines.value = [];
-  blameTick.value++;
   reveal(tab, position.line, position.column);
   editor.focus();
 }
@@ -859,7 +856,6 @@ async function persistTab(tab: Tab, quiet = false): Promise<boolean> {
     tab.stale = false;
     refreshTabs();
     if (!quiet) message(`已保存 ${tab.file}`);
-    if (blameEnabled(tab)) void refreshBlame(tab);
     persistSession();
     return true;
   } catch (error) { message(error instanceof Error ? error.message : String(error)); return false; }
@@ -886,6 +882,7 @@ async function reloadTab(tab: Tab, discard = false) {
   tab.version = disk.version;
   tab.encoding = disk.encoding;
   tab.bom = disk.bom;
+  tab.javaKind = disk.javaKind;
   tab.dirty = false;
   tab.stale = false;
   refreshTabs();
@@ -901,10 +898,10 @@ async function closeTab(tab: Tab) {
       void call("editor.lsp-close", { file: tab.file }).catch(() => {});
   }
   const index = tabs.value.indexOf(tab);
+  closeBlame(tab);
   tabs.value = tabs.value.filter((item) => item !== tab);
   tabOrder = tabOrder.filter((item) => item !== tab.file);
   if (activeFile.value === tab.file) {
-    blameLines.value = [];
     const replacement = tabs.value[Math.min(index, tabs.value.length - 1)];
     activeFile.value = "";
     if (replacement) await openFile(replacement.file);
@@ -1430,6 +1427,53 @@ function startResize(event: PointerEvent) {
 }
 function handleWindowBlur() { void saveAllTabs(); }
 function handleVisibility() { if (document.visibilityState === "hidden") void saveAllTabs(); }
+function applyJavaEdit(code: monaco.editor.IStandaloneCodeEditor, model: monaco.editor.ITextModel, edit: JavaEdit) {
+  if (!edit.text && edit.from === edit.to) {
+    code.setPosition(model.getPositionAt(edit.cursor));
+  } else {
+    code.pushUndoStop();
+    code.executeEdits("java-editing", [{
+      range: monaco.Range.fromPositions(model.getPositionAt(edit.from), model.getPositionAt(edit.to)),
+      text: edit.text,
+    }], () => [monaco.Selection.fromPositions(model.getPositionAt(edit.cursor))]);
+    code.pushUndoStop();
+  }
+  const position = code.getPosition();
+  if (position) code.revealPositionInCenterIfOutsideViewport(position);
+}
+function finishJavaStatement(code: monaco.editor.IStandaloneCodeEditor, suggest: boolean) {
+  const model = code.getModel();
+  if (!model) return;
+  const { insertSpaces, indentSize } = model.getOptions();
+  const indent = insertSpaces ? " ".repeat(indentSize) : "\t";
+  const plan = () => {
+    const position = code.getPosition();
+    return position && completeJavaStatement(model.getValue(), model.getOffsetAt(position), indent, model.getEOL());
+  };
+  let edit = plan();
+  if (!edit && suggest) {
+    code.trigger("keyboard", "acceptSelectedSuggestion", null);
+    edit = plan();
+  }
+  if (!edit) return;
+  code.trigger("keyboard", "hideSuggestWidget", null);
+  applyJavaEdit(code, model, edit);
+}
+function expandJavaOutputAtCursor() {
+  const code = editor;
+  const model = code?.getModel();
+  const selection = code?.getSelection();
+  if (!code?.hasTextFocus() || code.getOption(monaco.editor.EditorOption.readOnly) ||
+      code.getOption(monaco.editor.EditorOption.tabFocusMode) || model?.getLanguageId() !== "java" ||
+      !selection?.isEmpty() || code.getSelections()?.length !== 1) return false;
+  const position = selection.getPosition();
+  if (!isJavaOutputAbbreviation(model.getWordUntilPosition(position).word)) return false;
+  const edit = expandJavaOutput(model.getValue(), model.getOffsetAt(position));
+  if (!edit) return false;
+  code.trigger("keyboard", "hideSuggestWidget", null);
+  applyJavaEdit(code, model, edit);
+  return true;
+}
 function handleKeys(event: KeyboardEvent) {
   const ctrl = event.ctrlKey || event.metaKey;
   const target = event.target as HTMLElement | null;
@@ -1471,6 +1515,12 @@ function handleKeys(event: KeyboardEvent) {
     event.preventDefault();
     return;
   }
+  if (event.key === "Tab" && !ctrl && !event.shiftKey && !event.altKey &&
+      !event.isComposing && expandJavaOutputAtCursor()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (ctrl && event.key === "Tab") {
     event.preventDefault(); event.stopPropagation();
     if (!switcher.value.open) openSwitcher(event.shiftKey ? -1 : 1);
@@ -1508,9 +1558,11 @@ function lspNotification(method: string, params: any) {
     return;
   }
   if (method === "diagnostics") {
-    const tab = tabs.value.find((item) => item.uri === params.uri);
+    // JDT LS 和 Monaco 对 Windows 盘符的大小写和转义方式不同。
+    const uri = monaco.Uri.parse(params.uri).toString();
+    const tab = tabs.value.find((item) => item.uri === uri);
     if (!tab) return;
-    monaco.editor.setModelMarkers(tab.model, "java", (params.diagnostics || []).map((diagnostic: any) => ({
+    monaco.editor.setModelMarkers(tab.model, "java", (params.diagnostics || []).filter(showJavaDiagnostic).map((diagnostic: any) => ({
       startLineNumber: diagnostic.range.start.line + 1,
       startColumn: diagnostic.range.start.character + 1,
       endLineNumber: diagnostic.range.end.line + 1,
@@ -1528,45 +1580,74 @@ function registerLanguageProviders() {
     range.start.line + 1, range.start.character + 1,
     range.end.line + 1, range.end.character + 1,
   );
-  const extraEdits = (item: any) => (item.additionalTextEdits || []).map((edit: any) => ({
+  const extraEdits = (item: any) => item?.additionalTextEdits?.map((edit: { range: LspRange; newText: string }) => ({
     range: editRange(edit.range), text: edit.newText,
   }));
+  const documentation = (doc?: string | { kind: string; value: string }) =>
+    typeof doc === "string" ? doc : doc?.kind === "markdown" ? { value: doc.value } : doc?.value;
+  const kinds: Record<number, monaco.languages.CompletionItemKind> = {
+    2: monaco.languages.CompletionItemKind.Method,
+    3: monaco.languages.CompletionItemKind.Function,
+    4: monaco.languages.CompletionItemKind.Constructor,
+    5: monaco.languages.CompletionItemKind.Field,
+    6: monaco.languages.CompletionItemKind.Variable,
+    7: monaco.languages.CompletionItemKind.Class,
+    8: monaco.languages.CompletionItemKind.Interface,
+    14: monaco.languages.CompletionItemKind.Keyword,
+    15: monaco.languages.CompletionItemKind.Snippet,
+  };
   providers.push(monaco.languages.registerCompletionItemProvider("java", {
     triggerCharacters: [".", "@", "#"],
-    provideCompletionItems: async (model, position) => {
+    provideCompletionItems: async (model, position, _trigger, token) => {
       const tab = tabs.value.find((item) => item.model === model);
-      if (!tab || !context.value?.java) return { suggestions: [] };
+      if (!tab || tab.readonly || !context.value?.java) return { suggestions: [] };
       const result = await semantic("completion", tab.file, position.lineNumber, position.column);
+      if (token.isCancellationRequested) return { suggestions: [] };
       const items = Array.isArray(result) ? result : result?.items || [];
       const word = model.getWordUntilPosition(position);
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
-      return { suggestions: items.slice(0, 150).map((item: any) => ({
-        label: item.label,
-        kind: item.kind === 7 ? monaco.languages.CompletionItemKind.Class
-          : item.kind === 8 ? monaco.languages.CompletionItemKind.Interface
-            : item.kind === 2 ? monaco.languages.CompletionItemKind.Method
-              : item.kind === 3 ? monaco.languages.CompletionItemKind.Function
-                : item.kind === 5 ? monaco.languages.CompletionItemKind.Field
-                  : monaco.languages.CompletionItemKind.Text,
-        insertText: item.textEdit?.newText || item.insertText || item.label,
-        detail: item.detail,
-        documentation: typeof item.documentation === "string" ? item.documentation : item.documentation?.value,
-        sortText: item.sortText,
-        range: item.textEdit?.range ? editRange(item.textEdit.range) : range,
-        additionalTextEdits: extraEdits(item),
-        __lsp: item,
-        __file: tab.file,
-      })) };
+      return { incomplete: result?.isIncomplete, suggestions: items.slice(0, 150).map((item: any) => {
+        const edit = item.textEdit;
+        let insertText = edit?.newText ?? item.insertText ?? item.label;
+        let replacement = edit?.range ? editRange(edit.range)
+          : edit?.insert && edit?.replace ? { insert: editRange(edit.insert), replace: editRange(edit.replace) } : range;
+        const showParameters = [2, 3, 4].includes(item.kind) && insertText.includes("(");
+        if (showParameters) {
+          const inserted = "insert" in replacement ? replacement.insert : replacement;
+          const nameEnd = Math.max(inserted.endColumn, model.getWordAtPosition(position)?.endColumn ?? 0);
+          const suffix = model.getLineContent(inserted.endLineNumber).slice(nameEnd - 1);
+          const withoutDuplicate = preserveJavaCallSuffix(insertText, suffix);
+          if (withoutDuplicate !== insertText) {
+            insertText = withoutDuplicate;
+            replacement = inserted.setEndPosition(inserted.endLineNumber, nameEnd);
+          }
+        }
+        return {
+          label: item.label,
+          kind: kinds[item.kind] ?? monaco.languages.CompletionItemKind.Text,
+          insertText,
+          insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+          detail: item.detail,
+          documentation: documentation(item.documentation),
+          filterText: item.filterText,
+          sortText: item.sortText,
+          range: replacement,
+          additionalTextEdits: extraEdits(item),
+          command: showParameters ? { id: "editor.action.triggerParameterHints", title: "参数提示" } : undefined,
+          __lsp: item,
+          __file: tab.file,
+        };
+      }) };
     },
     resolveCompletionItem: async (suggestion) => {
       const item = suggestion as typeof suggestion & { __lsp?: any; __file?: string };
-      if (!item.__lsp || !item.__file) return suggestion;
+      if (!item.__lsp?.data || !item.__file) return suggestion;
       try {
         const resolved = await call<any>("editor.lsp-resolve", { file: item.__file, item: item.__lsp });
         return { ...suggestion,
-          detail: resolved.detail || suggestion.detail,
-          documentation: typeof resolved.documentation === "string" ? resolved.documentation : resolved.documentation?.value,
-          additionalTextEdits: extraEdits(resolved),
+          detail: resolved?.detail ?? suggestion.detail,
+          documentation: documentation(resolved?.documentation) ?? suggestion.documentation,
+          additionalTextEdits: extraEdits(resolved) ?? suggestion.additionalTextEdits,
         };
       } catch { return suggestion; }
     },
@@ -1585,19 +1666,27 @@ function registerLanguageProviders() {
   providers.push(monaco.languages.registerSignatureHelpProvider("java", {
     signatureHelpTriggerCharacters: ["(", ","],
     signatureHelpRetriggerCharacters: [","],
-    provideSignatureHelp: async (model, position) => {
+    provideSignatureHelp: async (model, position, token, trigger) => {
       const tab = tabs.value.find((item) => item.model === model);
       if (!tab || !context.value?.java) return null;
-      const result = await semantic("signature", tab.file, position.lineNumber, position.column);
-      if (!result?.signatures?.length) return null;
+      let result = await semantic("signature", tab.file, position.lineNumber, position.column);
+      if (token.isCancellationRequested) return null;
+      if (!result?.signatures?.length && trigger.triggerKind === monaco.languages.SignatureHelpTriggerKind.Invoke) {
+        const offset = javaCallArguments(model.getValue(), model.getOffsetAt(position));
+        if (offset !== undefined) {
+          const inside = model.getPositionAt(offset);
+          result = await semantic("signature", tab.file, inside.lineNumber, inside.column);
+        }
+      }
+      if (token.isCancellationRequested || !result?.signatures?.length) return null;
       return { value: {
         signatures: result.signatures.map((item: any) => ({
           label: item.label,
-          documentation: typeof item.documentation === "string" ? item.documentation : item.documentation?.value,
+          documentation: documentation(item.documentation),
+          activeParameter: item.activeParameter,
           parameters: (item.parameters || []).map((parameter: any) => ({
-            label: typeof parameter.label === "string" ? parameter.label
-              : item.label.slice(parameter.label[0], parameter.label[1]),
-            documentation: typeof parameter.documentation === "string" ? parameter.documentation : parameter.documentation?.value,
+            label: parameter.label,
+            documentation: documentation(parameter.documentation),
           })),
         })),
         activeSignature: result.activeSignature || 0,
@@ -1636,6 +1725,12 @@ onMounted(async () => {
     editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.F7, () => void navigateSymbol("references"));
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => editor?.trigger("keyboard", "redo", null));
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => editor?.trigger("keyboard", "actions.find", null));
+    const code = editor;
+    installParameterHints(code);
+    const javaEnter = monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter;
+    const javaEditing = "editorTextFocus && editorLangId == java && !editorReadonly && !editorHasMultipleSelections";
+    code.addCommand(javaEnter, () => finishJavaStatement(code, false), `${javaEditing} && !suggestWidgetVisible`);
+    code.addCommand(javaEnter, () => finishJavaStatement(code, true), `${javaEditing} && suggestWidgetVisible`);
     editorHost.value?.addEventListener("contextmenu", (event) => {
       const element = event.target as HTMLElement | null;
       if (!element?.closest(".margin-view-overlays")) return;
@@ -1650,9 +1745,12 @@ onMounted(async () => {
       else if (ctrlLink.value) clearCtrlHover();
     });
     editor.onMouseLeave(() => { hoverPosition = null; clearCtrlHover(); });
-    editor.onDidScrollChange(() => { if (blameLines.value.length) blameTick.value++; });
-    editor.onDidLayoutChange(() => { if (blameLines.value.length) blameTick.value++; });
-    editor.onDidChangeModelContent(() => { if (blameLines.value.length) blameTick.value++; });
+    const updateBlameLayout = () => { if (showBlame.value) blameTick.value++; };
+    editor.onDidScrollChange(updateBlameLayout);
+    editor.onDidLayoutChange(updateBlameLayout);
+    editor.onDidChangeModelContent(updateBlameLayout);
+    editor.onDidChangeHiddenAreas(updateBlameLayout);
+    editor.onDidChangeViewZones(updateBlameLayout);
     editor.onMouseDown((event) => {
       const position = event.target.position;
       if (!position || !event.event.ctrlKey || event.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
@@ -1735,6 +1833,7 @@ onBeforeUnmount(() => {
   for (const tab of tabs.value) {
     if (tab.changeTimer) clearTimeout(tab.changeTimer);
     if (tab.autoSaveTimer) clearTimeout(tab.autoSaveTimer);
+    closeBlame(tab);
     tab.dispose?.dispose(); tab.model.dispose();
   }
   editor?.dispose();
@@ -1783,7 +1882,7 @@ onBeforeUnmount(() => {
           :size="12"
           @click="projectQuery = ''; projectFilterInput?.focus()"
         />
-        <span class="editor-project-count">{{ orderedFilteredProjects.length }}</span>
+        <span v-if="projectQuery.trim()" class="editor-project-count">{{ orderedFilteredProjects.length }}</span>
       </div>
       <div ref="projectListHost" class="editor-project-list">
         <template v-for="group in groupedProjects" :key="group.name">
@@ -1798,6 +1897,7 @@ onBeforeUnmount(() => {
               highlighted: project.id === projectActiveId,
             }"
             role="button"
+            :aria-current="project.id === context?.projectId ? 'true' : undefined"
             tabindex="0"
             @mouseenter="projectActiveId = ''"
             @click="switchProject(project, 'window')"
@@ -1806,10 +1906,7 @@ onBeforeUnmount(() => {
               <Icon :name="projectIcon(project).icon" :size="15" />
             </span>
             <div class="editor-project-info">
-              <strong>
-                <span>{{ project.name }}</span>
-                <span v-if="project.id === context?.projectId" class="editor-project-current">当前</span>
-              </strong>
+              <strong>{{ project.name }}</strong>
               <code :title="project.path">{{ project.path }}</code>
             </div>
             <div class="editor-project-actions" @click.stop>
@@ -1854,7 +1951,7 @@ onBeforeUnmount(() => {
               role="tab" :aria-selected="tab.file === activeFile" :title="tab.file" @click="openFile(tab.file)"
               @contextmenu.prevent="openTabMenu(tab, $event)">
               <span v-if="tab.dirty" class="editor-dirty" title="未保存"></span>
-              <FileTypeIcon v-else :name="displayName(tab.file)" :size="13" />
+              <FileTypeIcon v-else :name="displayName(tab.file)" :java-kind="tab.javaKind" :size="14" />
               <span class="editor-tab-name">{{ displayName(tab.file) }}</span>
               <span v-if="tab.stale" class="editor-stale" title="磁盘文件已变化">!</span>
               <CloseButton label="关闭文件" :size="11" @click.stop="closeTab(tab)" />
@@ -1865,15 +1962,19 @@ onBeforeUnmount(() => {
             <Icon name="chevron" :size="13" />
           </button>
         </div>
-        <div class="editor-content" :class="{ 'with-blame': blameLines.length }">
-          <div v-if="blameLines.length" class="editor-blame" aria-label="提交历史标注"
-            @contextmenu.prevent.stop="openBlameMenuAt($event.clientX, $event.clientY)">
-            <button v-for="row in blameRows" :key="row.key" class="editor-blame-row" :class="{ local: row.uncommitted }"
-              :style="{ top: `${row.top}px`, height: `${row.height + 1}px`, background: row.bg, color: row.fg }"
+        <div class="editor-content" :class="{ 'with-blame': showBlame }">
+          <div v-if="showBlame" class="editor-blame" aria-label="提交历史标注" :aria-busy="activeBlame?.loading"
+            @wheel.prevent="scrollBlame" @contextmenu.prevent.stop="openBlameMenuAt($event.clientX, $event.clientY)">
+            <button v-for="row in blameRows" :key="row.line" class="editor-blame-row"
+              :class="{ local: row.uncommitted }" :data-line="row.line" :data-age-band="row.ageBand"
+              :style="{
+                top: `${row.top}px`, height: `${row.height}px`, '--blame-line-height': `${row.lineHeight}px`,
+              }"
               :title="row.uncommitted ? row.summary : `${row.date} · ${row.author}\n${row.hash.slice(0, 8)} ${row.summary}`"
               @click="showBlameDiff(row)">
-              <span class="editor-blame-date">{{ row.date || '未提交' }}</span>
-              <span class="editor-blame-author">{{ row.author }}</span>
+              <span v-if="row.uncommitted" class="editor-blame-local">未提交</span>
+              <span v-else class="editor-blame-date">{{ row.date }}</span>
+              <span v-if="!row.uncommitted" class="editor-blame-author">{{ row.authorLabel }}</span>
             </button>
           </div>
           <div v-if="!current" class="editor-empty">从左侧选择文件，或按 Ctrl+Shift+R 搜索</div>
@@ -1892,8 +1993,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="searching" class="editor-search-progress"></div>
           <div v-if="searchTypesOpen" class="editor-search-types-backdrop" @mousedown="searchTypesOpen = false"></div>
-          <div v-if="searchTypesOpen" class="editor-search-types" @mousedown.stop>
-            <div class="editor-search-types-head"><strong>文件类型</strong><span>默认不筛选</span></div>
+          <div v-if="searchTypesOpen" class="editor-search-types" role="group" aria-label="文件类型" @mousedown.stop>
             <div class="editor-search-types-list">
               <label v-for="type in searchTypes" :key="type.ext">
                 <input v-model="searchTypeFilter" type="checkbox" :value="type.ext" />
@@ -1942,15 +2042,15 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="blameMenu" class="editor-menu-backdrop" @mousedown="blameMenu = null" @contextmenu.prevent="blameMenu = null"></div>
     <div v-if="blameMenu" class="editor-tab-menu editor-blame-menu" :style="{ left: `${blameMenu.x}px`, top: `${blameMenu.y}px` }" role="menu">
-      <button role="menuitem" :disabled="blameBusy" @click="toggleBlameFromMenu">
-        {{ blameEnabled() ? '关闭提交历史' : '显示提交历史' }}
+      <button role="menuitem" :disabled="activeBlame?.loading && !activeBlame.snapshot" @click="toggleBlameFromMenu">
+        {{ activeBlame ? '关闭提交历史' : '显示提交历史' }}
       </button>
     </div>
     <div v-if="tabListOpen" class="editor-menu-backdrop" @mousedown="tabListOpen = false" @contextmenu.prevent="tabListOpen = false"></div>
     <div v-if="tabListOpen" class="editor-tab-list" :style="{ top: `${tabListPos.top}px`, right: `${tabListPos.right}px` }" role="menu">
       <button v-for="file in tabListFiles" :key="file" role="menuitem" :class="{ active: file === activeFile }"
         @click="pickTab(file)">
-        <FileTypeIcon :name="displayName(file)" :size="13" />
+        <FileTypeIcon :name="displayName(file)" :java-kind="tabs.find((tab) => tab.file === file)?.javaKind" :size="14" />
         <span>{{ displayName(file) }}</span>
         <code>{{ file }}</code>
       </button>
@@ -1961,7 +2061,7 @@ onBeforeUnmount(() => {
         <button v-for="(entry, index) in switcherEntries" :key="entry.file" class="editor-switcher-row"
           :class="{ selected: index === switcher.index }" role="option" :aria-selected="index === switcher.index"
           @mouseenter="switcher.index = index" @click="switcher.index = index; commitSwitcher()">
-          <FileTypeIcon :name="entry.name" :size="14" />
+          <FileTypeIcon :name="entry.name" :java-kind="entry.javaKind" :size="14" />
           <span class="editor-switcher-name">{{ entry.name }}</span>
           <code class="editor-switcher-path">{{ entry.file }}</code>
         </button>

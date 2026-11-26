@@ -1,6 +1,6 @@
 {
   "name": "personal-workbench",
-  "version": "0.1.75",
+  "version": "0.1.94",
   "description": "本地个人工作台",
   "private": true,
   "type": "module",
@@ -20,9 +20,12 @@
     "verify:ui": "node scripts/verify-ui.cjs"
   },
   "dependencies": {
+    "@lezer/java": "1.2.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@xmldom/xmldom": "0.9.12",
     "fflate": "0.8.3",
-    "iconv-lite": "^0.7.0"
+    "iconv-lite": "^0.7.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.10.0",

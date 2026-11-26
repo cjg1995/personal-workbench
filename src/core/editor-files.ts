@@ -3,7 +3,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { parser as javaParser } from "@lezer/java";
 import iconv from "iconv-lite";
+import type { EditorDirectoryKind, EditorTreeEntry, JavaFileKind, JavaSourceFolder } from "../shared/editor-tree.js";
 import { assertNoLinks, hash, inside } from "./util.js";
 
 export interface EditorFile {
@@ -13,8 +15,8 @@ export interface EditorFile {
   encoding: "utf8" | "utf16le" | "utf16be" | "gb18030";
   bom: boolean;
   eol: "\n" | "\r\n";
+  javaKind?: JavaFileKind;
 }
-export interface TreeEntry { name: string; file: string; directory: boolean }
 export interface TextHit { file: string; line: number; column: number; text: string }
 
 const excluded = new Set([
@@ -22,6 +24,14 @@ const excluded = new Set([
   "build", "dist", "out", "coverage", "unpackage", ".next", ".nuxt",
 ]);
 const maxFileBytes = 4 * 1024 * 1024;
+const javaHeaderBytes = 32 * 1024;
+const javaDeclarations: Record<string, JavaFileKind> = {
+  ClassDeclaration: "class",
+  InterfaceDeclaration: "interface",
+  EnumDeclaration: "enum",
+  AnnotationTypeDeclaration: "annotation",
+  RecordDeclaration: "record",
+};
 export const searchableExtensions = [
   "java", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "json", "jsonc",
   "xml", "html", "htm", "css", "scss", "less", "sql", "md", "yml", "yaml",
@@ -80,7 +90,7 @@ function decode(buffer: Buffer): Omit<EditorFile, "file" | "version"> {
   return { text, encoding, bom, eol: text.includes("\r\n") ? "\r\n" : "\n" };
 }
 
-function encode(text: string, encoding: EditorFile["encoding"], bom: boolean) {
+export function encodeEditorText(text: string, encoding: EditorFile["encoding"], bom: boolean) {
   const body = encoding === "utf8" ? Buffer.from(text, "utf8") : iconv.encode(text, encoding);
   if (!bom) return body;
   const prefix = encoding === "utf8" ? [0xef, 0xbb, 0xbf]
@@ -90,6 +100,47 @@ function encode(text: string, encoding: EditorFile["encoding"], bom: boolean) {
 
 function relative(root: string, file: string) {
   return path.relative(root, file).replaceAll(path.sep, "/");
+}
+
+function javaFileKind(file: string, text: string): JavaFileKind | undefined {
+  if (!/\.java$/i.test(file)) return;
+  const name = path.basename(file).slice(0, -5);
+  const source = text.slice(0, javaHeaderBytes);
+  const root = javaParser.parse(source).topNode;
+  for (let node = root.firstChild; node; node = node.nextSibling) {
+    const kind = javaDeclarations[node.name];
+    const declared = node.getChild(kind === "annotation" ? "Identifier" : "Definition");
+    if (kind && declared && source.slice(declared.from, declared.to) === name)
+      return kind === "class" && node.getChild("Modifiers")?.getChild("abstract") ? "abstract-class" : kind;
+  }
+}
+
+async function javaTreeFile(file: string) {
+  try {
+    const handle = await fs.promises.open(file, "r");
+    try {
+      const { buffer, bytesRead } = await handle.read(Buffer.alloc(javaHeaderBytes), 0, javaHeaderBytes, 0);
+      return javaFileKind(file, decode(buffer.subarray(0, bytesRead)).text);
+    } finally { await handle.close(); }
+  } catch { /* Unreadable files keep their extension icon. */ }
+}
+
+function javaDirectoryKind(root: string, file: string, sources: readonly JavaSourceFolder[]): EditorDirectoryKind {
+  const full = path.resolve(root, file);
+  const parent = sources.find((source) => inside(source.directory, full));
+  if (parent) {
+    const child = relative(parent.directory, full);
+    if (!child) return parent.kind;
+    if (parent.kind === "source" || parent.kind === "test-source")
+      return child.split("/").every((name) => /^[\p{ID_Start}$_][\p{ID_Continue}$_]*$/u.test(name)) ? "package" : "folder";
+    return "folder";
+  }
+  const standard = /(?:^|\/)src\/(main|test)\/(java|resources)(?:\/(.+))?$/.exec(file);
+  if (!standard) return "folder";
+  const [, role, language, child] = standard;
+  if (child) return language === "java" ? "package" : "folder";
+  if (language === "resources") return role === "test" ? "test-resources" : "resources";
+  return role === "test" ? "test-source" : "source";
 }
 
 export class EditorFiles {
@@ -119,10 +170,11 @@ export class EditorFiles {
     return [...excluded].flatMap((name) => ["-g", `!**/${name}/**`]);
   }
 
-  async tree(root: string, directory = ""): Promise<TreeEntry[]> {
+  async tree(root: string, directory = "", javaSources?: readonly JavaSourceFolder[]): Promise<EditorTreeEntry[]> {
     const folder = projectFile(root, directory, true);
     const entries = await fs.promises.readdir(folder, { withFileTypes: true });
-    return entries.filter((entry) => !entry.isSymbolicLink() &&
+    const sourceRoots = javaSources && [...javaSources].sort((a, b) => b.directory.length - a.directory.length);
+    const result: EditorTreeEntry[] = entries.filter((entry) => !entry.isSymbolicLink() &&
       (entry.isDirectory() ? !excluded.has(entry.name) : entry.isFile()))
       .map((entry) => ({
         name: entry.name,
@@ -131,12 +183,23 @@ export class EditorFiles {
       }))
       .sort((a, b) => Number(b.directory) - Number(a.directory) ||
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+    const javaFiles = result.filter((entry) => !entry.directory && /\.java$/i.test(entry.name));
+    for (let start = 0; start < javaFiles.length; start += 16) {
+      await Promise.all(javaFiles.slice(start, start + 16).map(async (entry) => {
+        entry.javaKind = await javaTreeFile(path.join(folder, entry.name));
+      }));
+    }
+    if (sourceRoots) for (const entry of result) {
+      if (entry.directory) entry.directoryKind = javaDirectoryKind(root, entry.file, sourceRoots);
+    }
+    return result;
   }
 
   async read(root: string, relativePath: string): Promise<EditorFile> {
     const file = projectFile(root, relativePath);
     const buffer = await fs.promises.readFile(file);
-    return { file: relative(root, file), ...decode(buffer), version: hash(buffer) };
+    const decoded = decode(buffer);
+    return { file: relative(root, file), ...decoded, version: hash(buffer), javaKind: javaFileKind(file, decoded.text) };
   }
 
   async version(root: string, relativePath: string): Promise<string | null> {
@@ -156,7 +219,7 @@ export class EditorFiles {
       return { conflict: true, version: currentVersion };
     if (input.encoding === "gb18030" && !iconv.encodingExists("gb18030"))
       throw new Error("无法保留原文件编码");
-    const bytes = encode(input.text, input.encoding, input.bom);
+    const bytes = encodeEditorText(input.text, input.encoding, input.bom);
     const stat = await fs.promises.stat(file);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {

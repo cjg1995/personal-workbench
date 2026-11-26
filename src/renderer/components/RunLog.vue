@@ -585,16 +585,12 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <div v-else class="term-empty">
-        <span>暂无日志输出，等待进程写入…</span>
+        <span>暂无日志</span>
       </div>
     </div>
 
-    <div class="term-foot">
-      <i class="dot" :class="{ paused: !follow }" />
-      <span>{{ follow ? "正在跟随输出" : "已暂停自动滚动" }}</span>
-      <span v-if="renderedLines.length" class="muted"
-        >· {{ renderedLines.length }} 行</span
-      >
+    <div v-if="renderedLines.length || hostLabel" class="term-foot">
+      <span v-if="renderedLines.length">{{ renderedLines.length }} 行</span>
       <span class="push" />
       <span v-if="hostLabel" class="mono">{{ hostLabel }}</span>
     </div>

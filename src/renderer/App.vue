@@ -37,7 +37,7 @@ const groups = [
     name: "日常",
     items: [
       ["work", "note", "工作记录"],
-      ["ideas", "idea", "灵感待办"],
+      ["ideas", "idea", "待办事项"],
       ["monthly", "report", "月度总结"],
       ["prompts", "prompt-collection", "提示词库"],
     ],
@@ -58,21 +58,17 @@ const groups = [
   },
 ] as const;
 
-const currentGroup = computed(() => {
-  for (const g of groups) {
-    if (g.items.some((item) => item[0] === route.value)) return g.name;
+const pageLabel = computed(() => {
+  for (const { items } of groups) {
+    const active = items.find(([page]) => page === route.value);
+    if (active) return active[2];
   }
-  if (route.value === "tasks" || route.value === "settings") return "系统";
-  return "日常";
+  return route.value === "tasks" ? "任务中心" : route.value === "settings" ? "设置" : "工作区";
 });
-
 const chromeDate = computed(() => formatChromeDate(model.today));
 
 const openIdeasCount = computed(
-  () =>
-    model.notes.filter(
-      (n) => n.kind === "idea" && !n.deletedAt && !n.completedAt,
-    ).length,
+  () => model.notes.filter((n) => n.kind === "idea" && !n.completedAt).length,
 );
 
 const runningTasks = computed(() =>
@@ -112,19 +108,24 @@ async function init() {
     await reload();
     ready.value = true;
     initialError.value = "";
-    await openNotificationTask();
+    await openNotification();
   } catch (e) {
     initialError.value = e instanceof Error ? e.message : String(e);
   }
 }
 
-async function openNotificationTask() {
-  const destination = await call<{ taskId: string } | null>(
+async function openNotification() {
+  const destination = await call<{ taskId: string } | { todoId: string } | null>(
     "notification.take",
   );
   if (!destination) return;
   await reload();
-  await navigate("tasks", destination);
+  if ("taskId" in destination) {
+    await navigate("tasks", destination);
+  } else {
+    const todo = model.notes.find((note) => note.id === destination.todoId && note.kind === "idea");
+    if (todo) await navigate("ideas", { selected: todo.id, tab: todo.completedAt ? "completed" : "active" });
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -143,7 +144,7 @@ onMounted(() => {
   window.addEventListener("keydown", onKeydown);
   void init();
   window.workbench.onNavigate(() => {
-    void attempt(openNotificationTask);
+    void attempt(openNotification);
   });
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
   window.workbench.onChanged(() => {
@@ -249,8 +250,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           >
             <Icon name="panel" :size="16" />
           </button>
-          <span class="divider" aria-hidden="true" />
-          <span class="group">{{ currentGroup }}</span>
         </div>
         <div class="chrome-date">
           <Icon name="calendar2" :size="14" />
@@ -293,6 +292,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         class="workarea"
         :class="'page-' + route"
         :data-page="route"
+        :aria-label="pageLabel"
         tabindex="-1"
       >
         <NotesPage

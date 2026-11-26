@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { GitFile, SubmitCheck } from "../shared/types.js";
+import type { GitBlameLine, GitFile, SubmitCheck } from "../shared/types.js";
 import {
   appSubmitPolicy,
   type FixedBranchPolicy,
@@ -9,25 +9,15 @@ import {
 import { command, type CommandOptions } from "./process.js";
 import { hash } from "./util.js";
 export const protectedFile = "store/index.js";
-export interface GitBlameLine {
-  line: number;
-  hash: string;
-  author: string;
-  date: string;
-  summary: string;
-  uncommitted?: boolean;
-}
-/** 按作者时区把 blame 时间戳格式化为 YYYY/MM/DD。 */
+/** 按作者时区显示提交归属日期。 */
 function blameDate(stamp: number, zone: string) {
-  if (!stamp) return "";
   const match = /^([+-])(\d{2})(\d{2})$/.exec(zone || "");
   const offset = match
     ? (match[1] === "-" ? -1 : 1) *
       (Number(match[2]) * 3600 + Number(match[3]) * 60)
     : 0;
   const date = new Date((stamp + offset) * 1000);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getUTCFullYear()}/${pad(date.getUTCMonth() + 1)}/${pad(date.getUTCDate())}`;
+  return `${date.getUTCFullYear()}/${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
 }
 export function trackedDirectoryTree(files: string[]) {
   const directories = new Set<string>();
@@ -100,6 +90,8 @@ export class Git {
         "core.quotepath=false",
         "-c",
         "core.pager=cat",
+        "-c",
+        "diff.autoRefreshIndex=false",
         "-C",
         repo,
         ...args,
@@ -171,11 +163,11 @@ export class Git {
     return files;
   }
   /** 逐行提交信息（git blame），用于编辑器内的提交历史标注。 */
-  async blame(repo: string, file: string): Promise<GitBlameLine[]> {
+  async blame(repo: string, file: string, contents?: Uint8Array): Promise<GitBlameLine[]> {
     const result = await this.run(
       repo,
-      ["blame", "--line-porcelain", "--no-textconv", "--", file],
-      { allowFailure: true, maxBytes: 32 * 1024 * 1024, timeoutMs: 30000 },
+      ["blame", "--line-porcelain", "--no-textconv", ...(contents ? ["--contents", "-"] : []), "--", file],
+      { input: contents, allowFailure: true, maxBytes: 32 * 1024 * 1024, timeoutMs: 30000 },
     );
     if (result.code)
       throw new Error(
@@ -189,7 +181,7 @@ export class Git {
       stamp = 0,
       zone = "",
       summary = "";
-    for (const raw of result.stdout.split("\n")) {
+    for (const raw of result.stdout.split(/\r?\n/)) {
       if (!raw) continue;
       const header = /^([0-9a-f]{40}) \d+ (\d+)(?: \d+)?$/.exec(raw);
       if (header) {
@@ -208,6 +200,7 @@ export class Git {
           line: lineNumber,
           hash: uncommitted ? "" : hash,
           author: uncommitted ? "本地修改" : author || "未知作者",
+          authoredAt: uncommitted ? 0 : stamp,
           date: uncommitted ? "" : blameDate(stamp, zone),
           summary: uncommitted ? "本地未提交的修改" : summary,
           uncommitted,

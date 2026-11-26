@@ -5,11 +5,13 @@ export interface Note {
   text: string;
   projectId: string | null;
   happenedOn: string | null;
+  dueAt?: string | null;
   result: string;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  deletedAt: string | null;
+  /** 保留原字段以兼容已有月报的来源校验值。 */
+  deletedAt: null;
   sourceId: string | null;
   importBatch: string | null;
   sourceLine: number | null;
@@ -23,7 +25,8 @@ export interface Prompt {
   starred: boolean;
   createdAt: string;
   updatedAt: string;
-  deletedAt: string | null;
+  /** 保留原字段以兼容旧版的备份校验。 */
+  deletedAt: null;
 }
 export type TaskState =
   | "running"
@@ -139,6 +142,15 @@ export interface GitFile {
   tracked: boolean;
   included: boolean;
   reason?: string;
+}
+export interface GitBlameLine {
+  line: number;
+  hash: string;
+  author: string;
+  authoredAt: number;
+  date: string;
+  summary: string;
+  uncommitted: boolean;
 }
 export interface SubmitCheck {
   /** Git 管理提测纳入已暂存内容和已跟踪修改，不自动创建工作树。 */
@@ -285,6 +297,7 @@ export interface WorkbenchApi {
   onReviewProgress(callback: (message: string) => void): () => void;
   onNavigate(callback: (destination: { taskId: string }) => void): () => void;
   onGitDiff(callback: (request: import("./git-client.js").DiffWindowRequest) => void): () => void;
+  onCommitDraft(callback: (draft: { projectId: string; message: string }) => void): () => void;
   onEditorLsp(callback: (method: string, params: any) => void): () => void;
   onEditorDisk(callback: (file: string) => void): () => void;
   onEditorHistory(callback: (direction: number) => void): () => void;

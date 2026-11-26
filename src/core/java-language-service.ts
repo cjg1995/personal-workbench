@@ -3,13 +3,16 @@ import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import type { ProjectConfig } from "../shared/types.js";
+import { prepareIdeaJavaWorkspace, readIdeaJavaLayout, type JavaRuntime } from "./idea-java-project.js";
 import { ensureDir, hash } from "./util.js";
 
 type Notify = (method: string, params: any) => void;
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
-function javaRuntimes(runtime: string, project: ProjectConfig) {
-  const result: { name: string; path: string; default?: boolean }[] = [];
+const activeWorkspaces = new Set<string>();
+
+function javaRuntimes(runtime: string, project: ProjectConfig, ideaJdks: (string | undefined)[]) {
+  const result: JavaRuntime[] = [];
   const add = (candidate?: string) => {
     if (!candidate) return;
     const home = candidate.toLowerCase().endsWith("java.exe")
@@ -21,9 +24,10 @@ function javaRuntimes(runtime: string, project: ProjectConfig) {
     const major = version.startsWith("1.") ? Number(version.split(".")[1]) : Number(version.split(".")[0]);
     if (!Number.isInteger(major) || major < 7) return;
     const name = `JavaSE-${major === 7 || major === 8 ? `1.${major}` : major}`;
-    if (!result.some((item) => item.name === name)) result.push({ name, path: home });
+    if (!result.some((item) => item.name === name)) result.push({ name, path: home, major });
   };
   add(project.java);
+  ideaJdks.forEach(add);
   add(process.env.JAVA_HOME);
   add(process.env.JDK_HOME);
   for (const base of [
@@ -49,6 +53,7 @@ export class JavaLanguageService {
   private documents = new Map<string, { version: number; text: string }>();
   private settings: Record<string, any> = {};
   private lastError = "";
+  private ideaLayout?: ReturnType<typeof readIdeaJavaLayout>;
   status = "starting";
 
   constructor(
@@ -62,11 +67,18 @@ export class JavaLanguageService {
   get root() { return path.resolve(this.project.path); }
   get ready() { return this.active; }
   get error() { return this.lastError; }
+  get sourceFolders() {
+    return this.ideaLayout?.modules.flatMap((module) => module.sources) ?? [];
+  }
 
   private uri(file: string) { return pathToFileURL(file).href; }
 
   start() {
-    if (!this.startPromise) this.startPromise = this.launch();
+    if (!this.startPromise) this.startPromise = this.launch().catch((error) => {
+      if (!this.stopped && this.status !== "error")
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    });
     return this.startPromise;
   }
 
@@ -111,7 +123,14 @@ export class JavaLanguageService {
       this.notifyClient("status", { status: this.status, message: this.lastError });
       throw new Error(this.lastError);
     }
-    const data = ensureDir(path.join(this.dataDir, "java-workspaces", hash(this.root.toLowerCase()).slice(0, 16)));
+    this.ideaLayout = readIdeaJavaLayout(this.project);
+    const runtimes = javaRuntimes(javaHome, this.project, this.ideaLayout?.modules.map((module) => module.java) ?? []);
+    const ideaWorkspace = this.ideaLayout && prepareIdeaJavaWorkspace(this.ideaLayout, this.dataDir, runtimes);
+    const workspaceKey = ideaWorkspace?.revision ?? hash(this.root.toLowerCase()).slice(0, 16);
+    const primaryWorkspace = path.join(this.dataDir, "java-workspaces", workspaceKey);
+    let data = primaryWorkspace;
+    for (let sequence = 2; activeWorkspaces.has(data); sequence++) data = primaryWorkspace + "-" + sequence;
+    ensureDir(data);
     const configuration = ensureDir(path.join(data, "launcher-config"));
     const args = [
       "-Declipse.application=org.eclipse.jdt.ls.core.id1",
@@ -141,6 +160,8 @@ export class JavaLanguageService {
       windowsHide: true,
       stdio: "pipe",
     });
+    activeWorkspaces.add(data);
+    child.once("close", () => activeWorkspaces.delete(data));
     this.process = child;
     child.stdout.on("data", (chunk: Buffer) => this.consume(chunk));
     child.stderr.on("data", (chunk: Buffer) => {
@@ -148,11 +169,14 @@ export class JavaLanguageService {
     });
     child.on("error", (error) => this.fail(error));
     child.on("exit", (code) => this.fail(new Error(`Java 语言服务已退出（${code}）：${this.lastError}`)));
-    const rootUri = this.uri(this.root);
+    // Eclipse 通过链接的源码目录识别原文件 URI，索引配置放在工作台的数据目录。
+    const indexRoot = ideaWorkspace?.root ?? this.root;
+    const rootUri = this.uri(indexRoot);
+    const projectRuntimes = runtimes.map(({ name, path }) => ({ name, path }));
     const settings = {
       java: {
         home: javaHome,
-        configuration: { runtimes: javaRuntimes(javaHome, this.project), updateBuildConfiguration: "automatic",
+        configuration: { runtimes: projectRuntimes, updateBuildConfiguration: "automatic",
           maven: {
             userSettings: fs.existsSync(path.join(process.env.USERPROFILE || "", ".m2", "settings.xml"))
               ? path.join(process.env.USERPROFILE || "", ".m2", "settings.xml") : null,
@@ -175,7 +199,7 @@ export class JavaLanguageService {
         processId: process.pid,
         clientInfo: { name: "Personal Workbench", version: "0.1" },
         rootUri,
-        rootPath: this.root,
+        rootPath: indexRoot,
         workspaceFolders: [{ uri: rootUri, name: this.project.name }],
         initializationOptions: { bundles: [], workspaceFolders: [rootUri], settings,
           extendedClientCapabilities: { classFileContentsSupport: true, progressReportProvider: true } },
@@ -187,8 +211,10 @@ export class JavaLanguageService {
             definition: { linkSupport: true },
             implementation: { linkSupport: true },
             typeHierarchy: { dynamicRegistration: false },
-            completion: { completionItem: { snippetSupport: false, documentationFormat: ["plaintext", "markdown"],
+            completion: { completionItem: { snippetSupport: true, insertReplaceSupport: true, documentationFormat: ["plaintext", "markdown"],
               resolveSupport: { properties: ["detail", "documentation", "additionalTextEdits"] } } },
+            signatureHelp: { signatureInformation: { documentationFormat: ["plaintext", "markdown"],
+              parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true } },
             hover: { contentFormat: ["markdown", "plaintext"] },
             publishDiagnostics: { relatedInformation: true },
           },

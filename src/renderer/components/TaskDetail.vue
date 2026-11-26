@@ -148,7 +148,7 @@ function openOperation() {
             task.result.packageName
           }}
         </dd>
-        <dt>任务专属副本</dt>
+        <dt>APK 文件</dt>
         <dd class="path">{{ task.result.artifact }}</dd>
         <dt>SHA256</dt>
         <dd class="path">{{ task.result.sha256 }}</dd>

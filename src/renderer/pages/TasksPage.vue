@@ -4,37 +4,23 @@ import { context, dateLabel, model, taskLabels } from "../state";
 import TaskDetail from "../components/TaskDetail.vue";
 import Icon from "../components/Icon.vue";
 
-const attentionStates = [
-  "running",
-  "cancelling",
-  "awaiting",
-  "failed",
-  "partial",
-];
+const timeline = computed(() =>
+  [...model.tasks].sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt)),
+);
 const query = ref(""),
   selected = ref(
-    context.value.taskId ||
-      model.tasks.find((task) => attentionStates.includes(task.state))?.id ||
-      model.tasks[0]?.id ||
-      "",
+    context.value.taskId || timeline.value[0]?.id || "",
   );
 
-const tasks = computed(() =>
-  model.tasks.filter(
+const tasks = computed(() => {
+  const term = query.value.toLowerCase();
+  if (!term) return timeline.value;
+  return timeline.value.filter(
     (t) =>
-      !query.value ||
-      t.title.toLowerCase().includes(query.value.toLowerCase()) ||
-      String(t.params.repo || "")
-        .toLowerCase()
-        .includes(query.value.toLowerCase()),
-  ),
-);
-const attention = computed(() =>
-  tasks.value.filter((task) => attentionStates.includes(task.state)),
-);
-const history = computed(() =>
-  tasks.value.filter((task) => !attentionStates.includes(task.state)),
-);
+      t.title.toLowerCase().includes(term) ||
+      String(t.params.repo || "").toLowerCase().includes(term),
+  );
+});
 const active = computed(() =>
   model.tasks.find((t) => t.id === selected.value),
 );
@@ -48,12 +34,6 @@ watch(context, (value) => {
 </script>
 <template>
   <div class="subpage-wrap">
-    <div class="page-head">
-      <div>
-        <h1>任务中心</h1>
-      </div>
-    </div>
-
     <section v-if="!model.tasks.length" class="card empty tasks-empty-card">
       <span class="empty-icon"><Icon name="tasks" :size="20" /></span>
       <p class="empty-title">暂无执行记录</p>
@@ -87,41 +67,18 @@ watch(context, (value) => {
             </button>
           </div>
 
-          <template v-if="attention.length">
-            <p class="list-label">需要处理</p>
-            <button
-              v-for="t in attention"
-              :key="t.id"
-              type="button"
-              class="task-select"
-              :class="{ selected: t.id === selected }"
-              @click="selected = t.id"
-            >
-              <strong>{{ t.title }}</strong>
-              <span class="status" :class="t.state">{{
-                taskLabels[t.state]
-              }}</span>
-              <small>{{ dateLabel(t.startedAt) }}</small>
-            </button>
-          </template>
-
-          <template v-if="history.length">
-            <p class="list-label">历史</p>
-            <button
-              v-for="t in history"
-              :key="t.id"
-              type="button"
-              class="task-select"
-              :class="{ selected: t.id === selected }"
-              @click="selected = t.id"
-            >
-              <strong>{{ t.title }}</strong>
-              <span class="status" :class="t.state">{{
-                taskLabels[t.state]
-              }}</span>
-              <small>{{ dateLabel(t.startedAt) }}</small>
-            </button>
-          </template>
+          <button
+            v-for="t in tasks"
+            :key="t.id"
+            type="button"
+            class="task-select"
+            :class="{ selected: t.id === selected }"
+            @click="selected = t.id"
+          >
+            <strong>{{ t.title }}</strong>
+            <span class="status" :class="t.state">{{ taskLabels[t.state] }}</span>
+            <small>{{ dateLabel(t.startedAt) }}</small>
+          </button>
         </div>
       </section>
 

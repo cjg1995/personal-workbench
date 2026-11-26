@@ -3,7 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { FileComparison } from "../../shared/git-client";
 import type { SubmitCheck } from "../../shared/types";
 import { call } from "../state";
-import { monaco, language, diffCodeOptions, ideaLineDecorations } from "../monaco";
+import {
+  diffChangePosition,
+  diffCodeOptions,
+  ideaLineDecorations,
+  language,
+  monaco,
+  revealDiffCaret,
+} from "../monaco";
 import { DiffScrollbar } from "../diff-scrollbar";
 import { revertLines } from "../../shared/diff-edit";
 
@@ -20,7 +27,7 @@ const data = ref<FileComparison>(), dirty = ref(false), busy = ref(false), loadi
 const error = ref(""), status = ref(""), differences = ref(0);
 const wrap = ref(false), fontSize = ref(14), dark = ref(false);
 try {
-  const settings = JSON.parse(localStorage.getItem("git-diff-settings-v2") || "{}");
+  const settings = JSON.parse(localStorage.getItem("git-diff-settings-v3") || localStorage.getItem("git-diff-settings-v2") || "{}");
   wrap.value = !!settings.wrap;
   dark.value = !!settings.dark;
   fontSize.value = Math.max(10, Math.min(24, Number(settings.fontSize) || 14));
@@ -157,14 +164,13 @@ function key(event: KeyboardEvent) {
 }
 function nextDifference(next: boolean) {
   if (!editor) return;
-  const changes = editor.getLineChanges() || [], line = editor.getModifiedEditor().getPosition()?.lineNumber || 0;
-  const change = next ? changes.find((item) => item.modifiedStartLineNumber > line) || changes[0]
-    : [...changes].reverse().find((item) => item.modifiedStartLineNumber < line) || changes.at(-1);
-  if (change) {
-    const target = Math.max(1, change.modifiedStartLineNumber);
-    editor.getModifiedEditor().setPosition({ lineNumber: target, column: 1 });
-    editor.getModifiedEditor().revealLineInCenter(target);
-  }
+  const code = editor.getModifiedEditor(), model = code.getModel();
+  if (!model) return;
+  const changes = editor.getLineChanges() || [], line = code.getPosition()?.lineNumber || 0;
+  const change = next
+    ? changes.find((item) => diffChangePosition(model, item).lineNumber > line) || changes[0]
+    : [...changes].reverse().find((item) => diffChangePosition(model, item).lineNumber < line) || changes.at(-1);
+  if (change) revealDiffCaret(code, diffChangePosition(model, change));
 }
 function decorate() {
   if (!editor || models.length !== 2) return;
@@ -225,7 +231,7 @@ defineExpose({ canLeave });
 </script>
 
 <template>
-  <div ref="root" class="submit-inline-diff diff-unified" :class="{ 'diff-light': !dark }" @focusout="blur">
+  <div ref="root" class="submit-inline-diff diff-unified" :class="{ 'diff-light': !dark, 'diff-readonly': !editable }" @focusout="blur">
     <div class="submit-diff-toolbar">
       <strong>单页对比</strong>
       <button title="上一个差异" aria-label="上一个差异" :disabled="!differences" @click="nextDifference(false)">↑</button>
@@ -233,18 +239,18 @@ defineExpose({ canLeave });
       <button :aria-pressed="wrap" title="自动换行" @click="wrap = !wrap">换行</button>
       <button title="缩小代码字号" aria-label="缩小代码字号" :disabled="fontSize <= 10" @click="fontSize--">A−</button>
       <button title="放大代码字号" aria-label="放大代码字号" :disabled="fontSize >= 24" @click="fontSize++">A+</button>
-      <button class="push-right" :disabled="!dirty || busy" @click="save">{{ busy ? '保存中…' : '保存' }}</button>
+      <button class="push-right" title="保存（Ctrl+S）" :disabled="!dirty || busy" @click="save">{{ busy ? '保存中…' : '保存' }}</button>
     </div>
     <div class="submit-diff-path" :title="file">{{ file || '选择文件查看差异' }}<span v-if="dirty"> · 未保存</span></div>
     <div v-if="data && !data.binary" class="diff-version-labels">
       <span>{{ data.oldLabel }}<small class="diff-eol diff-eol-old">{{ data.oldText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
-      <span>{{ data.newLabel }} · 你的版本<small class="diff-eol diff-eol-new">{{ data.newText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
+      <span>{{ data.newLabel }}<small class="diff-eol diff-eol-new">{{ data.newText.includes('\r\n') ? 'CRLF' : 'LF' }}</small></span>
     </div>
     <p v-if="error" class="error small submit-diff-notice" role="alert">{{ error }}</p>
     <p v-if="data?.notice" class="small submit-diff-notice">{{ data.notice }}</p>
     <div ref="host" class="submit-diff-host" :aria-busy="loading" />
     <div class="submit-diff-status small muted">
-      {{ loading ? '读取中…' : status || (data?.binary ? '二进制文件无法编辑' : editable ? 'HEAD → 工作区 · Ctrl+S 保存 · 离焦时询问保存' : data ? '此文件只读' : '') }}
+      {{ loading ? '读取中…' : status || (data?.binary ? '二进制文件无法编辑' : data && !editable ? '只读' : '') }}
     </div>
   </div>
 </template>

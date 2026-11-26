@@ -15,6 +15,7 @@ const dataDir = path.join(root, ".local", "editor-navigation-ui-data-" + Date.no
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 let application;
+let restoreCaller;
 let restoreFirst;
 const errors = [];
 async function api(page, name, payload) {
@@ -110,6 +111,26 @@ async function clickSymbol(page, line, symbol, modifiers) {
     await editor.waitForSelector(".editor-tree-row");
     await until(async () => (await editor.locator(".editor-statusbar").textContent()).includes("Java 已就绪"), "Java indexing", 240);
     await openFile(editor, "Caller.java");
+    const callerFile = path.join(fixture, "consumer/src/main/java/sample/consumer/Caller.java");
+    const callerText = fs.readFileSync(callerFile);
+    restoreCaller = () => fs.writeFileSync(callerFile, callerText);
+    await caret(editor, 6, 18);
+    await editor.keyboard.press("End");
+    await editor.keyboard.insertText(" gateway.()lsdfsd fsdf sd;");
+    const brokenLine = editor.locator(".monaco-editor .view-line").filter({ hasText: "lsdfsd" });
+    const syntaxError = editor.locator(".monaco-editor .squiggly-error").first();
+    await brokenLine.waitFor();
+    await syntaxError.waitFor({ timeout: 15000 });
+    assert.notEqual(await syntaxError.evaluate((mark) => getComputedStyle(mark).backgroundImage), "none");
+    await brokenLine.click();
+    await editor.keyboard.press("End");
+    await editor.keyboard.press("Shift+Home");
+    await editor.keyboard.insertText('gateway.send("hello");');
+    await brokenLine.waitFor({ state: "detached" });
+    await syntaxError.waitFor({ state: "detached", timeout: 15000 });
+    await until(() => fs.readFileSync(callerFile).equals(callerText), "restore original Java source");
+    restoreCaller = undefined;
+
     await caret(editor, 6, 18);
     await editor.keyboard.press("Control+b");
     await until(async () => (await editor.locator(".editor-tab.active .editor-tab-name").textContent()) === "Gateway.java", "cross-module Ctrl+B");
@@ -165,5 +186,6 @@ async function clickSymbol(page, line, symbol, modifiers) {
   } finally {
     restoreFirst?.();
     if (application) await application.evaluate(({ app }) => app.exit(0));
+    restoreCaller?.();
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -1,0 +1,207 @@
+@font-face {
+  font-family: "Workbench JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Workbench JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 400;
+}
+
+.diff-window {
+  --idea-modified-line: #293545;
+  --idea-modified: #344d6a;
+  --idea-inserted: #36533b;
+  --idea-deleted: #484a50;
+  --idea-number: #888d99;
+  --idea-icon: #a3a8b4;
+  font: 13px "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+.diff-window.diff-light {
+  --idea-modified-line: #e7effa;
+  --idea-modified: #c2d8f2;
+  --idea-inserted: #bee6be;
+  --idea-deleted: #d6d6d6;
+  --idea-number: #a6acba;
+  --idea-icon: #6c707e;
+  --diff-line: #ebecf0;
+  --diff-control-line: #c9ccd6;
+  --diff-text: #080808;
+}
+.diff-titlebar {
+  height: 38px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 144px 0 8px;
+  background: var(--diff-panel);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.diff-titlebar img { width: 16px; height: 16px; }
+.diff-titlebar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diff-toolbar { height: 33px; gap: 2px; padding: 0 7px; border: 0; }
+.diff-toolbar > button {
+  height: 24px;
+  width: 24px;
+  min-height: 0;
+  padding: 0;
+  color: var(--idea-icon);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+}
+.diff-toolbar > button:hover:not(:disabled),
+.diff-toolbar > button[aria-pressed="true"],
+.diff-toolbar > button[aria-expanded="true"] { background: var(--diff-control); }
+.diff-toolbar > select {
+  appearance: none;
+  min-height: 0;
+  height: 23px;
+  padding: 0 23px 1px 8px;
+  margin: 0 3px;
+  border-radius: 3px;
+  background: var(--diff-panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath fill='%23787878' d='m0 0 4 4 4-4z'/%3E%3C/svg%3E") right 7px center / 8px 5px no-repeat;
+  font: inherit;
+}
+.diff-toolbar-divider { margin: 0 3px; height: 17px; }
+.diff-include { display: inline-flex; align-items: center; gap: 5px; margin-inline: 5px; white-space: nowrap; }
+.diff-include input { width: 14px; height: 14px; margin: 0; }
+.diff-version-labels { height: 21px; background: var(--diff-panel); border: 0; }
+.diff-version-labels > span { padding: 0 5px; gap: 4px; font: inherit; }
+.diff-version-labels .ico { color: var(--idea-icon); flex: none; }
+.diff-version-labels > span + span { border: 0; }
+.diff-window:not(.diff-unified) .diff-version-labels > span:first-child { width: var(--idea-divider, 50%); }
+.diff-window:not(.diff-unified) .diff-version-labels > span:last-child { flex: 1; }
+.diff-window .idea-outer-scrollbar { background: transparent; }
+.diff-window .idea-scrollbar-original { width: 9px; }
+.diff-window .idea-scrollbar-thumb { width: 100%; }
+.diff-window .idea-scrollbar-change.changed { background: #b3d1f4; }
+.diff-window .idea-scrollbar-change.added { background: #a6dba6; }
+.diff-window .idea-scrollbar-change.removed { background: #c5c5c5; }
+.diff-statusbar { height: 21px; font-size: 11px; }
+.diff-commit-message { display: flex; flex-direction: column; flex: none; background: var(--diff-panel); }
+.diff-commit-message .diff-message-heading {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  height: 36px; border: 0; border-radius: 0; background: transparent;
+  color: var(--diff-text); font: inherit; text-align: left;
+}
+.diff-window.diff-light .diff-message-heading[aria-expanded] { background: transparent; color: var(--diff-text); }
+.diff-message-heading span { flex: 1; height: 1px; background: var(--diff-line); }
+.diff-message-heading .ico { color: var(--idea-icon); }
+.diff-commit-message textarea {
+  width: 100%; height: 68px; padding: 5px 8px; resize: none;
+  border: 1px solid var(--diff-line); background: var(--diff-bg); color: var(--diff-text);
+  outline-offset: -1px; font: inherit;
+}
+
+.monaco-diff-editor.idea-split-view {
+  --idea-gutter-width: clamp(92px, 16%, 178px);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, calc((100% - var(--idea-gutter-width)) / 2 - 4px)) var(--idea-gutter-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--diff-bg);
+  overflow: hidden;
+}
+.idea-split-view > .editor { position: relative; overflow: hidden; min-width: 0; height: 100%; }
+.idea-diff-gutter {
+  position: relative;
+  z-index: 1;
+  box-shadow: inset 1px 0 var(--diff-line), inset -1px 0 var(--diff-line);
+  user-select: none;
+}
+/* Overlap Monaco's rounded pane edges by one pixel to avoid a seam at fractional widths. */
+.idea-diff-gutter > svg { position: absolute; inset: 0 auto 0 -1px; width: calc(100% + 2px); height: 100%; pointer-events: none; }
+.idea-ribbon-changed { fill: var(--idea-modified); }
+.idea-ribbon-added { fill: var(--idea-inserted); }
+.idea-ribbon-deleted { fill: var(--idea-deleted); }
+.idea-diff-gutter .idea-original-gutter,
+.idea-diff-gutter .idea-modified-gutter {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  color: var(--idea-number);
+  font: 12px "Workbench JetBrains Mono", Consolas, monospace;
+}
+.idea-diff-gutter .idea-original-gutter > span,
+.idea-diff-gutter .idea-modified-gutter > span { position: absolute; text-align: right; }
+.idea-diff-gutter .idea-original-gutter > span { right: calc(50% + 18px); }
+.idea-diff-gutter .idea-modified-gutter > span { right: calc(50% - 39px); }
+.idea-gutter-actions button.git-revert-glyph {
+  position: absolute;
+  right: calc(50% + 42px);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+}
+.idea-gutter-actions button.git-revert-glyph::before {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 0;
+  background-color: transparent;
+  background-size: 13px;
+  box-shadow: none;
+}
+.idea-gutter-actions.diff-append-mode .git-revert-appendable::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 3.5v4A3.5 3.5 0 0 0 7 11h5.5m-2.5-2.5 2.5 2.5-2.5 2.5M9.5 4.5h4m-2-2v4' fill='none' stroke='%235d6269' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.idea-gutter-actions button.git-revert-glyph:hover:not(:disabled) { background: var(--diff-control); }
+.idea-gutter-actions .idea-include-change {
+  position: absolute; left: calc(50% + 44px); width: 14px; height: 14px; margin: 0;
+  appearance: none; border: 1px solid var(--idea-icon); border-radius: 4px; background: transparent; cursor: pointer;
+}
+.idea-include-change:checked::after {
+  content: ""; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px;
+  border: solid var(--idea-icon); border-width: 0 1.5px 1.5px 0; transform: rotate(38deg);
+}
+.idea-include-change:indeterminate::after { content: ""; position: absolute; left: 3px; right: 3px; top: 5px; border-top: 1.5px solid var(--idea-icon); }
+.idea-include-change:disabled { cursor: default; opacity: .7; }
+.idea-diff-sash { position: absolute; z-index: 2; top: 0; bottom: 0; left: var(--idea-sash-x, 50%); width: 6px; transform: translateX(-50%); cursor: col-resize; touch-action: none; }
+.idea-diff-sash:is(:hover, :focus-visible)::after { content: ""; position: absolute; inset: 0 2px; background: var(--idea-number); opacity: .45; }
+.idea-split-view .idea-changed-line { background: var(--idea-modified-line); }
+.idea-split-view :is(.idea-added-line, .idea-added-word) { background: var(--idea-inserted); }
+.idea-split-view :is(.idea-deleted-line, .idea-deleted-word) { background: var(--idea-deleted); }
+.idea-split-view .idea-changed-word { background: var(--idea-modified); }
+.idea-split-view .idea-empty-added { --idea-rule: var(--idea-inserted); }
+.idea-split-view .idea-empty-deleted { --idea-rule: var(--idea-deleted); }
+.idea-split-view :is(.idea-empty-added, .idea-empty-deleted)::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: var(--idea-empty-rule-height);
+  background: var(--idea-rule);
+}
+.idea-split-view :is(.idea-empty-added, .idea-empty-deleted).after::before { top: auto; bottom: 0; }
+.idea-split-view .idea-expand-context {
+  border: 0; border-block: 1px solid var(--diff-line); border-radius: 0;
+  background: var(--diff-panel); color: var(--idea-icon); min-height: 0; padding-block: 0;
+}
+.diff-light .idea-split-view .idea-java-null { font-weight: 400 !important; }
+.diff-light .idea-split-view .mtkb { font-weight: 400; }
+.diff-window .idea-java-static-call { font-style: italic; }
+.diff-window :is(.idea-java-doc-tag, .idea-java-reassigned) {
+  text-decoration: underline; text-decoration-color: var(--idea-number); text-underline-offset: 2px;
+}
+@media (max-width: 1000px) {
+  .diff-toolbar { gap: 1px; padding-inline: 3px; }
+  .diff-toolbar > select { margin: 0 1px; }
+  .idea-gutter-actions button.git-revert-glyph { right: calc(50% + 38px); }
+}

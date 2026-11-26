@@ -29,6 +29,8 @@ fs.writeFileSync(mainJava, [
   "  }",
   "}",
   "",
+  ...Array.from({ length: 100 }, (_, index) => `// History line ${index + 17}`),
+  "",
 ].join("\n"));
 fs.writeFileSync(path.join(fixture, "src", "App.vue"), [
   "<template>",
@@ -52,14 +54,22 @@ fs.writeFileSync(second + path.sep + "src" + path.sep + "Second.java", "package 
 // 初始化 Git 仓库，供单文件提交历史（blame）验证使用
 const gitEnv = {
   ...process.env,
-  GIT_AUTHOR_NAME: "Tester", GIT_AUTHOR_EMAIL: "tester@example.com",
+  GIT_AUTHOR_NAME: "tester", GIT_AUTHOR_EMAIL: "tester@example.com",
+  GIT_AUTHOR_DATE: "2025-07-01T12:00:00+08:00",
   GIT_COMMITTER_NAME: "Tester", GIT_COMMITTER_EMAIL: "tester@example.com",
+  GIT_COMMITTER_DATE: "2026-02-06T12:00:00+08:00",
 };
 execFileSync("git", ["-C", fixture, "init", "-q"], { env: gitEnv, stdio: "pipe" });
 execFileSync("git", ["-C", fixture, "add", "-A"], { env: gitEnv, stdio: "pipe" });
 execFileSync("git", ["-C", fixture, "commit", "-q", "-m", "initial import"], { env: gitEnv, stdio: "pipe" });
+fs.writeFileSync(mainJava, fs.readFileSync(mainJava, "utf8").replace("// History line 72", "// Updated history line 72"));
+execFileSync("git", ["-C", fixture, "commit", "-qam", "update line 72"], {
+  env: { ...gitEnv, GIT_AUTHOR_NAME: "reviewer", GIT_AUTHOR_DATE: "2026-02-05T12:00:00+08:00" },
+  stdio: "pipe",
+});
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
+const blameOnly = process.argv.includes("--blame-only");
 let application;
 const errors = [];
 async function api(page, name, payload) {
@@ -113,31 +123,33 @@ async function ctrlClickWord(page, text) {
     main.on("pageerror", (error) => errors.push(error.message));
     await main.waitForSelector('[data-page="work"]');
 
-    // 1. 动作按钮统一淡蓝
-    const buttons = await main.evaluate(() => [...document.querySelectorAll("button")]
-      .filter((b) => !b.className.includes("link") && !b.className.includes("close"))
-      .map((b) => getComputedStyle(b).backgroundColor));
-    assert.ok(buttons.includes("rgb(234, 241, 255)"), `主界面按钮未统一为淡蓝：${JSON.stringify(buttons.slice(0, 8))}`);
+    if (!blameOnly) {
+      // 1. 动作按钮统一淡蓝
+      const buttons = await main.evaluate(() => [...document.querySelectorAll("button")]
+        .filter((b) => !b.className.includes("link") && !b.className.includes("close"))
+        .map((b) => getComputedStyle(b).backgroundColor));
+      assert.ok(buttons.includes("rgb(234, 241, 255)"), `主界面按钮未统一为淡蓝：${JSON.stringify(buttons.slice(0, 8))}`);
 
-    // 2. 项目页按钮顺序与文案
-    await main.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "项目管理", exact: true }).click();
-    await main.locator(".projects-actions button").first().waitFor();
-    const actionLabels = await main.locator(".projects-actions button").allTextContents();
-    const clean = actionLabels.map((s) => s.trim());
-    assert.ok(!clean.includes("启动"), "项目操作区仍显示启动按钮");
-    assert.ok(clean.indexOf("查看日志") < clean.indexOf("打开目录"), "查看日志未放到打开目录前");
-    assert.ok(!clean.includes("打开开发者工具"), "详情区仍显示旧文案");
-    const leftLabels = await main.locator(".project-item-actions button").allTextContents();
-    assert.ok(!leftLabels.some((s) => s.includes("打开开发者工具")), "左列表仍有打开开发者工具");
-    await main.locator(".project-item").filter({ hasText: "推荐官小程序" }).click();
-    const wechatLabels = await main.locator(".projects-actions button").allTextContents();
-    assert.ok(wechatLabels.some((s) => s.includes("打开微信开发者工具")), "详情区未改为打开微信开发者工具");
+      // 2. 项目页按钮顺序与文案
+      await main.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "项目管理", exact: true }).click();
+      await main.locator(".projects-actions button").first().waitFor();
+      const actionLabels = await main.locator(".projects-actions button").allTextContents();
+      const clean = actionLabels.map((s) => s.trim());
+      assert.ok(!clean.includes("启动"), "项目操作区仍显示启动按钮");
+      assert.ok(clean.indexOf("查看日志") < clean.indexOf("打开目录"), "查看日志未放到打开目录前");
+      assert.ok(!clean.includes("打开开发者工具"), "详情区仍显示旧文案");
+      const leftLabels = await main.locator(".project-item-actions button").allTextContents();
+      assert.ok(!leftLabels.some((s) => s.includes("打开开发者工具")), "左列表仍有打开开发者工具");
+      await main.locator(".project-item").filter({ hasText: "推荐官小程序" }).click();
+      const wechatLabels = await main.locator(".projects-actions button").allTextContents();
+      assert.ok(wechatLabels.some((s) => s.includes("打开微信开发者工具")), "详情区未改为打开微信开发者工具");
 
-    // 3. 分支下拉框是白色下拉样式，不是淡蓝按钮
-    await main.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "Git 管理", exact: true }).click();
-    await main.locator(".git-branch-button").waitFor();
-    const dropdownColor = await main.locator(".git-branch-button").evaluate((el) => getComputedStyle(el).backgroundColor);
-    assert.equal(dropdownColor, "rgb(255, 255, 255)", `分支下拉框背景色错误：${dropdownColor}`);
+      // 3. 分支下拉框是白色下拉样式，不是淡蓝按钮
+      await main.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "Git 管理", exact: true }).click();
+      await main.locator(".git-branch-button").waitFor();
+      const dropdownColor = await main.locator(".git-branch-button").evaluate((el) => getComputedStyle(el).backgroundColor);
+      assert.equal(dropdownColor, "rgb(255, 255, 255)", `分支下拉框背景色错误：${dropdownColor}`);
+    }
 
     const bootstrap = await api(main, "bootstrap");
     const config = bootstrap.config;
@@ -274,37 +286,76 @@ async function ctrlClickWord(page, text) {
     await editor.screenshot({ path: path.join(root, ".local", "idea-tab-menu.png") });
 
     // 6c. 单文件提交历史：右键 gutter 开启，每行显示、版本配色；右键标注列关闭
-    const gutterBox = await editor.locator(".margin-view-overlays").boundingBox();
-    await editor.mouse.click(gutterBox.x + 6, gutterBox.y + 80, { button: "right" });
+    await editor.locator(".margin-view-overlays .line-numbers").filter({ hasText: /^3$/ }).click({ button: "right" });
     await editor.locator(".editor-blame-menu").waitFor();
     assert.match(await editor.locator(".editor-blame-menu").textContent(), /显示提交历史/);
     await editor.locator(".editor-blame-menu button").click();
-    await until(async () => await editor.locator(".editor-blame-row").count() > 0, "blame 标注列");
-    const blameText = await editor.locator(".editor-blame-row").first().textContent();
-    assert.match(blameText, /\d{4}\/\d{2}\/\d{2}/, "blame 未显示提交日期");
-    const blameInfo = await editor.evaluate(() => {
+    await editor.locator('.editor-blame-row[data-line="3"]').waitFor();
+    assert.equal(await editor.locator('.editor-blame-row[data-line="4"]').count(), 0, "折叠行出现历史标注");
+
+    await editor.keyboard.press("Control+g");
+    await editor.locator(".editor-goto input").fill("72");
+    await editor.keyboard.press("Enter");
+    const updatedRow = editor.locator('.editor-blame-row[data-line="72"]');
+    await updatedRow.waitFor();
+    assert.equal(await updatedRow.locator(".editor-blame-date").textContent(), "2026/2/5");
+    assert.equal(await updatedRow.locator(".editor-blame-author").textContent(), "Reviewer");
+    const previousRow = editor.locator('.editor-blame-row[data-line="71"]');
+    assert.equal(await previousRow.locator(".editor-blame-date").textContent(), "2025/7/1");
+    assert.equal(await previousRow.locator(".editor-blame-author").textContent(), "Tester");
+    const background = (row) => row.evaluate((node) => getComputedStyle(node).backgroundColor);
+    assert.equal(await background(updatedRow), "rgb(161, 190, 247)", "选中代码行覆盖了近期提交的底色");
+    assert.equal(await background(previousRow), "rgb(243, 245, 250)", "较早提交底色不正确");
+    await editor.keyboard.press("ArrowUp");
+    await until(async () => (await editor.locator(".editor-statusbar span:last-child").textContent()).trim().startsWith("71:"),
+      "移动到较早提交的代码行");
+    assert.equal(await background(previousRow), "rgb(243, 245, 250)", "移动光标覆盖了较早提交的底色");
+    assert.equal(await background(updatedRow), "rgb(161, 190, 247)", "移动光标改变了近期提交的底色");
+
+    const blameBox = await editor.locator(".editor-blame").boundingBox();
+    const beforeWheel = await updatedRow.boundingBox();
+    await editor.mouse.move(blameBox.x + 25, blameBox.y + 100);
+    await editor.mouse.wheel(0, 105);
+    await until(async () => {
+      const row = await updatedRow.boundingBox();
+      return row && row.y < beforeWheel.y - 50;
+    }, "从提交标注列滚动代码");
+    const alignedRows = await editor.evaluate(() => {
+      const lineNumbers = [...document.querySelectorAll(".margin-view-overlays .line-numbers")];
+      const offsets = new Map(lineNumbers.map((line) => [line.textContent.trim(), line.getBoundingClientRect().top]));
       const rows = [...document.querySelectorAll(".editor-blame-row")];
-      return {
-        rows: rows.length,
-        visible: document.querySelectorAll(".view-lines .view-line").length,
-        colors: new Set(rows.map((row) => getComputedStyle(row).backgroundColor)).size,
-      };
+      return rows.length > 10 && rows.every((row) => Math.abs(row.getBoundingClientRect().top - offsets.get(row.dataset.line)) <= 1);
     });
-    assert.ok(blameInfo.rows >= blameInfo.visible - 1, `blame 未逐行显示：${blameInfo.rows}/${blameInfo.visible}`);
-    assert.ok(blameInfo.colors >= 1, "blame 缺少版本配色");
+    assert.ok(alignedRows, "滚动后提交标注未与行号对齐");
     await editor.screenshot({ path: path.join(root, ".local", "idea-alignment-blame.png") });
-    await editor.locator(".editor-blame-row").first().click();
+    await updatedRow.click();
     await until(async () => (await application.windows()).length === 3, "blame 差异窗口");
     const diffPage = (await application.windows()).find((page) => page !== main && page !== editor);
     await diffPage.waitForSelector(".diff-window");
     await diffPage.close();
     await until(async () => (await application.windows()).length === 2, "关闭差异窗口");
-    const blameBox = await editor.locator(".editor-blame").boundingBox();
+    await editor.keyboard.press("Control+g");
+    await editor.locator(".editor-goto input").fill("72");
+    await editor.keyboard.press("Enter");
+    await editor.keyboard.press("Enter");
+    await updatedRow.locator(".editor-blame-local").waitFor();
+    assert.equal(await editor.locator('.editor-blame-row[data-line="73"] .editor-blame-author').textContent(), "Reviewer");
+    await editor.keyboard.press("Control+z");
+    await until(async () => (await updatedRow.locator(".editor-blame-author").allTextContents())[0] === "Reviewer", "撤销后恢复提交归属");
+
     await editor.mouse.click(blameBox.x + 40, blameBox.y + 40, { button: "right" });
     await editor.locator(".editor-blame-menu").waitFor();
     assert.match(await editor.locator(".editor-blame-menu").textContent(), /关闭提交历史/);
     await editor.locator(".editor-blame-menu button").click();
     await until(async () => await editor.locator(".editor-blame-row").count() === 0, "关闭提交历史");
+    if (blameOnly) {
+      assert.deepEqual(errors, []);
+      console.log(JSON.stringify({ passed: true, screenshot: ".local/idea-alignment-blame.png" }));
+      return;
+    }
+    await editor.locator(".editor-tab.active").click();
+    await editor.keyboard.press("Control+Home");
+    await editor.locator(".monaco-editor .view-line").filter({ hasText: /\bcustomerService\b/ }).first().waitFor();
 
     // 6d. Ctrl 悬停可跳转代码：变蓝 + 手型光标
     const hoverPoint = await editor.evaluate(() => {
@@ -416,6 +467,9 @@ async function ctrlClickWord(page, text) {
     // 11. 项目切换面板：本窗口 / 新窗口
     await editor.locator(".editor-project-title").click();
     await editor.locator(".editor-project-picker").waitFor();
+    const currentProject = editor.locator('.editor-project-row[aria-current="true"]');
+    assert.equal(await currentProject.locator(".editor-project-info strong").textContent(), "refsys-ui");
+    assert.equal(await editor.locator(".editor-project-count").count(), 0);
     assert.ok((await editor.locator(".editor-project-picker").textContent()).includes("本窗口切换"));
     assert.ok((await editor.locator(".editor-project-picker").textContent()).includes("新窗口打开"));
     const rows = editor.locator(".editor-project-row");
@@ -427,6 +481,7 @@ async function ctrlClickWord(page, text) {
     // 新窗口打开：切换后再次打开选择器，另开一个窗口
     await editor.locator(".editor-project-title").click();
     await editor.locator(".editor-project-picker").waitFor();
+    assert.equal(await currentProject.locator(".editor-project-info strong").textContent(), "homeproject");
     await rows.filter({ hasText: "refsys-ui" }).first().locator("button").filter({ hasText: "新窗口打开" }).click();
     await until(async () => (await application.windows()).length === 3, "新窗口打开项目");
     await editor.screenshot({ path: path.join(root, ".local", "idea-alignment.png") });

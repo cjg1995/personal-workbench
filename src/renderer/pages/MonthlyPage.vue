@@ -482,120 +482,9 @@ const majorSections = [
 
 <template>
   <div class="monthly-page">
-    <div class="page-head">
-      <div>
-        <h1>月度总结</h1>
-      </div>
-
-      <div class="h-actions month-actions">
-        <span
-          v-if="saveState"
-          class="saved"
-          :class="stateClass"
-          role="status"
-        >
-          <Icon
-            :name="
-              stateClass === 'error'
-                ? 'warning'
-                : stateClass === 'pending'
-                  ? 'clock'
-                  : 'check-circle'
-            "
-            :size="14"
-          />
-          <span>{{ saveState }}</span>
-        </span>
-
-        <div class="month-btn-wrap" @click.stop>
-          <button
-            type="button"
-            class="btn"
-            aria-label="选择月报月份"
-            :aria-expanded="monthPickerOpen"
-            @click="toggleMonthPicker"
-          >
-            <Icon name="calendar2" :size="15" />
-            <span>{{ monthTitle.label }}</span>
-            <Icon name="down" :size="12" />
-          </button>
-
-          <div
-            v-if="monthPickerOpen"
-            class="month-popover right"
-            role="dialog"
-            aria-label="切换月报月份"
-          >
-            <div class="month-popover-head">
-              <button
-                type="button"
-                class="icon-btn small blank"
-                aria-label="上一年"
-                @click="pickerYear--"
-              >
-                <Icon name="arrow-left" :size="13" />
-              </button>
-              <strong>{{ pickerYear }} 年</strong>
-              <button
-                type="button"
-                class="icon-btn small blank"
-                aria-label="下一年"
-                @click="pickerYear++"
-              >
-                <Icon name="arrow-right" :size="13" />
-              </button>
-            </div>
-            <div class="month-popover-grid">
-              <button
-                v-for="m in 12"
-                :key="m"
-                type="button"
-                :class="{
-                  active:
-                    month === `${pickerYear}-${String(m).padStart(2, '0')}`,
-                }"
-                @click="
-                  selectMonthValue(
-                    `${pickerYear}-${String(m).padStart(2, '0')}`,
-                  )
-                "
-              >
-                {{ m }} 月
-              </button>
-            </div>
-            <div class="month-popover-foot">
-              <input
-                type="month"
-                class="month-native-input"
-                :value="month"
-                aria-label="月报月份"
-                @change="changeMonthInput"
-              />
-              <button
-                type="button"
-                class="text-action"
-                @click="selectMonthValue(model.today.slice(0, 7))"
-              >
-                本月
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          class="btn primary"
-          :disabled="!draft"
-          @click="exportFile()"
-        >
-          <Icon name="download" :size="15" />导出 Word
-        </button>
-      </div>
-    </div>
-
-    <div v-if="draft" class="duo monthly-layout">
+    <div class="duo monthly-layout">
       <!-- 左栏：本月素材 -->
-      <section class="card pane">
+      <section v-if="draft" class="card pane">
         <div class="panel-head">
           <div class="head-title">
             <Icon name="stack" :size="17" />
@@ -665,6 +554,7 @@ const majorSections = [
             <span
               v-if="linked.has(n.id)"
               class="check-mark linked"
+              role="img"
               title="已加入正文"
               aria-label="已加入正文"
             >
@@ -681,7 +571,6 @@ const majorSections = [
             <div class="grow">
               <div class="date">
                 <span>{{ formatMonthDay(n.happenedOn, true) }}</span>
-                <span v-if="linked.has(n.id)" class="tag live">已加入正文</span>
               </div>
               <strong>{{ splitNoteText(n.text).title }}</strong>
               <p v-if="splitNoteText(n.text).body">
@@ -710,17 +599,119 @@ const majorSections = [
               @click="addSources"
             >
               <Icon name="plus" :size="13" />
-              {{
-                selected.length ? `加入正文 · ${selected.length}` : "加入正文"
-              }}
+              加入正文
             </button>
           </div>
         </div>
       </section>
 
       <!-- 右栏：文档式正文纸面编辑区 -->
-      <div class="card paper-desk">
-        <article class="paper">
+      <section class="card paper-desk" :class="{ full: !draft }" aria-label="月报正文">
+        <div class="panel-head spaced-head month-actions" role="group" aria-label="月报操作">
+          <span
+            v-if="saveState"
+            class="saved"
+            :class="stateClass"
+            role="status"
+          >
+            <Icon
+              :name="
+                stateClass === 'error'
+                  ? 'warning'
+                  : stateClass === 'pending'
+                    ? 'clock'
+                    : 'check-circle'
+              "
+              :size="14"
+            />
+            <span>{{ saveState }}</span>
+          </span>
+
+          <div class="month-btn-wrap" @click.stop>
+            <button
+              type="button"
+              class="btn"
+              aria-label="选择月报月份"
+              :aria-expanded="monthPickerOpen"
+              @click="toggleMonthPicker"
+            >
+              <Icon name="calendar2" :size="15" />
+              <span>{{ monthTitle.label }}</span>
+              <Icon name="down" :size="12" />
+            </button>
+
+            <div
+              v-if="monthPickerOpen"
+              class="month-popover right"
+              role="dialog"
+              aria-label="切换月报月份"
+            >
+              <div class="month-popover-head">
+                <button
+                  type="button"
+                  class="icon-btn small blank"
+                  aria-label="上一年"
+                  @click="pickerYear--"
+                >
+                  <Icon name="arrow-left" :size="13" />
+                </button>
+                <strong>{{ pickerYear }} 年</strong>
+                <button
+                  type="button"
+                  class="icon-btn small blank"
+                  aria-label="下一年"
+                  @click="pickerYear++"
+                >
+                  <Icon name="arrow-right" :size="13" />
+                </button>
+              </div>
+              <div class="month-popover-grid">
+                <button
+                  v-for="m in 12"
+                  :key="m"
+                  type="button"
+                  :class="{
+                    active:
+                      month === `${pickerYear}-${String(m).padStart(2, '0')}`,
+                  }"
+                  @click="
+                    selectMonthValue(
+                      `${pickerYear}-${String(m).padStart(2, '0')}`,
+                    )
+                  "
+                >
+                  {{ m }} 月
+                </button>
+              </div>
+              <div class="month-popover-foot">
+                <input
+                  type="month"
+                  class="month-native-input"
+                  :value="month"
+                  aria-label="月报月份"
+                  @change="changeMonthInput"
+                />
+                <button
+                  type="button"
+                  class="text-action"
+                  @click="selectMonthValue(model.today.slice(0, 7))"
+                >
+                  本月
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="btn primary"
+            :disabled="!draft"
+            @click="exportFile()"
+          >
+            <Icon name="download" :size="15" />导出 Word
+          </button>
+        </div>
+        <article v-if="draft" class="paper">
           <div class="doc-heading">
             <div>
               <div class="doc-date">{{ monthTitle.label }}</div>
@@ -1124,14 +1115,15 @@ const majorSections = [
             </section>
           </template>
         </article>
-      </div>
-    </div>
-
-    <p v-else-if="loading" class="loading">正在读取月报草稿…</p>
-    <div v-else class="card empty" style="flex: 1">
-      <span class="empty-icon"><Icon name="report" :size="16" /></span>
-      <p class="empty-title">暂无月报草稿</p>
-      <button type="button" class="link" @click="load()">重新读取</button>
+        <div v-else class="empty monthly-empty">
+          <p v-if="loading" class="loading" role="status">正在读取月报草稿…</p>
+          <template v-else>
+            <span class="empty-icon"><Icon name="report" :size="16" /></span>
+            <p class="empty-title">暂无月报草稿</p>
+            <button type="button" class="link" @click="load()">重新读取</button>
+          </template>
+        </div>
+      </section>
     </div>
   </div>
 </template>

@@ -32,6 +32,13 @@ export class Store {
       create table objects (kind text not null, id text not null, value text not null check(json_valid(value)), updated_at text not null, primary key(kind,id));
       pragma user_version=1; commit;`);
     this.assertHealthy();
+    this.purgeLegacyDeletedEntries();
+  }
+  private purgeLegacyDeletedEntries() {
+    this.db.exec(`delete from objects
+      where kind in ('note', 'prompt')
+        and json_type(value, '$.deletedAt') = 'text'
+        and json_extract(value, '$.deletedAt') <> ''`);
   }
   get<T>(kind: Bucket, key: string): T | undefined {
     const row = this.db
@@ -91,6 +98,7 @@ export class Store {
     try {
       this.db.exec("pragma journal_mode=WAL; pragma busy_timeout=5000;");
       this.assertHealthy();
+      this.purgeLegacyDeletedEntries();
     } catch (e) {
       this.db.close();
       throw e;
@@ -115,6 +123,7 @@ export class Store {
         id: string;
         value: string;
       }[];
+      const counts = Object.fromEntries(buckets.map((b) => [b, 0]));
       for (const row of rows) {
         if (!buckets.includes(row.kind as Bucket))
           throw new Error("备份包含不支持的数据类型");
@@ -143,13 +152,15 @@ export class Store {
             (value.deletedAt !== null && typeof value.deletedAt !== "string"))
         )
           throw new Error("备份提示词无效");
+        if (
+          (row.kind === "note" || row.kind === "prompt") &&
+          typeof value.deletedAt === "string" &&
+          value.deletedAt !== ""
+        )
+          continue;
+        counts[row.kind]++;
       }
-      return {
-        version: v,
-        counts: Object.fromEntries(
-          buckets.map((b) => [b, rows.filter((r) => r.kind === b).length]),
-        ),
-      };
+      return { version: v, counts };
     } finally {
       db.close();
     }

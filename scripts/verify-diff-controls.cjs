@@ -95,10 +95,10 @@ async function closeFindWithMouse(side, label) {
       assert.ok(menuText.includes(label), label);
     assert.doesNotMatch(menuText, /Show|History|Copy|Open|Explorer|Rollback/);
     await page.keyboard.press("Escape");
-    await page.locator(".git-toolbar").getByRole("button", { name: "Push", exact: true }).click();
+    await page.getByRole("button", { name: "Push", exact: true }).click();
     assert.equal(await page.getByLabel("远程仓库", { exact: true }).count(), 1);
     await page.locator(".git-dialog").getByRole("button", { name: "取消", exact: true }).click();
-    await page.locator(".git-toolbar").getByRole("button", { name: "Stash", exact: true }).click();
+    await page.getByRole("button", { name: "新建 Stash", exact: true }).click();
     assert.equal(await page.getByLabel("包含未跟踪文件", { exact: true }).count(), 1);
     await page.locator(".git-dialog").getByRole("button", { name: "取消", exact: true }).click();
     checks.push("Git 主页面的提交说明、右键菜单和远程/暂存弹窗使用中文，保留 Git 指令名");

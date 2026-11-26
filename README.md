@@ -6,7 +6,7 @@ Windows 本地桌面应用，使用 Electron、Vue 3、TypeScript、Vite 和 Ele
 
 ## 启动与安装
 
-当前源码版本为 0.1.69。安装包为 `release/PersonalWorkbench-0.1.69-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机默认安装到 `%LOCALAPPDATA%\Programs\PersonalWorkbench\个人工作台.exe`；切换版本前先保存并退出已运行的工作台，旧运行目录暂留以继续管理其已经启动的后台服务。
+当前源码版本为 0.1.94。安装包为 `release/PersonalWorkbench-0.1.94-Setup.exe`，选择当前用户可写目录安装，不需要额外部署数据库或服务器。本机默认安装到 `%LOCALAPPDATA%\Programs\PersonalWorkbench\个人工作台.exe`；切换版本前先保存并退出已运行的工作台，旧运行目录暂留以继续管理其已经启动的后台服务。
 
 「项目管理」保留项目运行操作，并新增独立 Monaco 代码编辑器。编辑器支持多文件、保存与外部冲突保护、项目搜索、跳转历史；Java 使用随安装包提供的 Eclipse JDT LS 做项目级语义导航、补全和诊断。首次从源码打包会下载并校验固定版本的 Java 语言服务和运行时，后续使用本地缓存。
 
@@ -41,15 +41,34 @@ npm run package
 
 `npm run build:tomcat` 只在修改 `src/native/WorkbenchTomcat.java` 后需要，使用 JDK 编译 Java 8 兼容组件；已核对的字节码随源码和安装包提供。工作台自身的记录、审查、月报不依赖 Java；运行或构建被管理的 Java/Android 项目需要其原有工具链。
 
+## Codex 本机接入
+
+通过 MCP 可以查询、新增、编辑和删除待办事项、工作记录及提示词。
+查询时省略 `limit` 会返回所选模块的全部匹配条目。也可按关键词筛选或用 `limit` 指定返回条数。
+
+安装后，在 PowerShell 中为本机 Codex 注册工作台。
+
+```powershell
+$installDir = Join-Path $env:LOCALAPPDATA 'Programs\PersonalWorkbench'
+$executable = Join-Path $installDir '个人工作台.exe'
+$entry = Join-Path $installDir 'resources\app.asar\dist\main\workbench-mcp.js'
+$dataDir = Join-Path $env:LOCALAPPDATA 'PersonalWorkbench'
+codex mcp add personal-workbench --env ELECTRON_RUN_AS_NODE=1 -- $executable $entry "--data-dir=$dataDir"
+```
+
+自定义安装目录时，将 `$installDir` 改成实际位置。需要时 MCP 会在后台启动工作台，打开工作台后可查看条目。待办事项、工作记录和提示词的删除均会永久移除条目。
+
+给出工作记录完整原文时直接保存。让 AI 代写时，先查询近期工作记录参考写法。排查类记录用一句话说明问题，在括号中补充原因和解决方案。
+
 ## 首版功能
 
 | PRD   | 已实现能力                                                                                                           |
 | ----- | -------------------------------------------------------------------------------------------------------------------- |
-| FR-01 | 固定导航、工作记录/灵感待办/月度总结入口、开发与交付分组、快速记录入口                                               |
+| FR-01 | 固定导航、工作记录/待办事项/月度总结入口、开发与交付分组、快速记录入口                                               |
 | FR-02 | ERP 提交与 test 工作树合并；四 APP 配置保护、更新、最终清单确认、提交与远端核对；四 APP Release/Debug 构建及产物校验 |
 | FR-03 | 阶段、耗时、取消、部分失败、日志、任务历史、异常重开后人工核实                                                       |
 | FR-04 | 点击左侧「TAPD 入口」直接打开客户端；已在运行则还原、置顶并切到原窗口（不重复启动），界面直接提示实际结果；路径在设置的工具配置里维护            |
-| FR-05 | 灵感待办新增、编辑、搜索、完成、重新打开、删除与恢复                                                                 |
+| FR-05 | 待办事项新增、编辑、搜索、完成、重新打开和永久删除                                                                   |
 | FR-06 | 工作记录、发生日期、日期待补充、来源关联                                                                             |
 | FR-07 | 人工月报、章节与顺序调整和可编辑 Word 导出；工作成果可粘贴一张钉钉汇总截图并随 Word 导出，姓名取设置里的默认姓名；按最新决定移除月报 TXT 模块、来源核对栏与条目勾选合并 |
 | FR-08 | TXT 逐行复制导入、编码预览、字节快照、去重、日期待补和原子保存                                                       |
@@ -73,7 +92,7 @@ AI 审查、AI 总结、TAPD 原生导入不属于首版。
 
 0.1.55 启动项目后自动打开实时日志并默认跟随底部。实际地址旁提供打开。
 
-0.1.52 在灵感待办有未保存修改时，标记完成可以选择先保存再完成，也可以丢弃本次修改后完成。
+0.1.52 在待办事项有未保存修改时，标记完成可以选择先保存再完成，也可以丢弃本次修改后完成。
 
 0.1.51 将项目规则对话框改为标题栏固定、正文单独滚动，关闭按钮停留在右上角。
 

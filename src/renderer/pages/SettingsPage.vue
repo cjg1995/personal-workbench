@@ -224,51 +224,47 @@ async function restore() {
 </script>
 <template>
   <div ref="settingsRoot" class="subpage-wrap">
-    <div class="page-head">
-      <div class="page-head-inline">
-        <h1>设置</h1>
-        <span class="badge neutral">v{{ model.version }}</span>
-      </div>
-    </div>
-
     <div class="card settings-card">
-      <div class="tabs" role="tablist" aria-label="设置分类">
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: tab === 'projects' }"
-          :aria-selected="tab === 'projects'"
-          @click="tab = 'projects'"
-        >
-          工作目录<span class="count">{{ form.projects.length }}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: tab === 'tools' }"
-          :aria-selected="tab === 'tools'"
-          @click="tab = 'tools'"
-        >
-          工具与客户端
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: tab === 'data' }"
-          :aria-selected="tab === 'data'"
-          @click="tab = 'data'"
-        >
-          本地数据
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: tab === 'template' }"
-          :aria-selected="tab === 'template'"
-          @click="tab = 'template'"
-        >
-          月报模板
-        </button>
+      <div class="settings-toolbar">
+        <div class="tabs" role="tablist" aria-label="设置分类">
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: tab === 'projects' }"
+            :aria-selected="tab === 'projects'"
+            @click="tab = 'projects'"
+          >
+            工作目录<span class="count">{{ form.projects.length }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: tab === 'tools' }"
+            :aria-selected="tab === 'tools'"
+            @click="tab = 'tools'"
+          >
+            工具与客户端
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: tab === 'data' }"
+            :aria-selected="tab === 'data'"
+            @click="tab = 'data'"
+          >
+            本地数据
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: tab === 'template' }"
+            :aria-selected="tab === 'template'"
+            @click="tab = 'template'"
+          >
+            月报模板
+          </button>
+        </div>
+        <span class="settings-version" title="工作台版本">v{{ model.version }}</span>
       </div>
 
       <div class="settings-body">
@@ -431,11 +427,11 @@ async function restore() {
 
         <section v-else-if="tab === 'data'" class="form-section">
           <div class="form-line" style="margin-top: 0">
-            <span>当前数据目录</span>
+            <span>数据目录</span>
             <input
               :value="model.dataDir"
               readonly
-              aria-label="当前数据目录"
+              aria-label="数据目录"
             />
             <button
               type="button"
@@ -584,8 +580,7 @@ async function restore() {
         </section>
       </div>
 
-      <div v-if="dirty" class="save-bar">
-        <span class="save-hint">配置有未保存的修改</span>
+      <div v-if="dirty" class="save-bar" role="group" aria-label="未保存的配置">
         <button type="button" class="btn" :disabled="busy" @click="discard">
           放弃修改
         </button>

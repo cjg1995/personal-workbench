@@ -24,7 +24,7 @@ import { activeDialog } from "../dialog";
 import Icon from "../components/Icon.vue";
 import "../prompts.css";
 
-type PromptTab = "all" | "favorites" | "deleted";
+type PromptTab = "all" | "favorites";
 
 interface EditorDraft {
   id: string | null;
@@ -68,29 +68,14 @@ const fillDialogRef = ref<HTMLDialogElement>();
 const copyErrorDialogRef = ref<HTMLDialogElement>();
 const manualCopyAreaRef = ref<HTMLTextAreaElement>();
 
-const allPrompts = computed(() => model.prompts || []);
-
-const counts = computed(() => {
-  let all = 0;
-  let favorites = 0;
-  let deleted = 0;
-  for (const item of allPrompts.value) {
-    if (item.deletedAt) {
-      deleted++;
-    } else {
-      all++;
-      if (item.starred) favorites++;
-    }
-  }
-  return { all, favorites, deleted };
-});
+const counts = computed(() => ({
+  all: model.prompts.length,
+  favorites: model.prompts.filter((p) => p.starred).length,
+}));
 
 const availableTags = computed(() => {
-  const scope = allPrompts.value.filter((p) =>
-    tab.value === "deleted" ? !!p.deletedAt : !p.deletedAt,
-  );
   const set = new Set<string>();
-  for (const item of scope) {
+  for (const item of model.prompts) {
     for (const tag of item.tags) set.add(tag);
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b, "zh-CN"));
@@ -104,21 +89,14 @@ watch(availableTags, (tags) => {
 
 const visiblePrompts = computed(() => {
   const needle = search.value.trim().toLocaleLowerCase();
-  return allPrompts.value
-    .filter((p) => {
-      if (tab.value === "deleted" ? !p.deletedAt : !!p.deletedAt) return false;
-      if (tab.value === "favorites" && !p.starred) return false;
-      if (selectedTag.value && !p.tags.includes(selectedTag.value)) return false;
-      if (!needle) return true;
-      return [p.title, p.body, ...p.tags].some((text) =>
-        text.toLocaleLowerCase().includes(needle),
-      );
-    })
-    .sort((a, b) => {
-      const left = tab.value === "deleted" ? a.deletedAt || "" : a.updatedAt;
-      const right = tab.value === "deleted" ? b.deletedAt || "" : b.updatedAt;
-      return Date.parse(right) - Date.parse(left) || a.id.localeCompare(b.id);
-    });
+  return model.prompts.filter((p) => {
+    if (tab.value === "favorites" && !p.starred) return false;
+    if (selectedTag.value && !p.tags.includes(selectedTag.value)) return false;
+    if (!needle) return true;
+    return [p.title, p.body, ...p.tags].some((text) =>
+      text.toLocaleLowerCase().includes(needle),
+    );
+  });
 });
 
 watch(
@@ -248,7 +226,6 @@ function openCreate() {
 }
 
 function openEdit(prompt: Prompt) {
-  if (prompt.deletedAt) return;
   const initial = {
     title: prompt.title,
     tags: [...prompt.tags],
@@ -380,7 +357,7 @@ async function saveDraft() {
 }
 
 async function toggleStar(prompt: Prompt) {
-  if (prompt.deletedAt || busyAction.value) return;
+  if (busyAction.value) return;
   busyAction.value = true;
   try {
     await attempt(async () => {
@@ -396,44 +373,23 @@ async function toggleStar(prompt: Prompt) {
 }
 
 async function removePrompt(prompt: Prompt) {
-  if (prompt.deletedAt || busyAction.value) return;
+  if (busyAction.value) return;
+  const wasSelected = selectedId.value === prompt.id;
   const prevIndex = visiblePrompts.value.findIndex((p) => p.id === prompt.id);
   busyAction.value = true;
   try {
-    const removed = await attempt(() =>
-      call<Prompt | null>("prompt.delete", { id: prompt.id }),
-    );
-    if (removed) {
+    await attempt(async () => {
+      const removed = await call<Prompt | null>("prompt.delete", {
+        id: prompt.id,
+      });
+      if (!removed) return;
       await reload();
-      const list = visiblePrompts.value;
-      if (list.length) {
-        selectedId.value =
-          list[Math.min(Math.max(prevIndex, 0), list.length - 1)].id;
-      } else {
-        selectedId.value = null;
+      if (wasSelected) {
+        const list = visiblePrompts.value;
+        selectedId.value = list[Math.min(prevIndex, list.length - 1)]?.id ?? null;
       }
-      notify("已移至已删除");
-    }
-  } finally {
-    busyAction.value = false;
-  }
-}
-
-async function restorePrompt(prompt: Prompt) {
-  if (!prompt.deletedAt || busyAction.value) return;
-  busyAction.value = true;
-  try {
-    const restored = await attempt(() =>
-      call<Prompt>("prompt.restore", { id: prompt.id }),
-    );
-    if (restored) {
-      await reload();
-      tab.value = "all";
-      search.value = "";
-      selectedTag.value = "";
-      selectedId.value = restored.id;
-      notify("提示词已恢复");
-    }
+      notify("提示词已删除");
+    });
   } finally {
     busyAction.value = false;
   }
@@ -447,7 +403,6 @@ function closeFillDialog() {
 }
 
 function openFillDialog(prompt: Prompt) {
-  if (prompt.deletedAt) return;
   const vars = extractPromptVariables(prompt.body);
   if (!vars.length) {
     void copyText(prompt.body, false);
@@ -587,27 +542,8 @@ onBeforeUnmount(() => {
   <div class="prompts-page">
     <!-- 列表与详情模式 -->
     <template v-if="!editor">
-      <div class="page-head">
-        <div>
-          <h1>提示词库</h1>
-        </div>
-        <div
-          v-if="counts.all > 0 || counts.deleted > 0 || isFiltering"
-          class="h-actions"
-        >
-          <button
-            type="button"
-            class="btn primary library-main-btn"
-            @click="openCreate"
-          >
-            <Icon name="plus" :size="15" />
-            <span>新建提示词</span>
-          </button>
-        </div>
-      </div>
-
       <section
-        v-if="counts.all === 0 && counts.deleted === 0 && !isFiltering"
+        v-if="counts.all === 0 && !isFiltering"
         class="card prompts-empty-card"
         aria-label="提示词库为空"
       >
@@ -629,10 +565,15 @@ onBeforeUnmount(() => {
         <!-- 左侧提示词列表卡片 -->
         <section class="card library-panel" aria-label="提示词列表">
           <div class="lib-head">
-            <h2>
-              <Icon name="library-lines" :size="16" />
-              我的提示词
-            </h2>
+            <label class="prompt-search inline-label">
+              <Icon name="search" :size="14" />
+              <input
+                v-model="search"
+                type="search"
+                placeholder="搜索提示词"
+                aria-label="搜索提示词"
+              />
+            </label>
             <label class="compact-select inline-label">
               <Icon name="tag" :size="12" />
               <select v-model="selectedTag" aria-label="按标签筛选">
@@ -644,33 +585,27 @@ onBeforeUnmount(() => {
             </label>
           </div>
 
-          <label class="prompt-search inline-label">
-            <Icon name="search" :size="14" />
-            <input
-              v-model="search"
-              type="search"
-              placeholder="搜索标题、正文或标签"
-              aria-label="搜索提示词"
-            />
-          </label>
-
-          <div class="library-tabbar" role="group" aria-label="提示词范围">
-            <button
-              v-for="item in [
-                ['all', '全部'],
-                ['favorites', '已收藏'],
-                ['deleted', '已删除'],
-              ] as const"
-              :key="item[0]"
-              type="button"
-              class="filter-tab"
-              :class="{ active: tab === item[0] }"
-              :data-tab="item[0]"
-              :aria-pressed="tab === item[0]"
-              @click="tab = item[0]"
-            >
-              <span>{{ item[1] }}</span>
-              <span class="count">{{ counts[item[0]] }}</span>
+          <div class="library-tabbar">
+            <div class="library-filters" role="group" aria-label="提示词范围">
+              <button
+                v-for="item in [
+                  ['all', '全部'],
+                  ['favorites', '已收藏'],
+                ] as const"
+                :key="item[0]"
+                type="button"
+                class="filter-tab"
+                :class="{ active: tab === item[0] }"
+                :data-tab="item[0]"
+                :aria-pressed="tab === item[0]"
+                @click="tab = item[0]"
+              >
+                <span>{{ item[1] }}</span>
+                <span class="count">{{ counts[item[0]] }}</span>
+              </button>
+            </div>
+            <button type="button" class="btn primary compact" @click="openCreate">
+              <Icon name="plus" :size="14" />新建提示词
             </button>
           </div>
 
@@ -707,16 +642,11 @@ onBeforeUnmount(() => {
                         <span class="tag-names">{{ p.tags.join(" / ") }}</span>
                         <i class="sep-dot" aria-hidden="true" />
                       </template>
-                      <time>{{
-                        formatCompactDate(
-                          tab === "deleted" ? p.deletedAt : p.updatedAt,
-                        )
-                      }}</time>
+                      <time>{{ formatCompactDate(p.updatedAt) }}</time>
                     </span>
                   </span>
                 </button>
                 <button
-                  v-if="!p.deletedAt"
                   type="button"
                   class="star-button"
                   :class="{ on: p.starred }"
@@ -727,6 +657,16 @@ onBeforeUnmount(() => {
                 >
                   <Icon name="star" :size="15" />
                 </button>
+                <button
+                  type="button"
+                  class="list-delete-button"
+                  :disabled="busyAction"
+                  :aria-label="'删除提示词 · ' + p.title"
+                  title="删除提示词"
+                  @click="removePrompt(p)"
+                >
+                  <Icon name="trash" :size="14" />
+                </button>
               </article>
             </template>
 
@@ -736,11 +676,9 @@ onBeforeUnmount(() => {
                 {{
                   isFiltering
                     ? "没有匹配的提示词"
-                    : tab === "deleted"
-                      ? "已删除为空"
-                      : tab === "favorites"
-                        ? "暂无收藏"
-                        : "还没有提示词"
+                    : tab === "favorites"
+                      ? "暂无收藏"
+                      : "还没有提示词"
                 }}
               </strong>
               <button
@@ -760,33 +698,16 @@ onBeforeUnmount(() => {
           <template v-if="selectedPrompt">
             <div class="read-intro">
               <div class="reading-tools">
-                <div class="type-label">
-                  <span class="type-mark">
-                    <Icon
-                      :name="selectedVariables.length ? 'braces' : 'paragraph'"
-                      :size="14"
-                    />
-                  </span>
-                  <span>{{
-                    selectedVariables.length ? "带变量的模板" : "纯文本提示词"
-                  }}</span>
-                </div>
-                <div class="row-actions">
-                  <span v-if="selectedPrompt.deletedAt" class="badge neutral"
-                    >已删除</span
-                  >
-                  <button
-                    v-else
-                    type="button"
-                    class="btn compact"
-                    @click="openEdit(selectedPrompt)"
-                  >
-                    <Icon name="penbox" :size="14" />
-                    <span>编辑</span>
-                  </button>
-                </div>
+                <h2 class="read-title">{{ selectedPrompt.title }}</h2>
+                <button
+                  type="button"
+                  class="btn compact"
+                  @click="openEdit(selectedPrompt)"
+                >
+                  <Icon name="penbox" :size="14" />
+                  <span>编辑</span>
+                </button>
               </div>
-              <h2 class="read-title">{{ selectedPrompt.title }}</h2>
               <div v-if="selectedPrompt.tags.length" class="tag-set">
                 <span
                   v-for="tag in selectedPrompt.tags"
@@ -800,14 +721,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="read-body">
-              <div class="body-label">
-                <Icon name="document" :size="14" />
-                <span>提示词正文</span>
-                <span class="trailing"
-                  >{{ promptCharCount(selectedPrompt.body) }} 字符</span
-                >
-              </div>
-              <article class="paper-area">
+              <article class="paper-area" aria-label="提示词正文">
                 <div class="prompt-text" data-prompt-body>
                   <template
                     v-for="(token, idx) in selectedTokens"
@@ -824,73 +738,45 @@ onBeforeUnmount(() => {
                 <span class="inline-caption">
                   <Icon name="history" :size="13" />
                   <span>更新于 {{ formatDetailTime(selectedPrompt.updatedAt) }}</span>
-                  <template v-if="selectedPrompt.deletedAt">
-                    <i class="sep-dot" aria-hidden="true" />
-                    <span>删除于 {{ formatDetailTime(selectedPrompt.deletedAt) }}</span>
-                  </template>
                 </span>
                 <span v-if="selectedVariables.length" class="inline-caption">
                   <Icon name="braces" :size="13" />
                   <span>{{ selectedVariables.length }} 个变量</span>
                 </span>
+                <span>{{ promptCharCount(selectedPrompt.body) }} 字符</span>
               </div>
             </div>
 
             <div class="foot-actions">
-              <template v-if="selectedPrompt.deletedAt">
-                <span />
-                <div class="toolbar-actions">
+              <div class="toolbar-actions">
+                <template v-if="selectedVariables.length">
                   <button
                     type="button"
-                    class="btn primary"
-                    :disabled="busyAction"
-                    @click="restorePrompt(selectedPrompt)"
-                  >
-                    <Icon name="history" :size="15" />
-                    <span>恢复提示词</span>
-                  </button>
-                </div>
-              </template>
-              <template v-else>
-                <button
-                  type="button"
-                  class="soft-danger"
-                  :disabled="busyAction"
-                  @click="removePrompt(selectedPrompt)"
-                >
-                  <Icon name="trash" :size="13" />
-                  <span>移至已删除</span>
-                </button>
-                <div class="toolbar-actions">
-                  <template v-if="selectedVariables.length">
-                    <button
-                      type="button"
-                      class="btn"
-                      @click="copyText(selectedPrompt.body, false)"
-                    >
-                      <Icon name="copy-p" :size="15" />
-                      <span>复制原文</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="btn primary"
-                      @click="openFillDialog(selectedPrompt)"
-                    >
-                      <Icon name="braces" :size="15" />
-                      <span>填写变量并复制</span>
-                    </button>
-                  </template>
-                  <button
-                    v-else
-                    type="button"
-                    class="btn primary"
+                    class="btn"
                     @click="copyText(selectedPrompt.body, false)"
                   >
                     <Icon name="copy-p" :size="15" />
-                    <span>复制提示词</span>
+                    <span>复制原文</span>
                   </button>
-                </div>
-              </template>
+                  <button
+                    type="button"
+                    class="btn primary"
+                    @click="openFillDialog(selectedPrompt)"
+                  >
+                    <Icon name="braces" :size="15" />
+                    <span>填写变量并复制</span>
+                  </button>
+                </template>
+                <button
+                  v-else
+                  type="button"
+                  class="btn primary"
+                  @click="copyText(selectedPrompt.body, false)"
+                >
+                  <Icon name="copy-p" :size="15" />
+                  <span>复制提示词</span>
+                </button>
+              </div>
             </div>
           </template>
 
@@ -903,27 +789,6 @@ onBeforeUnmount(() => {
 
     <!-- 新建与编辑模式 -->
     <template v-else>
-      <div class="page-head">
-        <div>
-          <h1>{{ editor.id ? "编辑提示词" : "新建提示词" }}</h1>
-        </div>
-        <div class="h-actions">
-          <button type="button" class="btn" :disabled="saving" @click="cancelEdit">
-            <span>取消</span>
-          </button>
-          <button
-            type="button"
-            class="btn primary"
-            :disabled="!canSaveEditor"
-            title="保存提示词（Ctrl+Enter）"
-            @click="saveDraft"
-          >
-            <Icon name="check" :size="15" />
-            <span>{{ saving ? "正在保存…" : "保存提示词" }}</span>
-          </button>
-        </div>
-      </div>
-
       <div class="edit-layout">
         <!-- 左侧表单卡片 -->
         <section class="card form-panel" aria-label="编辑提示词表单">
@@ -932,15 +797,19 @@ onBeforeUnmount(() => {
               <Icon name="penbox" :size="17" />
               编辑内容
             </h2>
-            <span class="form-status" :class="{ clean: !editorDirty }">
-              {{
-                editorDirty
-                  ? "有未保存修改"
-                  : editor.id
-                    ? "已保存"
-                    : "草稿"
-              }}
-            </span>
+            <div class="form-actions">
+              <span v-if="editorDirty" class="form-status">未保存</span>
+              <button type="button" class="btn compact" :disabled="saving" @click="cancelEdit">取消</button>
+              <button
+                type="button"
+                class="btn primary compact"
+                :disabled="!canSaveEditor"
+                title="保存提示词（Ctrl+Enter）"
+                @click="saveDraft"
+              >
+                <Icon name="check" :size="14" />{{ saving ? "正在保存…" : "保存提示词" }}
+              </button>
+            </div>
           </div>
 
           <div class="form-fields">
@@ -952,7 +821,6 @@ onBeforeUnmount(() => {
                 v-model="editor.title"
                 class="text-input"
                 maxlength="200"
-                placeholder="输入提示词标题"
               />
             </div>
 
@@ -1008,7 +876,7 @@ onBeforeUnmount(() => {
                 ref="bodyInputRef"
                 v-model="editor.body"
                 class="body-input"
-                placeholder="输入提示词正文，可用 {{变量名}} 标记可替换项…"
+                placeholder="用 {{变量名}} 标记可替换内容"
                 spellcheck="false"
               />
             </div>
@@ -1025,16 +893,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="preview-body">
-            <div class="preview-type">
-              <Icon
-                :name="editorVariables.length ? 'braces' : 'paragraph'"
-                :size="13"
-              />
-              <span>{{
-                editorVariables.length ? "带变量的模板" : "纯文本提示词"
-              }}</span>
-            </div>
-            <h3>{{ editor.title.trim() || "未命名提示词" }}</h3>
+            <h3 v-if="editor.title.trim()">{{ editor.title.trim() }}</h3>
             <div v-if="editor.tags.length" class="tag-set">
               <span
                 v-for="tag in editor.tags"
@@ -1059,15 +918,13 @@ onBeforeUnmount(() => {
                     <template v-else>{{ token.raw }}</template>
                   </template>
                 </template>
-                <span v-else class="inline-note-p">输入后实时预览</span>
               </div>
             </div>
 
             <div v-if="editorVariables.length" class="variable-footer">
               <div class="body-label">
                 <Icon name="braces" :size="13" />
-                <span>已识别变量</span>
-                <span class="trailing">共 {{ editorVariables.length }} 个</span>
+                <span>变量</span>
               </div>
               <div class="variable-tags">
                 <button

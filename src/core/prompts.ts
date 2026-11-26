@@ -6,15 +6,14 @@ import { id, now, requireText } from "./util.js";
 export class PromptsService {
   constructor(public store: Store) {}
 
-  list(deleted = false): Prompt[] {
+  list(): Prompt[] {
     return this.store
       .list<Prompt>("prompt")
-      .filter((p) => !!p.deletedAt === deleted)
-      .sort((a, b) => {
-        const left = deleted ? a.deletedAt || "" : a.updatedAt;
-        const right = deleted ? b.deletedAt || "" : b.updatedAt;
-        return Date.parse(right) - Date.parse(left) || a.id.localeCompare(b.id);
-      });
+      .sort(
+        (a, b) =>
+          Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
+          a.id.localeCompare(b.id),
+      );
   }
 
   get(promptId: string): Prompt {
@@ -51,7 +50,6 @@ export class PromptsService {
     }
 
     const original = input.id ? this.get(input.id) : undefined;
-    if (original?.deletedAt) throw new Error("此提示词已删除，请先恢复");
 
     const timestamp = now();
     const prompt: Prompt = {
@@ -69,7 +67,6 @@ export class PromptsService {
 
   star(promptId: string, starred: boolean): Prompt {
     const prompt = this.get(promptId);
-    if (prompt.deletedAt) throw new Error("此提示词已删除，请先恢复");
     const updated: Prompt = {
       ...prompt,
       starred: !!starred,
@@ -79,21 +76,7 @@ export class PromptsService {
 
   remove(promptId: string): Prompt {
     const prompt = this.get(promptId);
-    if (prompt.deletedAt) return prompt;
-    const updated: Prompt = {
-      ...prompt,
-      deletedAt: now(),
-    };
-    return this.store.set("prompt", updated.id, updated);
-  }
-
-  restore(promptId: string): Prompt {
-    const prompt = this.get(promptId);
-    if (!prompt.deletedAt) return prompt;
-    const updated: Prompt = {
-      ...prompt,
-      deletedAt: null,
-    };
-    return this.store.set("prompt", updated.id, updated);
+    this.store.delete("prompt", prompt.id);
+    return prompt;
   }
 }

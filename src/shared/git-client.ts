@@ -46,6 +46,7 @@ export interface FileComparison {
   oldText: string;
   newText: string;
   oldLabel: string;
+  oldRevision?: string;
   newLabel: string;
   token: string;
   hunks: DiffHunk[];

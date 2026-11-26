@@ -168,8 +168,9 @@ export function command(
         );
       else resolve(result);
     });
-    if (options.input) proc.stdin.end(options.input);
-    else proc.stdin.end();
+    // A command may exit with an error before it reads its input.
+    proc.stdin.on("error", () => {});
+    proc.stdin.end(options.input);
   });
 }
 export function terminateTree(pid: number): Promise<void> {

@@ -32,7 +32,7 @@ const runs = ref<
       message?: string;
     })[]
   >([]),
-  selected = ref(context.value.projectId || "refsys"),
+  selected = ref(context.value.projectId || "homeproject"),
   query = ref(""),
   group = ref(""),
   collapsedGroups = ref<Record<string, boolean>>({}),
@@ -52,7 +52,7 @@ const liveStates = ["starting", "running", "watching", "stopping", "tool-open"];
 
 const allProjects = computed(() => model.config?.projects || []);
 const groupNames = computed(() => {
-  const ordered = ["推荐官", "HomeProject"];
+  const ordered = ["HomeProject", "推荐官"];
   for (const p of allProjects.value) {
     if (p.group && !ordered.includes(p.group)) ordered.push(p.group);
   }
@@ -161,24 +161,29 @@ function primaryAction(id: string) {
   const project = model.config?.projects.find((item) => item.id === id);
   const info = run(id);
   if (!project) return null;
+  if (info?.canStop)
+    return { action: "stop", label: stopLabel(id), icon: "stop" };
   if (project.type === "wechat")
-    return { action: "wechat", label: "打开微信开发者工具" };
+    return { action: "wechat", label: "打开微信开发者工具", icon: "external" };
   if (!info) return null;
-  if (["stopped", "failed"].includes(info.state))
+  if (["stopped", "failed", "starting"].includes(info.state))
     return {
       action: "start",
       label: "启动",
-      title: "只启动此项目，不自动启动数据库或依赖服务",
+      icon: "play",
+      disabled: info.state === "starting",
+      title: info.state === "starting"
+        ? "启动中"
+        : "只启动此项目，不自动启动数据库或依赖服务",
     };
-  if (
-    project.type === "uni-wechat" &&
-    ["running", "watching", "tool-open"].includes(info.state)
-  )
-    return { action: "wechat", label: "打开微信开发者工具" };
   if (info.state === "external")
-    return { action: "ide", label: "在原工具中管理" };
+    return { action: "ide", label: "在原工具中管理", icon: "external" };
   return null;
 }
+
+const selectedAction = computed(() =>
+  selectedProject.value ? primaryAction(selectedProject.value.id) : null,
+);
 
 function shownRunMessage(info?: { state?: string; message?: string } | null) {
   const message = info?.message?.trim() || "";
@@ -478,18 +483,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="pageRoot" class="projects-page">
-    <div class="page-head">
-      <div>
-        <h1>项目管理</h1>
-      </div>
-      <div v-if="runningCount" class="h-actions">
-        <span class="badge live">
-          <i class="dot" />
-          {{ runningCount }} 个运行中
-        </span>
-      </div>
-    </div>
-
     <div class="duo project-layout">
       <!-- 左侧项目列表卡片 -->
       <section class="card pane">
@@ -499,6 +492,9 @@ onBeforeUnmount(() => {
             <h2>项目列表</h2>
             <span class="count">{{ allProjects.length }}</span>
           </div>
+          <span v-if="runningCount" class="badge live">
+            <i class="dot" />{{ runningCount }} 个运行中
+          </span>
         </div>
 
         <div class="project-filter">
@@ -583,8 +579,13 @@ onBeforeUnmount(() => {
                     :aria-label="`${stopLabel(p.id)} ${p.name}`"
                     @click="runAction('stop', p.id)"
                   >
-                    <Icon name="stop" :size="12" />
+                    <Icon name="stop" :size="15" />
                   </button>
+                  <span
+                    v-else-if="run(p.id)?.state === 'starting'"
+                    class="spinner"
+                    title="启动中"
+                  />
                   <button
                     v-else-if="primaryAction(p.id)?.action === 'start'"
                     type="button"
@@ -594,7 +595,7 @@ onBeforeUnmount(() => {
                     :aria-label="`启动 ${p.name}`"
                     @click="runAction('start', p.id)"
                   >
-                    <Icon name="play-mini" :size="12" />
+                    <Icon name="play" :size="15" />
                   </button>
                   <button
                     v-else-if="primaryAction(p.id)?.action === 'ide'"
@@ -607,11 +608,6 @@ onBeforeUnmount(() => {
                   >
                     <Icon name="external" :size="12" />
                   </button>
-                  <span
-                    v-else-if="run(p.id)?.state === 'starting'"
-                    class="spinner"
-                    title="启动中"
-                  />
                 </div>
               </div>
             </template>
@@ -645,7 +641,7 @@ onBeforeUnmount(() => {
                 </span>
               </div>
               <div class="service-trace">
-                {{ selectedProject.group }}　/　{{ types[selectedProject.type] }}
+                {{ selectedProject.group }}
                 <template v-if="current?.port"
                   >　·　端口 {{ current.port }}</template
                 >
@@ -654,33 +650,21 @@ onBeforeUnmount(() => {
 
             <div class="service-header-actions">
               <button
-                v-if="
-                  primaryAction(selectedProject.id) &&
-                  primaryAction(selectedProject.id)!.action !== 'start'
-                "
+                v-if="selectedAction"
                 type="button"
                 class="btn"
-                :disabled="busy === selectedProject.id"
-                :title="primaryAction(selectedProject.id)?.title"
-                @click="
-                  runAction(
-                    primaryAction(selectedProject.id)!.action,
-                    selectedProject.id,
-                  )
-                "
+                :class="{
+                  'light-brand': selectedAction.action === 'start',
+                  stop: selectedAction.action === 'stop',
+                  'service-listener-action':
+                    selectedProject.type === 'uni-wechat' && selectedAction.icon !== 'external',
+                }"
+                :disabled="busy === selectedProject.id || selectedAction.disabled"
+                :title="selectedAction.title"
+                @click="runAction(selectedAction.action, selectedProject.id)"
               >
-                <Icon name="external" :size="14" />
-                {{ primaryAction(selectedProject.id)!.label }}
-              </button>
-              <button
-                v-if="primaryAction(selectedProject.id)?.action === 'start'"
-                type="button"
-                class="btn light-brand"
-                :disabled="busy === selectedProject.id"
-                :title="primaryAction(selectedProject.id)?.title"
-                @click="runAction('start', selectedProject.id)"
-              >
-                <Icon name="play-mini" :size="13" />启动
+                <Icon :name="selectedAction.icon" :size="selectedAction.icon === 'external' ? 14 : 16" />
+                {{ selectedAction.label }}
               </button>
               <button
                 type="button"
@@ -691,10 +675,7 @@ onBeforeUnmount(() => {
                 <Icon name="code" :size="15" />代码编辑
               </button>
               <button
-                v-if="
-                  selectedProject.type === 'uni-wechat' &&
-                  primaryAction(selectedProject.id)?.action !== 'wechat'
-                "
+                v-if="selectedProject.type === 'uni-wechat'"
                 type="button"
                 class="btn"
                 :disabled="
@@ -707,7 +688,7 @@ onBeforeUnmount(() => {
               <button
                 v-if="
                   !['wechat', 'uni-wechat'].includes(selectedProject.type) &&
-                  primaryAction(selectedProject.id)?.action !== 'ide'
+                  selectedAction?.action !== 'ide'
                 "
                 type="button"
                 class="btn"
@@ -715,17 +696,6 @@ onBeforeUnmount(() => {
                 @click="runAction('ide', selectedProject.id)"
               >
                 <Icon name="external" :size="14" />打开 IDE
-              </button>
-              <button
-                v-if="current?.canStop"
-                type="button"
-                class="btn stop"
-                :disabled="busy === selectedProject.id"
-                @click="runAction('stop', selectedProject.id)"
-              >
-                <Icon name="stop" :size="12" />{{
-                  stopLabel(selectedProject.id)
-                }}
               </button>
             </div>
           </div>
@@ -756,7 +726,7 @@ onBeforeUnmount(() => {
 
             <div class="fact">
               <div class="fact-label">
-                <Icon name="branch2" :size="12" />当前分支
+                <Icon name="branch2" :size="12" />分支
               </div>
               <div class="fact-value">
                 <span class="mono" :title="current?.branch">{{

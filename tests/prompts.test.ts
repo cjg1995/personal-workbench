@@ -86,7 +86,7 @@ test("标签规范化：去首尾空格、去空项、忽略大小写去重并�
   );
 });
 
-test("提示词存储：正文保留缩进与空白、标题校验、收藏/删除/恢复保留原编辑时间、排序与重启持久", async () => {
+test("提示词存储：保留正文空白，收藏保留编辑时间，删除永久移除并在重启后生效", async () => {
   const f = fixture();
   try {
     // 空白标题与空白正文均拒绝
@@ -110,7 +110,6 @@ test("提示词存储：正文保留缩进与空白、标题校验、收藏/删�
     assert.equal(created.body, multilineBody);
     assert.deepEqual(created.tags, ["开发", "git"]);
     assert.equal(created.starred, false);
-    assert.equal(created.deletedAt, null);
 
     // 等待数毫秒确保若时间戳被误改可检出
     await new Promise((r) => setTimeout(r, 15));
@@ -120,29 +119,6 @@ test("提示词存储：正文保留缩进与空白、标题校验、收藏/删�
     assert.equal(starred.starred, true);
     assert.equal(starred.updatedAt, created.updatedAt);
     assert.equal(starred.body, multilineBody);
-
-    // 软删除不改变 updatedAt、收藏状态和正文
-    const removed = f.prompts.remove(created.id);
-    assert.ok(removed.deletedAt);
-    assert.equal(removed.updatedAt, created.updatedAt);
-    assert.equal(removed.starred, true);
-    assert.equal(removed.body, multilineBody);
-    assert.equal(f.prompts.list(false).length, 0);
-    assert.equal(f.prompts.list(true).length, 1);
-
-    // 已删除状态禁止直接编辑或收藏
-    assert.throws(
-      () => f.prompts.save({ id: created.id, title: "新", body: "新" }),
-      /已删除/,
-    );
-    assert.throws(() => f.prompts.star(created.id, false), /已删除/);
-
-    // 恢复不改变 updatedAt、收藏状态和正文
-    const restored = f.prompts.restore(created.id);
-    assert.equal(restored.deletedAt, null);
-    assert.equal(restored.updatedAt, created.updatedAt);
-    assert.equal(restored.starred, true);
-    assert.equal(restored.body, multilineBody);
 
     // 编辑保留 id / createdAt / starred，更新 updatedAt
     await new Promise((r) => setTimeout(r, 15));
@@ -157,21 +133,22 @@ test("提示词存储：正文保留缩进与空白、标题校验、收藏/删�
     assert.equal(edited.starred, true);
     assert.notEqual(edited.updatedAt, created.updatedAt);
 
-    // 排序：正常按 updatedAt 倒序，删除按 deletedAt 倒序
+    // 列表按正文编辑时间倒序
     await new Promise((r) => setTimeout(r, 15));
     const second = f.prompts.save({ title: "较新提示词", body: "正文2" });
     assert.deepEqual(
-      f.prompts.list(false).map((p) => p.id),
+      f.prompts.list().map((p) => p.id),
       [second.id, edited.id],
     );
 
-    f.prompts.remove(second.id);
-    await new Promise((r) => setTimeout(r, 15));
-    f.prompts.remove(edited.id);
-    assert.deepEqual(
-      f.prompts.list(true).map((p) => p.id),
-      [edited.id, second.id],
+    assert.equal(f.prompts.remove(second.id).id, second.id);
+    assert.equal(f.store.get("prompt", second.id), undefined);
+    assert.deepEqual(f.prompts.list(), [edited]);
+    assert.throws(
+      () => f.prompts.save({ id: second.id, title: "新", body: "新" }),
+      /不存在/,
     );
+    assert.throws(() => f.prompts.star(second.id, false), /不存在/);
 
     // 重启打开后数据完整
     f.store.close();
@@ -179,7 +156,7 @@ test("提示词存储：正文保留缩进与空白、标题校验、收藏/删�
     const reopenedService = new PromptsService(reopened);
     assert.equal(reopenedService.get(edited.id).body, multilineBody + "追加一行");
     assert.equal(reopenedService.get(edited.id).starred, true);
-    assert.ok(reopenedService.get(edited.id).deletedAt);
+    assert.throws(() => reopenedService.get(second.id), /不存在/);
     reopened.close();
   } finally {
     try {
@@ -188,7 +165,7 @@ test("提示词存储：正文保留缩进与空白、标题校验、收藏/删�
   }
 });
 
-test("备份与恢复完整保留提示词状态；兼容不含提示词数据的旧备份；拒绝损坏提示词备份", async () => {
+test("备份恢复保留现存提示词，兼容无提示词的旧备份并拒绝损坏的提示词数据", async () => {
   const f = fixture();
   try {
     const active = f.prompts.save({
@@ -197,23 +174,23 @@ test("备份与恢复完整保留提示词状态；兼容不含提示词数据�
       tags: ["周报", "工作总结"],
     });
     f.prompts.star(active.id, true);
-    const trashed = f.prompts.save({
-      title: "待恢复提示词",
+    const removed = f.prompts.save({
+      title: "备份前删除的提示词",
       body: "旧正文",
       tags: ["归档"],
     });
-    f.prompts.remove(trashed.id);
+    f.prompts.remove(removed.id);
 
     const backupZip = path.join(f.dir, "with-prompts.zip");
     const created = await f.backup.create(backupZip);
-    assert.equal(created.manifest.counts.prompt, 2);
+    assert.equal(created.manifest.counts.prompt, 1);
 
     // 修改当前数据后恢复备份
     f.prompts.save({ id: active.id, title: "已被改动", body: "改后正文" });
-    f.prompts.restore(trashed.id);
+    f.prompts.save({ title: "备份后新增", body: "新正文" });
 
     const preview = f.backup.preview(backupZip);
-    assert.equal(preview.counts.prompt, 2);
+    assert.equal(preview.counts.prompt, 1);
     assert.equal(preview.currentCounts.prompt, 2);
 
     await f.backup.restore(preview.token);
@@ -222,11 +199,8 @@ test("备份与恢复完整保留提示词状态；兼容不含提示词数据�
     assert.equal(restoredActive.body, "为{{汇报对象}}写周报\n  缩进行");
     assert.deepEqual(restoredActive.tags, ["周报", "工作总结"]);
     assert.equal(restoredActive.starred, true);
-    assert.equal(restoredActive.deletedAt, null);
-
-    const restoredTrashed = f.prompts.get(trashed.id);
-    assert.ok(restoredTrashed.deletedAt);
-    assert.equal(restoredTrashed.body, "旧正文");
+    assert.deepEqual(f.prompts.list(), [restoredActive]);
+    assert.equal(f.store.get("prompt", removed.id), undefined);
 
     // 构造旧版本备份（无 prompt 记录且 manifest.counts 缺少 prompt 字段）
     const legacyDir = path.join(f.dir, "legacy");
@@ -258,8 +232,7 @@ test("备份与恢复完整保留提示词状态；兼容不含提示词数据�
     assert.equal(legacyPreview.counts.note, 1);
 
     await f.backup.restore(legacyPreview.token);
-    assert.equal(f.prompts.list(false).length, 0);
-    assert.equal(f.prompts.list(true).length, 0);
+    assert.equal(f.prompts.list().length, 0);
     assert.equal(f.records.get(legacyNote.id).text, "旧备份工作记录");
 
     // 验证损坏的 prompt 记录会被 Store.inspect 拦截
@@ -281,5 +254,51 @@ test("备份与恢复完整保留提示词状态；兼容不含提示词数据�
     try {
       f.store.close();
     } catch {}
+  }
+});
+
+test("升级和旧备份恢复时清理历史删除标记，保留现存提示词和记录", async () => {
+  const f = fixture();
+  try {
+    const prompt = f.prompts.save({ title: "保留提示词", body: "现存正文" });
+    const note = f.records.save({ kind: "work", text: "保留工作记录" });
+    const deletedAt = new Date().toISOString();
+    f.store.set("prompt", prompt.id, { ...prompt, deletedAt: null });
+    f.store.set("prompt", "old-prompt", {
+      ...prompt,
+      id: "old-prompt",
+      deletedAt,
+    });
+    f.store.set("note", "old-note", { ...note, id: "old-note", deletedAt });
+
+    const file = path.join(f.dir, "old-deleted-entries.zip");
+    const { manifest } = await f.backup.create(file);
+    const archive = unzipSync(fs.readFileSync(file));
+    archive["manifest.json"] = strToU8(
+      JSON.stringify({ ...manifest, counts: f.store.counts() }),
+    );
+    fs.writeFileSync(file, zipSync(archive));
+
+    const reopened = new Store(f.dbPath);
+    try {
+      assert.equal(reopened.get("prompt", "old-prompt"), undefined);
+      assert.equal(reopened.get("note", "old-note"), undefined);
+    } finally {
+      reopened.close();
+    }
+
+    const preview = f.backup.preview(file);
+    assert.equal(preview.manifest.counts.prompt, 2);
+    assert.equal(preview.manifest.counts.note, 2);
+    assert.equal(preview.counts.prompt, 1);
+    assert.equal(preview.counts.note, 1);
+    const restored = await f.backup.restore(preview.token);
+    assert.deepEqual(restored.counts, preview.counts);
+    assert.equal(f.store.get("prompt", "old-prompt"), undefined);
+    assert.equal(f.store.get("note", "old-note"), undefined);
+    assert.deepEqual(f.prompts.get(prompt.id), { ...prompt, deletedAt: null });
+    assert.deepEqual(f.records.get(note.id), note);
+  } finally {
+    f.store.close();
   }
 });

@@ -88,6 +88,15 @@ async function readClipboard() {
   return application.evaluate(({ clipboard }) => clipboard.readText());
 }
 
+async function confirmPromptDeletion(page, title) {
+  await page.getByRole("button", { name: "删除提示词 · " + title, exact: true }).click();
+  await page
+    .locator(".ui-msg-dialog[open]")
+    .getByRole("button", { name: "删除这条提示词" })
+    .click();
+  await page.getByRole("status").filter({ hasText: "提示词已删除" }).waitFor();
+}
+
 (async () => {
   try {
     // =========================================================================
@@ -283,7 +292,7 @@ async function readClipboard() {
     await page.getByLabel("按标签筛选").selectOption("");
     await page.locator('.filter-tab[data-tab="all"]').click();
 
-    // Edit prompt + delete + restore + verify counts and selection
+    // Edit a prompt and verify the selection, then permanently delete it
     await page.locator(".prompt-row", { hasText: "会议行动项整理" }).click();
     await page.getByRole("button", { name: "编辑", exact: true }).click();
     await page.locator("#prompt-edit-title").fill("会议行动项整理（已更新）");
@@ -295,49 +304,50 @@ async function readClipboard() {
       "edited prompt remains selected after save",
     );
 
-    // Delete with confirmation dialog
-    await page.getByRole("button", { name: "移至已删除" }).click();
-    await page
-      .locator(".ui-msg-dialog")
-      .getByRole("button", { name: "移至已删除" })
-      .click();
-    await page.getByRole("status").filter({ hasText: "已移至已删除" }).waitFor();
+    const deletedTitle = "会议行动项整理（已更新）";
+    const deletedId = (await api(page, "bootstrap")).prompts.find(
+      (p) => p.title === deletedTitle,
+    ).id;
+    await page.getByRole("button", { name: "查看 多行代码审查", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("提示词详情").getByRole("button", { name: /删除提示词/ }).count(),
+      0,
+    );
+    await page.getByRole("button", { name: "删除提示词 · " + deletedTitle, exact: true }).click();
+    const deleteDialog = page.locator(".ui-msg-dialog[open]");
+    await deleteDialog.getByText(/永久移除/).waitFor();
+    await deleteDialog.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(
+      (await page.locator(".read-title").innerText()).trim(),
+      "多行代码审查",
+    );
+    await confirmPromptDeletion(page, deletedTitle);
     await until(
       async () =>
         (await page.locator('.filter-tab[data-tab="all"] .count').innerText()).trim() ===
-          "1" &&
-        (
-          await page.locator('.filter-tab[data-tab="deleted"] .count').innerText()
-        ).trim() === "1",
+          "1",
       "counts updated after delete",
     );
     assert.equal(
       (await page.locator(".read-title").innerText()).trim(),
       "多行代码审查",
-      "remaining prompt auto-selected after delete",
+      "deleting another row keeps the current detail",
     );
 
-    // Restore from deleted tab
-    await page.locator('.filter-tab[data-tab="deleted"]').click();
-    await page
-      .locator(".prompt-row", { hasText: "会议行动项整理（已更新）" })
-      .waitFor();
-    await page.getByRole("button", { name: "恢复提示词" }).click();
-    await page.getByRole("status").filter({ hasText: "提示词已恢复" }).waitFor();
-    await until(
-      async () =>
-        (await page.locator('.filter-tab[data-tab="all"] .count').innerText()).trim() ===
-          "2" &&
-        (
-          await page.locator('.filter-tab[data-tab="deleted"] .count').innerText()
-        ).trim() === "0",
-      "counts updated after restore",
+    assert.deepEqual(
+      await page.locator(".filter-tab").evaluateAll((tabs) =>
+        tabs.map((tab) => tab.dataset.tab),
+      ),
+      ["all", "favorites"],
     );
-    assert.equal(
-      (await page.locator(".read-title").innerText()).trim(),
-      "会议行动项整理（已更新）",
-      "restored prompt selected in all tab",
+    assert.ok(
+      !(await api(page, "bootstrap")).prompts.some((p) => p.id === deletedId),
     );
+    const restore = await page.evaluate(
+      (id) => window.workbench.call("prompt.restore", { id }),
+      deletedId,
+    );
+    assert.equal(restore.ok, false);
 
     // 3 & 4. Scenarios 3 & 4: {{项目名称}} + {{ 项目名称 }}, insert variable, click variable locate,
     //    tricky value with newline + $& + <文本> + {{保留原样}}, clipboard verification, transient clear, raw copy
@@ -541,7 +551,7 @@ async function readClipboard() {
     // 5c. Leave guard on navigation AND window close
     await page.getByRole("button", { name: "编辑", exact: true }).click();
     await page.locator("#prompt-edit-title").fill("未保存的新标题");
-    await page.getByText("有未保存修改").waitFor();
+    await page.locator(".form-status").filter({ hasText: /^未保存$/ }).waitFor();
 
     // Try navigating to 工作记录 -> confirm dialog appears -> cancel stays on editor
     await nav(page, "工作记录");
@@ -579,48 +589,19 @@ async function readClipboard() {
     await page.waitForSelector('[data-page="settings"]', { timeout: 10000 });
 
     // 5d. Backup & Restore through Settings UI + legacy backup compatibility
-    // Soft-delete one prompt so backup has active + starred + deleted states
-    await nav(page, "提示词库");
-    await page.locator(".prompt-row", { hasText: "超长提示词滚动验证" }).click();
-    await page.getByRole("button", { name: "移至已删除" }).click();
-    await page
-      .locator(".ui-msg-dialog[open]")
-      .getByRole("button", { name: "移至已删除" })
-      .click();
-    await until(
-      async () =>
-        (
-          await page.locator('.filter-tab[data-tab="deleted"] .count').innerText()
-        ).trim() === "1",
-      "one prompt in deleted tab before backup",
-    );
-
     const backupFile = path.join(runDir, "prompts-backup.zip");
     await application.evaluate(({ dialog }, file) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
     }, backupFile);
 
-    await page.getByRole("button", { name: "设置", exact: true }).click();
-    await page.waitForSelector('[data-page="settings"]');
     await page.getByRole("button", { name: "创建备份" }).click();
     await until(() => fs.existsSync(backupFile), "backup zip created");
 
     // Mutate prompts after backup (delete another prompt)
     await nav(page, "提示词库");
     await page.locator(".prompt-row", { hasText: "双占位符与特殊值测试" }).click();
-    await page.getByRole("button", { name: "移至已删除" }).click();
-    await page
-      .locator(".ui-msg-dialog[open]")
-      .getByRole("button", { name: "移至已删除" })
-      .click();
-    await until(
-      async () =>
-        (
-          await page.locator('.filter-tab[data-tab="deleted"] .count').innerText()
-        ).trim() === "2",
-      "two deleted prompts after mutation",
-    );
+    await confirmPromptDeletion(page, "双占位符与特殊值测试");
 
     // Preview & Restore via Settings UI
     await page.getByRole("button", { name: "设置", exact: true }).click();
@@ -632,7 +613,7 @@ async function readClipboard() {
       .allInnerTexts();
     assert.deepEqual(
       promptRowCells.map((s) => s.trim()),
-      ["提示词", "4", "4"],
+      ["提示词", "2", "3"],
       "backup preview displays prompt counts",
     );
     await page.getByRole("button", { name: "保留当前备份并恢复此数据" }).click();
@@ -642,7 +623,7 @@ async function readClipboard() {
       .click();
     await page.getByRole("status").filter({ hasText: "恢复完成" }).waitFor();
 
-    // Verify prompts restored cleanly with active/starred/deleted states intact
+    // Restore the prompts present in the backup, including their favorites
     await nav(page, "提示词库");
     await until(
       async () =>
@@ -650,11 +631,11 @@ async function readClipboard() {
           "3" &&
         (
           await page.locator('.filter-tab[data-tab="favorites"] .count').innerText()
-        ).trim() === "1" &&
-        (
-          await page.locator('.filter-tab[data-tab="deleted"] .count').innerText()
         ).trim() === "1",
-      "prompt active/starred/deleted counts restored",
+      "prompt and favorite counts restored",
+    );
+    assert.ok(
+      !(await api(page, "bootstrap")).prompts.some((p) => p.id === deletedId),
     );
 
     // Legacy backup (genuine v0.1.71 structure: config + note, NO prompt records, manifest.counts lacks prompt) via Settings UI
@@ -736,7 +717,7 @@ async function readClipboard() {
       .allInnerTexts();
     assert.deepEqual(
       legacyRowCells.map((s) => s.trim()),
-      ["提示词", "4", "0"],
+      ["提示词", "3", "0"],
       "legacy backup preview reports 0 prompts",
     );
     await page.getByRole("button", { name: "保留当前备份并恢复此数据" }).click();

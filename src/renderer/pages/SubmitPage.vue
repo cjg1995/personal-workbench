@@ -227,10 +227,11 @@ async function cancel() {
   <p v-if="tab === 'referrer' && !isBackend" class="inline-note">
     {{
       policy.kind === 'app' && policy.branch === 'main'
-          ? '后台管理前端仅允许在 main 分支提交并推送到 origin/main。'
-          : '推荐官小程序仅允许在 dev 分支提交，config.js 按本地测试配置保护并恢复，不纳入提交。'
+          ? '仅允许在 main 分支提交并推送到 origin/main。'
+          : '仅允许在 dev 分支提交。'
     }}
   </p>
+  <p v-if="configFile" class="inline-note">{{ configFile }} 在更新前备份，更新后恢复，提交时排除。</p>
   </section>
   <section v-if="effective" class="submit-flow">
     <h3 class="visually-hidden">{{ isBackend ? '执行流程与分支去向' : '提交流程' }}</h3>
@@ -240,7 +241,6 @@ async function cancel() {
     <p v-if="isBackend" class="path" :title="effective.testPath || '在当前目录切换到 test，完成后停留；冲突保留给 IDEA 处理'">
       {{ effective.testPath ? 'test 目录 ' + effective.testPath : '当前目录切换到 test，完成后停留' }}
     </p>
-    <p v-if="configFile" class="small">{{ configFile }} 受保护，不纳入提交</p>
   </section>
   </div>
   <template v-if="task && task.state !== 'awaiting'"
@@ -313,7 +313,7 @@ async function cancel() {
         </div>
         <p v-if="files.length > 200" class="small muted">
           已显示 {{ Math.min(fileLimit, files.length) }} /
-          {{ files.length }} 个文件，可按路径搜索。
+          {{ files.length }} 个文件
         </p>
         <button
           v-if="files.length > fileLimit"
@@ -345,12 +345,11 @@ async function cancel() {
   <div v-else class="empty">
     <span class="empty-icon"><Icon name="branch" :size="16" /></span>
     <p class="empty-title">尚未检查仓库</p>
-    <p class="empty-hint">检查只读取状态，不会提交或推送。</p>
   </div>
   </div>
   <footer v-if="effective && (!task || task.state === 'awaiting')" class="submit-footer">
     <label class="submit-footer-message">
-      提交说明<textarea v-model="message" rows="2" placeholder="填写本次提交说明…" />
+      提交说明<textarea v-model="message" rows="2" />
     </label>
     <div class="submit-footer-controls">
       <p class="small muted">将提交 {{ effective.files.filter((f) => f.included).length }} 个文件 · 已有未推送提交 {{ effective.ahead }} 个</p>

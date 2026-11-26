@@ -30,13 +30,28 @@ async function edges() {
   assert.ok(Math.abs(a.x - original.x) < 2);
   assert.ok(Math.abs(b.x + b.width - (modified.x + modified.width)) < 2);
   assert.ok(Math.abs(b.x + b.width - (host.x + host.width)) < 2, "no extra track at right");
-  assert.equal(a.width, 14); assert.equal(b.width, 14);
+  assert.equal(a.width, 9); assert.equal(b.width, 14);
   const natives = await diff.locator(".diff-editor .scrollbar.vertical").evaluateAll((nodes) => nodes.filter((node) => {
     const style = getComputedStyle(node), box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0 && Number(style.opacity) > 0 && style.visibility !== "hidden";
   }).length);
   assert.equal(natives, 0, "no native scrollbars in middle or right");
 }
-async function synced() { await until(async () => Math.abs(await value(left()) - await value(right())) < 3, "both panes aligned"); }
+async function synced() {
+  await until(() => diff.evaluate(() => {
+    const center = (side) => {
+      const gutter = document.querySelector(`.idea-${side}-gutter`);
+      const box = gutter.getBoundingClientRect(), y = box.top + box.height / 2;
+      return Number([...gutter.children].find(node => {
+        const row = node.getBoundingClientRect();
+        return row.top <= y && row.bottom > y;
+      })?.textContent);
+    };
+    const a = center("original"), b = center("modified");
+    const hasInsertion = document.querySelector(".diff-current-path").textContent === "a.java";
+    const corresponding = !hasInsertion || b < 221 ? b : b < 246 ? 221 : b - 25;
+    return Math.abs(a - corresponding) <= 1;
+  }), "matching source lines at viewport center");
+}
 (async () => {
   try {
     git("init", "-b", "dev"); git("config", "user.name", "Scrollbar QA"); git("config", "user.email", "scroll@example.invalid"); git("config", "core.autocrlf", "false"); git("config", "commit.gpgsign", "false");
@@ -80,14 +95,14 @@ async function synced() { await until(async () => Math.abs(await value(left()) -
     await left().focus(); await diff.keyboard.press("Home"); await synced();
     const glyph = diff.locator(".git-revert-glyph:not(.git-revert-disabled)").first(); await glyph.hover();
     const icon = await glyph.evaluate((element) => { const css = getComputedStyle(element, "::before"), box = element.getBoundingClientRect(); const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2); return { width: css.width, height: css.height, image: css.backgroundImage, border: css.borderStyle, clickable: target === element || element.contains(target) }; });
-    assert.equal(icon.width, "20px"); assert.equal(icon.height, "20px"); assert.equal(icon.border, "solid"); assert.ok(icon.image.includes("svg")); assert.ok(icon.clickable);
+    assert.equal(icon.width, "16px"); assert.equal(icon.height, "16px"); assert.equal(icon.border, "none"); assert.ok(icon.image.includes("svg")); assert.ok(icon.clickable);
     await capture("03-visible-revert"); await glyph.click();
     await until(() => read("a.java").includes("LINE_20 = 20;") && read("a.java").includes("LINE_120 = 12000;"), "central revert works");
     await until(() => diff.getByTitle("刷新（F5）").isEnabled(), "revert saved");
     assert.deepEqual(fs.readFileSync(path.join(repo, ".git/index")), index); await edges();
-    checks.push("中央 Revert 为 20×20 双箭头，带边框及悬停反馈，无遮挡且真实点击只回滚对应块");
+    checks.push("中央回退图标可点击，修改块只回退对应代码");
 
-    const sash = diff.locator(".monaco-diff-editor > .monaco-sash.vertical").first();
+    const sash = diff.getByRole("separator", { name: "调整对比栏宽度" });
     const sashBounds = await sash.boundingBox();
     await diff.mouse.move(sashBounds.x + sashBounds.width / 2, sashBounds.y + 180); await diff.mouse.down(); await diff.mouse.move(sashBounds.x + 100, sashBounds.y + 180, { steps: 8 }); await diff.mouse.up();
     await edges();

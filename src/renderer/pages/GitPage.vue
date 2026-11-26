@@ -36,6 +36,7 @@ import Icon from "../components/Icon.vue";
 import VirtualFiles from "../components/VirtualFiles.vue";
 import CommitGraph from "../components/CommitGraph.vue";
 import GitCommitPanel from "../components/GitCommitPanel.vue";
+import { useGitCommitDraft } from "../git-commit-draft";
 import SubmitPage from "./SubmitPage.vue";
 import CloseButton from "../components/CloseButton.vue";
 
@@ -55,7 +56,7 @@ const query = ref(""),
   sort = ref("path"),
   selected = ref(""),
   checked = ref<string[]>([]),
-  message = ref(""),
+  message = useGitCommitDraft(projectId),
   amend = ref(false),
   moreOpsOpen = ref(false);
 const commitOpen = ref(false),
@@ -818,7 +819,6 @@ watch(projectId, () => {
   appliedLogFile.value = "";
   logLoading.value = false;
   output.value = "";
-  message.value = "";
   amend.value = false;
   dialog.value = "";
   commitOpen.value = false;
@@ -882,51 +882,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="pageRoot" class="git-page">
-    <!-- 顶部标题与远程同步操作 -->
-    <div class="page-head">
-      <div>
-        <h1>Git 管理</h1>
-      </div>
-      <div class="h-actions">
-        <span class="button-group">
-          <button
-            type="button"
-            :disabled="repositoryBusy"
-            @click="execute('fetch')"
-          >
-            <Icon name="refresh" :size="14" />Fetch
-          </button>
-          <button
-            type="button"
-            :disabled="repositoryBusy"
-            @click="open('pull')"
-          >
-            <Icon name="pull" :size="14" />Pull
-          </button>
-          <button
-            type="button"
-            :disabled="repositoryBusy"
-            @click="open('push')"
-          >
-            <Icon name="push" :size="14" />Push
-          </button>
-        </span>
-        <button
-          type="button"
-          class="btn primary"
-          :disabled="
-            !canSubmit || busy || (repositoryBusy && !activeSubmitTask)
-          "
-          :title="
-            canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'
-          "
-          @click="openSubmit()"
-        >
-          <Icon name="merge" :size="15" />一键提测
-        </button>
-      </div>
-    </div>
-
     <!-- 仓库 / 分支 / 上游同步上下文条 -->
     <div class="repo-bar card">
       <div class="repo-block">
@@ -948,7 +903,7 @@ onBeforeUnmount(() => {
       <div class="vdiv" aria-hidden="true" />
 
       <div class="git-quick-branch" @click.stop>
-        <div class="context-label">当前分支</div>
+        <div class="context-label">分支</div>
         <button
           ref="quickBranchButton"
           type="button"
@@ -1038,12 +993,11 @@ onBeforeUnmount(() => {
                 @mouseenter="quickBranchIndex = index"
                 @click="chooseQuickBranch(branch)"
               >
-                <Icon name="branch2" :size="14" />
+                <Icon :name="branch.current ? 'check' : 'branch2'" :size="14" />
                 <span>
                   {{ branch.name }}
                   <small v-if="branch.upstream">{{ branch.upstream }}</small>
                 </span>
-                <strong v-if="branch.current">当前</strong>
               </button>
             </template>
             <p
@@ -1159,35 +1113,51 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- 标签页栏 -->
-    <div class="repo-tabs git-tabs" role="tablist" aria-label="Git 功能">
-      <button
-        v-for="item in [
-          ['changes', '本地变更', 'changes'],
-          ['log', 'Git Log', 'history'],
-          ['branches', '分支', 'branch2'],
-          ['stash', 'Stash', 'stash'],
-        ]"
-        :key="item[0]"
-        type="button"
-        class="tab"
-        role="tab"
-        :aria-selected="tab === item[0]"
-        :class="{ active: tab === item[0], current: tab === item[0] }"
-        @click="tab = item[0]"
-      >
-        <Icon :name="item[2]" :size="14" />
-        <span>{{ item[1] }}</span>
-        <span
-          v-if="item[0] === 'changes'"
-          class="count"
-          aria-hidden="true"
-          >{{ totalVisibleChanges }}</span
+    <div class="repo-tabs">
+      <div class="git-tabs" role="tablist" aria-label="Git 功能">
+        <button
+          v-for="item in [
+            ['changes', '本地变更', 'changes'],
+            ['log', 'Git Log', 'history'],
+            ['branches', '分支', 'branch2'],
+            ['stash', 'Stash', 'stash'],
+          ]"
+          :key="item[0]"
+          type="button"
+          class="tab"
+          role="tab"
+          :aria-selected="tab === item[0]"
+          :class="{ active: tab === item[0], current: tab === item[0] }"
+          @click="tab = item[0]"
         >
-      </button>
-      <span v-if="busy" class="upstream">
-        <span>Git 操作执行中…</span>
-      </span>
+          <Icon :name="item[2]" :size="14" />
+          <span>{{ item[1] }}</span>
+          <span v-if="item[0] === 'changes'" class="count" aria-hidden="true">{{ totalVisibleChanges }}</span>
+        </button>
+      </div>
+      <div class="git-sync-actions">
+        <span v-if="busy" class="git-sync-status" role="status">Git 操作执行中…</span>
+        <span class="button-group" role="group" aria-label="远程同步">
+          <button type="button" :disabled="repositoryBusy" @click="execute('fetch')">
+            <Icon name="refresh" :size="14" />Fetch
+          </button>
+          <button type="button" :disabled="repositoryBusy" @click="open('pull')">
+            <Icon name="pull" :size="14" />Pull
+          </button>
+          <button type="button" :disabled="repositoryBusy" @click="open('push')">
+            <Icon name="push" :size="14" />Push
+          </button>
+        </span>
+        <button
+          type="button"
+          class="btn primary compact"
+          :disabled="!canSubmit || busy || (repositoryBusy && !activeSubmitTask)"
+          :title="canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'"
+          @click="openSubmit()"
+        >
+          <Icon name="merge" :size="14" />一键提测
+        </button>
+      </div>
     </div>
 
     <!-- 错误提示条 -->
@@ -1296,8 +1266,6 @@ onBeforeUnmount(() => {
           class="selection-row"
           @click.stop
         >
-          <span v-if="checked.length">已勾选 {{ checked.length }} 项</span>
-          <span class="push" />
           <div class="git-ops-wrap">
             <button
               type="button"
@@ -1564,13 +1532,13 @@ onBeforeUnmount(() => {
           v-for="branch in filteredBranches"
           :key="branch.name"
           class="git-branch-row"
+          :aria-current="branch.current ? 'true' : undefined"
         >
-          <Icon name="branch2" :size="16" />
+          <Icon :name="branch.current ? 'check' : 'branch2'" :size="16" />
           <div class="git-branch-name">
             <strong>
               {{ branch.name }}
-              <span v-if="branch.current" class="badge brand">当前</span>
-              <span v-else class="badge neutral">{{
+              <span v-if="!branch.current" class="badge neutral">{{
                 branch.remote ? "远程" : "本地"
               }}</span>
             </strong>
@@ -1917,7 +1885,6 @@ onBeforeUnmount(() => {
           <CloseButton label="关闭" :disabled="busy" @click="dialog = ''" />
         </div>
         <p class="git-help">
-          当前项目
           {{ model.config?.projects.find((p) => p.id === projectId)?.name }} ·
           {{ state?.branch }}
         </p>

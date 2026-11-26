@@ -16,9 +16,10 @@ delete env.ELECTRON_RUN_AS_NODE;
 let application;
 const errors = [];
 async function launch() {
+  const installed = process.env.PWB_TEST_EXE;
   application = await _electron.launch({
-    executablePath: require("electron"),
-    args: [root, "--data-dir=" + path.join(dir, "data")],
+    executablePath: installed || require("electron"),
+    args: [...(installed ? [] : [root]), "--data-dir=" + path.join(dir, "data")],
     env,
     timeout: 30000,
   });
@@ -48,6 +49,28 @@ async function nav(page, name) {
     .getByRole("button", { name, exact: true })
     .click();
 }
+async function assertWorkspaceTop(page, name, selector) {
+  const workspace = page.getByRole("main", { name, exact: true });
+  const surface = workspace.locator(selector).first();
+  await surface.waitFor();
+  assert.equal(await workspace.locator("h1, .page-head").count(), 0, name);
+  const geometry = await surface.evaluate((element) => {
+    const main = element.closest(".workarea");
+    const viewport = main.getBoundingClientRect();
+    const { paddingLeft, paddingTop } = getComputedStyle(main);
+    const rect = element.getBoundingClientRect();
+    return {
+      top: rect.top - viewport.top - parseFloat(paddingTop),
+      left: rect.left - viewport.left - parseFloat(paddingLeft),
+    };
+  });
+  assert.ok(Math.abs(geometry.top) <= 1 && Math.abs(geometry.left) <= 1, `${name}: ${JSON.stringify(geometry)}`);
+}
+async function assertComposerWidth(page, layout) {
+  const form = await page.locator(".quick-entry").boundingBox();
+  const panels = await page.locator(layout).boundingBox();
+  assert.ok(Math.abs(form.x - panels.x) <= 1 && Math.abs(form.width - panels.width) <= 1, layout);
+}
 async function capture(page, file) {
   const cdp = await page.context().newCDPSession(page);
   const result = await cdp.send("Page.captureScreenshot", {
@@ -64,21 +87,40 @@ async function capture(page, file) {
     await application.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 800),
     );
-    await nav(page, "灵感待办");
-    await page.getByLabel("新记录内容").fill("界面回归：一句话灵感");
+    await nav(page, "待办事项");
+    await assertWorkspaceTop(page, "待办事项", ".quick-entry");
+    await assertComposerWidth(page, ".ideas-layout");
+    await capture(page, path.join(dir, "ideas-1280.png"));
+    const ideaInput = page.getByLabel("新待办内容");
+    const oneLineHeight = (await ideaInput.boundingBox()).height;
+    await ideaInput.fill("第一行\n第二行\n第三行");
+    await until(async () => (await ideaInput.boundingBox()).height > oneLineHeight, "composer expands with text");
+    const deadline = page.getByLabel("新待办截止时间");
+    assert.equal(await deadline.inputValue(), "");
+    const future = new Date();
+    future.setDate(future.getDate() + 7);
+    future.setHours(14, 35, 0, 0);
+    const deadlineInput = new Date(future.getTime() - future.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    await deadline.fill(deadlineInput);
+    await page.getByLabel("新待办内容").fill("界面回归：一句话灵感");
     await page.getByRole("button", { name: "添加待办", exact: true }).click();
     await until(
-      async () => !(await page.getByLabel("新记录内容").inputValue()),
+      async () => !(await page.getByLabel("新待办内容").inputValue()),
       "quick-save",
     );
     await page.locator(".idea-line", { hasText: "界面回归：一句话灵感" }).click();
+    assert.equal(await deadline.inputValue(), "");
+    assert.equal(await page.locator(".idea-detail time").getAttribute("datetime"), future.toISOString());
     await page.getByRole("button", { name: "编辑", exact: true }).click();
+    const editDeadline = page.locator(".idea-detail").getByLabel("截止时间", { exact: true });
+    assert.equal(await editDeadline.inputValue(), deadlineInput);
+    await editDeadline.fill("");
     await page.locator(".detail-edit-form textarea").fill("界面回归：编辑后的灵感");
     await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
     await until(
       async () =>
         (await api(page, "bootstrap")).notes.some(
-          (n) => n.text === "界面回归：编辑后的灵感",
+          (n) => n.text === "界面回归：编辑后的灵感" && n.dueAt === null,
         ),
       "edit persisted",
     );
@@ -88,6 +130,7 @@ async function capture(page, file) {
       "completed",
     );
     let data = await api(page, "bootstrap");
+    assert.equal(data.version, require("../package.json").version);
     assert.equal(
       data.notes.filter((n) => n.kind === "work").length,
       0,
@@ -95,6 +138,8 @@ async function capture(page, file) {
     );
     const ideaId = data.notes[0].id;
     await nav(page, "工作记录");
+    await assertWorkspaceTop(page, "工作记录", ".quick-entry");
+    await assertComposerWidth(page, ".work-layout");
     await page
       .getByLabel("新记录内容")
       .fill("界面回归：真实发生的工作 & <原文>");
@@ -124,6 +169,7 @@ async function capture(page, file) {
       async () => await page.locator(".monthly-layout").count(),
       "monthly open",
     );
+    await assertWorkspaceTop(page, "月度总结", ".monthly-layout");
     assert.equal(
       await page.locator(".material-item").count(),
       0,
@@ -136,11 +182,12 @@ async function capture(page, file) {
       "September material",
     );
     await page.locator(".material-item input[type=checkbox]").check();
-    await page.getByRole("button", { name: "加入正文 · 1", exact: true }).click();
+    await page.getByRole("button", { name: "加入正文", exact: true }).click();
     await until(
       async () => (await page.locator(".doc-entry").count()) === 1,
       "source added",
     );
+    await page.getByRole("img", { name: "已加入正文", exact: true }).waitFor();
     await page.locator(".doc-entry").getByRole("button", { name: /编辑条目/ }).click();
     await page
       .locator(".doc-entry textarea")
@@ -171,25 +218,23 @@ async function capture(page, file) {
     await page.getByLabel("新记录内容").fill("");
     await page.getByRole("button", { name: "关闭提示" }).click();
     await capture(page, path.join(dir, "work-1280.png"));
-    for (const name of [
-      "APK 打包",
-      "Git 管理",
-      "项目管理",
+    for (const [name, surface, file] of [
+      ["APK 打包", ".apk-layout", "apk"],
+      ["Git 管理", ".repo-bar", "review"],
+      ["项目管理", ".project-layout", "projects"],
+      ["提示词库", ".prompts-empty-card", "prompts-empty"],
     ]) {
       await nav(page, name);
+      await assertWorkspaceTop(page, name, surface);
       await page.waitForTimeout(700);
-      await capture(
-        page,
-        path.join(
-          dir,
-          {
-            "APK 打包": "apk",
-            "Git 管理": "review",
-            项目管理: "projects",
-          }[name] + "-1280.png",
-        ),
-      );
+      await capture(page, path.join(dir, file + "-1280.png"));
     }
+    await page.getByRole("button", { name: "任务中心", exact: true }).click();
+    await assertWorkspaceTop(page, "任务中心", ".tasks-empty-card");
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await assertWorkspaceTop(page, "设置", ".settings-card");
+    await page.getByText("v" + data.version, { exact: true }).waitFor();
+    await nav(page, "项目管理");
     await until(
       async () => (await page.locator(".project-item").count()) === 11,
       "all work directories",
@@ -216,6 +261,39 @@ async function capture(page, file) {
       "人工核对后的正文 & <特殊符号>\n第二行，保留换行。",
     );
     assert.equal(data.notes.length, 2);
+
+    // Row deletion targets the clicked work record and keeps other drafts open.
+    const current = await api(page, "record.save", { kind: "work", text: "保留当前记录" });
+    const other = await api(page, "record.save", { kind: "work", text: "从列表删除记录" });
+    await page.locator(`.work-item[data-note-id="${current.id}"] .note-select`).click();
+    await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+    await page.locator(".detail-edit-form textarea").fill("保留未保存的编辑");
+    assert.equal(
+      await page.locator(".note-detail").getByRole("button", { name: /删除/ }).count(),
+      0,
+    );
+    const otherRow = page.locator(`.work-item[data-note-id="${other.id}"]`);
+    await otherRow.getByRole("button", { name: /删除工作记录/ }).click();
+    await page.locator(".ui-msg-dialog[open]").getByRole("button", { name: "删除这条记录" }).click();
+    await otherRow.waitFor({ state: "detached" });
+    assert.equal(await page.locator(".detail-edit-form textarea").inputValue(), "保留未保存的编辑");
+    assert.ok(!(await api(page, "bootstrap")).notes.some((n) => n.id === other.id));
+    await page.locator(".note-detail").getByRole("button", { name: "取消", exact: true }).click();
+
+    // Completed ideas have the same row action, with no delete in the detail.
+    await nav(page, "待办事项");
+    await page.getByRole("tab", { name: /^已完成/ }).click();
+    const ideaRow = page.locator(".idea-line", { hasText: "界面回归：编辑后的灵感" });
+    await ideaRow.locator(".note-select").click();
+    assert.equal(
+      await page.locator(".idea-detail").getByRole("button", { name: /删除/ }).count(),
+      0,
+    );
+    await ideaRow.getByRole("button", { name: /删除待办/ }).click();
+    await page.locator(".ui-msg-dialog[open]").getByRole("button", { name: "删除这条待办" }).click();
+    await ideaRow.waitFor({ state: "detached" });
+    assert.ok(!(await api(page, "bootstrap")).notes.some((n) => n.id === ideaId));
+
     assert.deepEqual(errors, [], "no renderer exceptions");
     fs.writeFileSync(
       path.join(dir, "result.json"),
@@ -224,6 +302,7 @@ async function capture(page, file) {
           passed: true,
           checks: [
             "quick record",
+            "optional todo deadline and clearing it",
             "edit",
             "complete boundary",
             "work date",
@@ -233,8 +312,10 @@ async function capture(page, file) {
             "Word export",
             "failed input retention",
             "navigation",
+            "no large titles and full-width composers",
             "11 directories listed",
             "restart persistence",
+            "permanent deletion from work and completed idea rows",
           ],
           errors,
           output,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { Note } from "../../shared/types";
+import { deadlineFromInput, localDeadline } from "../../shared/todo-reminders";
 import {
   attempt,
   call,
@@ -12,6 +13,7 @@ import {
   notify,
   projectName,
   reload,
+  route,
   setGuard,
   saveForm,
 } from "../state";
@@ -49,6 +51,7 @@ const initialMonth =
 const text = ref<string>(prefilledText || draft.text || ""),
   composerSourceId = ref<string | null>(prefilledSourceId),
   composerDate = ref<string>(model.today),
+  composerDeadline = ref<string>(typeof draft.deadline === "string" ? draft.deadline : ""),
   busy = ref(false),
   query = ref(""),
   tab = ref<string>(initialTab),
@@ -66,6 +69,14 @@ const editTextarea = ref<HTMLTextAreaElement>();
 const workListRef = ref<HTMLElement>();
 const editor = ref<Note | null>(null);
 const baseline = ref("");
+const editDeadline = computed({
+  get: () => localDeadline(editor.value?.dueAt),
+  set: (value: string) => {
+    if (!editor.value || (!value && !editor.value.dueAt)) return;
+    try { editor.value.dueAt = deadlineFromInput(value); }
+    catch { notify("请选择有效的截止时间", true); }
+  },
+});
 
 const currentYear = computed(
   () => Number(model.today.slice(0, 4)) || new Date().getFullYear(),
@@ -76,15 +87,15 @@ function resizeComposer() {
   const el = composer.value;
   if (!el) return;
   el.style.height = "auto";
-  const minH = 44;
   const maxH = 160;
-  const next = Math.min(Math.max(el.scrollHeight, minH), maxH);
+  const next = Math.min(el.scrollHeight, maxH);
   el.style.height = `${next}px`;
   el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
 }
 
 function clearComposer() {
   text.value = "";
+  composerDeadline.value = "";
   composerSourceId.value = null;
   void nextTick(() => {
     resizeComposer();
@@ -93,9 +104,12 @@ function clearComposer() {
 }
 
 watch(
-  text,
+  [text, composerDeadline],
   () => {
-    saveForm("note-add-" + props.kind, { text: text.value });
+    saveForm("note-add-" + props.kind, {
+      text: text.value,
+      ...(props.kind === "idea" ? { deadline: composerDeadline.value } : {}),
+    });
     void nextTick(resizeComposer);
   },
   { flush: "sync" },
@@ -138,11 +152,10 @@ const canSaveEdit = computed(
 );
 
 const all = computed(() => model.notes.filter((n) => n.kind === props.kind));
-const activeAll = computed(() => all.value.filter((n) => !n.deletedAt));
 
 /* 工作记录统计与月份索引 */
 const monthRecords = computed(() =>
-  activeAll.value
+  all.value
     .filter((n) => !month.value || n.happenedOn?.startsWith(month.value))
     .sort(
       (a, b) =>
@@ -165,7 +178,7 @@ const workActiveTabLabel = computed(() => {
 const dayCounts = computed(() => {
   const counts = new Map<string, number>();
   if (!month.value) return counts;
-  for (const n of activeAll.value) {
+  for (const n of all.value) {
     if (n.happenedOn && n.happenedOn.startsWith(month.value)) {
       counts.set(n.happenedOn, (counts.get(n.happenedOn) || 0) + 1);
     }
@@ -174,14 +187,14 @@ const dayCounts = computed(() => {
 });
 const monthsWithRecords = computed(() => {
   const set = new Set<string>();
-  for (const n of activeAll.value) {
+  for (const n of all.value) {
     if (n.happenedOn) set.add(n.happenedOn.slice(0, 7));
   }
   return set;
 });
 const monthSummaryList = computed(() => {
   const counts = new Map<string, number>();
-  for (const n of activeAll.value) {
+  for (const n of all.value) {
     if (n.happenedOn && /^\d{4}-\d{2}/.test(n.happenedOn)) {
       const ym = n.happenedOn.slice(0, 7);
       counts.set(ym, (counts.get(ym) || 0) + 1);
@@ -202,16 +215,14 @@ const activeDay = computed(() =>
     : "",
 );
 
-/* 灵感待办统计 */
-const openIdeas = computed(() => activeAll.value.filter((n) => !n.completedAt));
-const completedIdeas = computed(() =>
-  activeAll.value.filter((n) => !!n.completedAt),
-);
+/* 待办事项统计 */
+const openIdeas = computed(() => all.value.filter((n) => !n.completedAt));
+const completedIdeas = computed(() => all.value.filter((n) => !!n.completedAt));
 
 /* 过滤后的列表 */
 const filtered = computed(() => {
   const q = query.value.trim().toLowerCase();
-  return activeAll.value
+  return all.value
     .filter((n) => {
       if (props.kind === "idea") {
         return tab.value === "completed" ? !!n.completedAt : !n.completedAt;
@@ -229,6 +240,11 @@ const filtered = computed(() => {
 
 /* 工作记录在查看全部月份时按月份分组 */
 const workGroups = computed(() => {
+  if (month.value) {
+    return [
+      { key: month.value, title: monthTitle.value.label, items: filtered.value },
+    ];
+  }
   const map = new Map<string, { key: string; title: string; items: Note[] }>();
   for (const n of filtered.value) {
     const ym =
@@ -249,7 +265,7 @@ const workGroups = computed(() => {
   return Array.from(map.values());
 });
 
-/* 灵感待办按创建日期分组 */
+/* 待办事项按创建日期分组 */
 const ideaGroups = computed(() => {
   const map = new Map<
     string,
@@ -338,6 +354,14 @@ watch(
 
 watch(selected, loadEditor, { immediate: true });
 
+watch(context, (destination) => {
+  if (route.value !== "ideas" || props.kind !== "idea" || typeof destination.selected !== "string") return;
+  tab.value = destination.tab === "completed" ? "completed" : "active";
+  query.value = "";
+  selected.value = destination.selected;
+  loadEditor();
+});
+
 watch(
   () => model.notes,
   () => {
@@ -379,7 +403,7 @@ async function select(n: Note) {
 }
 
 async function startEdit() {
-  if (!editor.value || editor.value.deletedAt) return;
+  if (!editor.value) return;
   editing.value = true;
   await nextTick();
   editTextarea.value?.focus();
@@ -451,9 +475,11 @@ async function add() {
       kind: props.kind,
       text: text.value,
       happenedOn: props.kind === "work" ? composerDate.value : model.today,
+      dueAt: props.kind === "idea" ? deadlineFromInput(composerDeadline.value) : undefined,
       sourceId: props.kind === "work" ? composerSourceId.value : null,
     });
     text.value = "";
+    composerDeadline.value = "";
     composerSourceId.value = null;
     if (props.kind === "work") {
       composerDate.value = model.today;
@@ -525,10 +551,10 @@ async function save() {
 
 async function toggleComplete(target?: Note) {
   const item = target || editor.value;
-  if (!item || item.deletedAt || busy.value) return;
+  if (!item || busy.value) return;
   const isCurrent = editor.value?.id === item.id;
   const markingDone = !item.completedAt;
-  let savedFirst = false;
+  let edit: Pick<Note, "text" | "dueAt"> | undefined;
 
   if (isCurrent && dirty.value && markingDone) {
     const canSave = !!editor.value?.text?.trim();
@@ -552,18 +578,7 @@ async function toggleComplete(target?: Note) {
       cancelId: 0,
     });
     if (!choice) return;
-    if (choice === 2) {
-      busy.value = true;
-      const updated = await attempt(() =>
-        call<Note>("record.save", editor.value),
-      );
-      busy.value = false;
-      if (!updated) return;
-      editor.value = updated;
-      baseline.value = JSON.stringify(updated);
-      editing.value = false;
-      savedFirst = true;
-    }
+    if (choice === 2 && editor.value) edit = { text: editor.value.text, dueAt: editor.value.dueAt };
   } else if (dirty.value && !(await canLeave())) {
     return;
   }
@@ -573,6 +588,7 @@ async function toggleComplete(target?: Note) {
     await call("record.complete", {
       id: item.id,
       done: markingDone,
+      edit,
     });
     editing.value = false;
     baseline.value = "";
@@ -583,39 +599,40 @@ async function toggleComplete(target?: Note) {
     }
     loadEditor();
     notify(
-      savedFirst
-        ? "已保存并标记完成，未自动生成工作记录"
+      edit
+        ? "已保存并标记完成"
         : markingDone
-          ? "已标记完成，未自动生成工作记录"
+          ? "已标记完成"
           : "已重新打开待办",
     );
   });
   busy.value = false;
 }
 
-async function remove() {
-  if (!editor.value || busy.value) return;
+async function remove(note: Note) {
+  if (busy.value) return;
   busy.value = true;
-  await attempt(async () => {
-    const n = await call("record.delete", { id: editor.value!.id });
-    if (n) {
-      editing.value = false;
-      editor.value = null;
-      baseline.value = "";
+  try {
+    await attempt(async () => {
+      const removed = await call<Note | null>("record.delete", { id: note.id });
+      if (!removed) return;
+      if (selected.value === note.id) {
+        selected.value = null;
+        loadEditor();
+      }
       await reload();
-      selected.value = filtered.value[0]?.id || null;
-      loadEditor();
-      notify(props.kind === "idea" ? "待办已删除" : "记录已删除");
-    }
-  });
-  busy.value = false;
+      notify(note.kind === "idea" ? "待办已删除" : "记录已删除");
+    });
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function createWorkFromIdea() {
   if (!editor.value) return;
   const sourceId = "idea:" + editor.value.id;
   const existing = model.notes.filter(
-    (n) => !n.deletedAt && n.kind === "work" && n.sourceId === sourceId,
+    (n) => n.kind === "work" && n.sourceId === sourceId,
   );
   if (
     existing.length &&
@@ -647,66 +664,60 @@ async function createWorkFromIdea() {
 </script>
 
 <template>
+  <form
+    class="quick-entry"
+    :class="{ focus: !!text.trim() }"
+    :aria-label="kind === 'work' ? '新增工作记录' : '新增待办事项'"
+    @submit.prevent="add"
+  >
+    <textarea
+      ref="composer"
+      v-model="text"
+      class="entry-input"
+      rows="1"
+      :placeholder="kind === 'work' ? '记录今天的工作…' : '写下待办…'"
+      :aria-label="kind === 'work' ? '新记录内容' : '新待办内容'"
+      @input="resizeComposer"
+      @keydown="onComposerKeydown"
+    />
+    <div class="entry-inline-actions">
+      <span v-if="text.trim()" class="entry-char-count">{{ text.trim().length }} 字</span>
+      <button
+        v-if="text.trim() || (kind === 'idea' && composerDeadline)"
+        type="button"
+        class="text-action entry-clear"
+        @click="clearComposer"
+      >
+        清空
+      </button>
+      <label
+        v-if="kind === 'work'"
+        class="entry-date-chip"
+        :class="{ invalid: !validComposerDate }"
+        title="发生日期"
+      >
+        <input v-model="composerDate" type="date" required aria-label="新记录发生日期" />
+      </label>
+      <label v-else class="entry-date-chip">
+        <span class="entry-date-label">截止时间</span>
+        <input v-model="composerDeadline" type="datetime-local" aria-label="新待办截止时间" />
+      </label>
+      <button
+        type="submit"
+        class="btn primary compact"
+        :disabled="busy || !text.trim() || !validComposerDate"
+        :aria-busy="busy"
+        :title="kind === 'work' ? '保存记录（Ctrl+Enter）' : '添加待办（Ctrl+Enter）'"
+      >
+        {{ kind === 'work' ? '保存记录' : '添加待办' }}
+      </button>
+    </div>
+  </form>
+
   <!-- ======================================================================
        工作记录页（01-工作记录.png）
        ====================================================================== -->
   <template v-if="kind === 'work'">
-    <div class="page-head notes-head">
-      <div class="page-head-title">
-        <h1>工作记录</h1>
-      </div>
-      <form
-        class="quick-entry quick-entry-inline"
-        :class="{ focus: !!text.trim() }"
-        @submit.prevent="add"
-      >
-        <textarea
-          ref="composer"
-          v-model="text"
-          class="entry-input"
-          rows="1"
-          placeholder="记录今天的工作…"
-          aria-label="新记录内容"
-          @input="resizeComposer"
-          @keydown="onComposerKeydown"
-        />
-        <div class="entry-inline-actions">
-          <label
-            class="entry-date-chip"
-            :class="{ invalid: !validComposerDate }"
-            title="发生日期"
-          >
-            <input
-              v-model="composerDate"
-              type="date"
-              required
-              aria-label="新记录发生日期"
-            />
-          </label>
-          <span v-if="text.trim()" class="entry-char-count">
-            {{ text.trim().length }} 字
-          </span>
-          <button
-            v-if="text.trim()"
-            type="button"
-            class="text-action entry-clear"
-            @click="clearComposer"
-          >
-            清空
-          </button>
-          <button
-            type="submit"
-            class="btn primary compact"
-            :disabled="busy || !text.trim() || !validComposerDate"
-            :aria-busy="busy"
-            title="保存记录（Ctrl+Enter）"
-          >
-            保存记录
-          </button>
-        </div>
-      </form>
-    </div>
-
     <!-- 月份日期带 -->
     <div class="month-index card" :class="{ 'all-months': !month }">
       <div class="month-picker-wrap" @click.stop>
@@ -854,7 +865,7 @@ async function createWorkFromIdea() {
       >
         <div class="month-chips">
           <span class="month-chip active">
-            全部月份<small>{{ activeAll.length }}</small>
+            全部月份<small>{{ all.length }}</small>
           </span>
           <button
             v-for="item in monthSummaryList"
@@ -865,9 +876,6 @@ async function createWorkFromIdea() {
           >
             {{ item.label }}<small>{{ item.count }}</small>
           </button>
-          <span v-if="!monthSummaryList.length" class="all-months-empty">
-            当前展示所有月份的工作记录
-          </span>
         </div>
         <button
           type="button"
@@ -918,76 +926,59 @@ async function createWorkFromIdea() {
             </button>
           </div>
 
-          <template v-else-if="!month">
-            <section
+          <template v-else>
+            <div
               v-for="group in workGroups"
               :key="group.key"
               class="work-month-group"
             >
-              <div class="work-month-head">
+              <div v-if="!month" class="work-month-head">
                 <span>{{ group.title }}</span>
                 <small>{{ group.items.length }} 条</small>
               </div>
-              <button
+              <div
                 v-for="n in group.items"
                 :key="n.id"
-                type="button"
                 class="work-item"
                 :data-note-id="n.id"
                 :class="{ selected: selected === n.id }"
-                @click="select(n)"
               >
-                <div class="date-block">
-                  <strong>{{
-                    n.happenedOn ? n.happenedOn.slice(8, 10) : "--"
-                  }}</strong>
-                  <small>{{
-                    n.happenedOn ? "周" + weekdayChar(n.happenedOn) : "未填"
-                  }}</small>
-                </div>
-                <div class="grow">
-                  <div class="item-title">{{ splitNoteText(n.text).title }}</div>
-                  <p v-if="splitNoteText(n.text).body">
-                    {{ splitNoteText(n.text).body }}
-                  </p>
-                  <p v-else-if="n.projectId">
-                    {{ projectName(n.projectId) }}
-                  </p>
-                </div>
-                <Icon v-if="selected === n.id" name="chevron" :size="13" />
-              </button>
-            </section>
-          </template>
-
-          <template v-else>
-            <button
-              v-for="n in filtered"
-              :key="n.id"
-              type="button"
-              class="work-item"
-              :data-note-id="n.id"
-              :class="{ selected: selected === n.id }"
-              @click="select(n)"
-            >
-              <div class="date-block">
-                <strong>{{
-                  n.happenedOn ? n.happenedOn.slice(8, 10) : "--"
-                }}</strong>
-                <small>{{
-                  n.happenedOn ? "周" + weekdayChar(n.happenedOn) : "未填"
-                }}</small>
+                <button
+                  type="button"
+                  class="note-select"
+                  :aria-pressed="selected === n.id"
+                  @click="select(n)"
+                >
+                  <span class="date-block">
+                    <strong>{{
+                      n.happenedOn ? n.happenedOn.slice(8, 10) : "--"
+                    }}</strong>
+                    <small>{{
+                      n.happenedOn ? "周" + weekdayChar(n.happenedOn) : "未填"
+                    }}</small>
+                  </span>
+                  <span class="grow">
+                    <span class="item-title">{{ splitNoteText(n.text).title }}</span>
+                    <span v-if="splitNoteText(n.text).body" class="item-description">
+                      {{ splitNoteText(n.text).body }}
+                    </span>
+                    <span v-else-if="n.projectId" class="item-description">
+                      {{ projectName(n.projectId) }}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="list-delete-button"
+                  :disabled="busy"
+                  :aria-label="'删除工作记录 · ' + splitNoteText(n.text).title"
+                  title="删除工作记录"
+                  @click="remove(n)"
+                >
+                  <Icon name="trash" :size="14" />
+                </button>
               </div>
-              <div class="grow">
-                <div class="item-title">{{ splitNoteText(n.text).title }}</div>
-                <p v-if="splitNoteText(n.text).body">
-                  {{ splitNoteText(n.text).body }}
-                </p>
-                <p v-else-if="n.projectId">
-                  {{ projectName(n.projectId) }}
-                </p>
-              </div>
-              <Icon v-if="selected === n.id" name="chevron" :size="13" />
-            </button>
+            </div>
           </template>
         </div>
       </section>
@@ -1063,10 +1054,6 @@ async function createWorkFromIdea() {
                 title="双击编辑"
                 @dblclick="startEdit()"
               >
-                <div class="sheet-kind">
-                  <Icon name="note" :size="14" />
-                  <span>正文</span>
-                </div>
                 <h3
                   :class="{
                     'long-single':
@@ -1102,20 +1089,9 @@ async function createWorkFromIdea() {
               </div>
             </dl>
 
-            <p v-if="editor.importBatch" class="notice" style="margin-top: 16px">
-              原文已保留，来源行 {{ editor.sourceLine }}。历史日期未依据文件修改时间推定。
+            <p v-if="editor.importBatch && editor.sourceLine" class="muted small" style="margin-top: 16px">
+              导入源文件第 {{ editor.sourceLine }} 行
             </p>
-          </div>
-
-          <div v-if="!editing" class="detail-foot">
-            <button
-              type="button"
-              class="delete-action"
-              :disabled="busy"
-              @click="remove"
-            >
-              <Icon name="trash" :size="14" />删除记录
-            </button>
           </div>
         </template>
 
@@ -1127,53 +1103,9 @@ async function createWorkFromIdea() {
   </template>
 
   <!-- ======================================================================
-       灵感待办页
+       待办事项页
        ====================================================================== -->
   <template v-else>
-    <div class="page-head notes-head">
-      <div class="page-head-title">
-        <h1>灵感待办</h1>
-      </div>
-      <form
-        class="quick-entry quick-entry-inline"
-        :class="{ focus: !!text.trim() }"
-        @submit.prevent="add"
-      >
-        <textarea
-          ref="composer"
-          v-model="text"
-          class="entry-input"
-          rows="1"
-          placeholder="记个想法…"
-          aria-label="新记录内容"
-          @input="resizeComposer"
-          @keydown="onComposerKeydown"
-        />
-        <div class="entry-inline-actions">
-          <span v-if="text.trim()" class="entry-char-count">
-            {{ text.trim().length }} 字
-          </span>
-          <button
-            v-if="text.trim()"
-            type="button"
-            class="text-action entry-clear"
-            @click="clearComposer"
-          >
-            清空
-          </button>
-          <button
-            type="submit"
-            class="btn primary compact"
-            :disabled="busy || !text.trim()"
-            :aria-busy="busy"
-            title="添加待办（Ctrl+Enter）"
-          >
-            添加待办
-          </button>
-        </div>
-      </form>
-    </div>
-
     <div class="duo ideas-layout">
       <!-- 左栏：待办清单 -->
       <section class="card pane">
@@ -1249,10 +1181,6 @@ async function createWorkFromIdea() {
                 selected: selected === n.id,
                 completed: !!n.completedAt,
               }"
-              role="button"
-              tabindex="0"
-              @click="select(n)"
-              @keydown.enter="select(n)"
             >
               <button
                 type="button"
@@ -1263,20 +1191,39 @@ async function createWorkFromIdea() {
                   n.completedAt ? '重新打开此待办' : '标记此待办完成'
                 "
                 :title="n.completedAt ? '重新打开待办' : '标记完成'"
-                @click.stop="toggleComplete(n)"
+                @click="toggleComplete(n)"
               >
                 <Icon name="check" :size="11" />
               </button>
-              <div class="grow">
-                <div class="item-title">{{ splitNoteText(n.text).title }}</div>
-                <p v-if="splitNoteText(n.text).body">
-                  {{ splitNoteText(n.text).body }}
-                </p>
-              </div>
-              <span v-if="!n.importBatch" class="idea-time">{{
-                formatTimeHM(n.createdAt)
-              }}</span>
-              <Icon v-if="selected === n.id" name="chevron" :size="13" />
+              <button
+                type="button"
+                class="note-select"
+                :aria-pressed="selected === n.id"
+                @click="select(n)"
+              >
+                <span class="grow">
+                  <span class="item-title">{{ splitNoteText(n.text).title }}</span>
+                  <span v-if="splitNoteText(n.text).body" class="item-description">
+                    {{ splitNoteText(n.text).body }}
+                  </span>
+                </span>
+                <time v-if="n.dueAt" class="idea-time" :datetime="n.dueAt" :title="'截止时间 ' + formatDateTime(n.dueAt)">
+                  到期 {{ formatDateTime(n.dueAt) }}
+                </time>
+                <span v-else-if="!n.importBatch" class="idea-time">{{
+                  formatTimeHM(n.createdAt)
+                }}</span>
+              </button>
+              <button
+                type="button"
+                class="list-delete-button"
+                :disabled="busy"
+                :aria-label="'删除待办 · ' + splitNoteText(n.text).title"
+                title="删除待办"
+                @click="remove(n)"
+              >
+                <Icon name="trash" :size="14" />
+              </button>
             </div>
           </section>
         </div>
@@ -1330,17 +1277,14 @@ async function createWorkFromIdea() {
                     required
                   />
                 </label>
+                <label class="detail-edit-row todo-edit-deadline">
+                  <span>截止时间</span>
+                  <input v-model="editDeadline" type="datetime-local" />
+                </label>
               </div>
             </template>
 
             <template v-else>
-              <span
-                class="badge"
-                :class="editor.completedAt ? 'live' : 'pending'"
-              >
-                <i class="dot" />
-                {{ editor.completedAt ? "已完成" : "未完成" }}
-              </span>
               <h3
                 class="editable"
                 :class="{
@@ -1358,6 +1302,10 @@ async function createWorkFromIdea() {
             </template>
 
             <dl class="record-fields">
+              <div v-if="editor.dueAt && !editing">
+                <dt><Icon name="calendar2" :size="14" />截止时间</dt>
+                <dd><time :datetime="editor.dueAt">{{ formatDateTime(editor.dueAt) }}</time></dd>
+              </div>
               <div>
                 <dt>
                   <Icon name="clockplus" :size="14" />{{
@@ -1403,15 +1351,6 @@ async function createWorkFromIdea() {
               <Icon name="penbox" :size="14" />
               <span>记一条工作记录</span>
               <Icon name="arrow-right" :size="13" />
-            </button>
-            <span class="push" />
-            <button
-              type="button"
-              class="delete-action"
-              :disabled="busy"
-              @click="remove"
-            >
-              <Icon name="trash" :size="14" />删除
             </button>
           </div>
         </template>

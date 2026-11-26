@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
           </button>
           <p v-if="files.length > 200" class="small muted">
             已显示 {{ Math.min(fileLimit, files.length) }} /
-            {{ files.length }} 个文件，可搜索定位。
+            {{ files.length }} 个文件
           </p>
           <button
             v-if="files.length > fileLimit"
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
           >
             再显示 200 个文件
           </button>
-          <p v-if="!files.length" class="empty">当前范围没有匹配的差异。</p>
+          <p v-if="!files.length" class="empty">没有匹配的差异</p>
         </section>
         <section>
           <div class="section-head">
@@ -284,7 +284,7 @@ onBeforeUnmount(() => {
             </template
           >
           <p v-else class="empty">
-            选择文件阅读真实差异。改变比较范围不会切换分支或修改暂存区。
+            选择文件查看差异
           </p>
         </section>
       </div>
@@ -296,8 +296,5 @@ onBeforeUnmount(() => {
   <div v-else class="empty">
     <span class="empty-icon"><Icon name="search" :size="16" /></span>
     <p class="empty-title">尚未读取差异</p>
-    <p class="empty-hint">
-      选择仓库与比较范围后读取 Git 差异。读取不会切换分支或修改暂存区。
-    </p>
   </div>
 </template>
