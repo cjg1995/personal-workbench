@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import type { SubmitCheck, Task } from "../../shared/types";
 import {
   submitPolicyForProject,
@@ -11,15 +11,17 @@ import {
   attempt,
   call,
   context,
+  dismissToast,
   model,
   navigate,
   notify,
   saveForm,
+  toast,
 } from "../state";
 import ProjectSelect from "../components/ProjectSelect.vue";
 import TaskDetail from "../components/TaskDetail.vue";
 import Icon from "../components/Icon.vue";
-import SubmitDiffEditor from "../components/SubmitDiffEditor.vue";
+const SubmitDiffEditor = defineAsyncComponent(() => import("../components/SubmitDiffEditor.vue"));
 const props = defineProps<{ projectId?: string; taskId?: string }>();
 const tab = ref<SubmitTab>(
     submitTabForProject(props.projectId || context.value.projectId) || context.value.tab || "erp",
@@ -148,7 +150,7 @@ async function inspect() {
   }
 }
 async function run() {
-  if (!await canLeave() || !effective.value) return;
+  if (!await canLeave() || !effective.value || !effective.value.valid || needsMessage.value) return;
   busy.value = true;
   await attempt(async () => {
     let t: Task;
@@ -172,7 +174,9 @@ async function run() {
         message: message.value,
       });
     taskId.value = t.id;
-    notify("任务已开始，可离开此页面");
+    if ((task.value?.state ?? t.state) === "running") {
+      notify("任务已开始，可离开此页面");
+    }
   });
   busy.value = false;
 }
@@ -181,6 +185,9 @@ onMounted(() => {
   else if (task.value?.state === "awaiting") file.value = effective.value?.files.find((item) => item.included)?.path || "";
 });
 watch(() => task.value?.state, (state) => {
+  if (state && state !== "running" && toast.value?.text === "任务已开始，可离开此页面") {
+    dismissToast(true);
+  }
   if (state === "awaiting") file.value = effective.value?.files.find((item) => item.included)?.path || "";
 });
 async function diff(path: string) {

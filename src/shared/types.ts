@@ -10,8 +10,8 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
-  /** 保留原字段以兼容已有月报的来源校验值。 */
-  deletedAt: null;
+  /** 软删除时间戳；未删除或撤销恢复后为 null，保留字段以兼容已有月报的来源校验值。 */
+  deletedAt: string | null;
   sourceId: string | null;
   importBatch: string | null;
   sourceLine: number | null;
@@ -25,8 +25,8 @@ export interface Prompt {
   starred: boolean;
   createdAt: string;
   updatedAt: string;
-  /** 保留原字段以兼容旧版的备份校验。 */
-  deletedAt: null;
+  /** 软删除时间戳；未删除或撤销恢复后为 null，保留字段以兼容备份校验。 */
+  deletedAt: string | null;
 }
 export type TaskState =
   | "running"
@@ -170,57 +170,6 @@ export interface SubmitCheck {
   gitDir: string;
   commonDir: string;
 }
-export type DiffScope =
-  | "unstaged"
-  | "staged"
-  | "local"
-  | "versions"
-  | "ancestor";
-export interface ReviewFile {
-  path: string;
-  oldPath?: string;
-  status: string;
-  binary: boolean;
-  limited: boolean;
-  patch: string;
-  oldText: string;
-  newText: string;
-  hash: string;
-  untracked: boolean;
-  deferred?: boolean;
-  contentHash?: string;
-}
-export interface ReviewSnapshot {
-  id: string;
-  projectId: string;
-  repo: string;
-  scope: DiffScope;
-  base: string;
-  target: string;
-  baseCommit: string;
-  targetCommit: string;
-  createdAt: string;
-  fingerprint: string;
-  files: ReviewFile[];
-  seen: Record<string, string>;
-  issues: ReviewIssue[];
-  conclusion: string | null;
-  summary: string;
-  stale: boolean;
-  fetchedAt: string | null;
-  lazyUntracked?: boolean;
-}
-export interface ReviewIssue {
-  id: string;
-  file: string;
-  side: "old" | "new";
-  line: number | null;
-  text: string;
-  state: "open" | "fixed" | "resolved" | "declined";
-  reason: string;
-  snapshotHash: string;
-  todoId?: string;
-}
 export interface MonthlyEntry {
   id: string;
   section: string;
@@ -284,6 +233,29 @@ export interface UiDialogRequest {
   defaultId: number;
   cancelId: number;
 }
+export interface CodeJumpTarget {
+  file: string;
+  uri?: string;
+  line: number;
+  column: number;
+  sameFile: boolean;
+  label: string;
+  detail?: string;
+  snippet: string;
+  role?: "definition" | "implementation" | "interface" | "super" | "declaration";
+}
+export interface CodeResolveResult {
+  symbol: string;
+  targets: CodeJumpTarget[];
+  source: "lsp" | "ast" | "search";
+  notice?: string;
+}
+export interface EditorOpenTarget {
+  file: string;
+  uri?: string;
+  line: number;
+  column?: number;
+}
 export interface ApiResponse<T = unknown> {
   ok: boolean;
   data?: T;
@@ -293,14 +265,15 @@ export interface WorkbenchApi {
   call<T = unknown>(action: string, payload?: unknown): Promise<ApiResponse<T>>;
   onDialog(callback: (request: UiDialogRequest) => void): () => void;
   replyDialog(id: string, response: number): void;
-  onChanged(callback: () => void): () => void;
-  onReviewProgress(callback: (message: string) => void): () => void;
+  onChanged(callback: (revision?: number, gitChanged?: boolean) => void): () => void;
   onNavigate(callback: (destination: { taskId: string }) => void): () => void;
   onGitDiff(callback: (request: import("./git-client.js").DiffWindowRequest) => void): () => void;
+  onDiffHistory(callback: (direction: number) => void): () => void;
   onCommitDraft(callback: (draft: { projectId: string; message: string }) => void): () => void;
   onEditorLsp(callback: (method: string, params: any) => void): () => void;
   onEditorDisk(callback: (file: string) => void): () => void;
   onEditorHistory(callback: (direction: number) => void): () => void;
+  onEditorOpen(callback: (target: EditorOpenTarget) => void): () => void;
   onEditorSearch(callback: (payload: {
     requestId: string;
     hits?: { file: string; line: number; column: number; text: string }[];

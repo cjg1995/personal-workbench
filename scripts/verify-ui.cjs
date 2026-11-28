@@ -36,6 +36,33 @@ async function api(page, name, payload) {
   if (!r.ok) throw new Error(r.error);
   return r.data;
 }
+async function verifyRefresh(page) {
+  const initial = await api(page, "bootstrap");
+  const cursor = ({ revision, databaseVersion }) => ({ revision, databaseVersion });
+  const note = await api(page, "record.save", { kind: "work", text: "增量刷新核对" });
+  const delta = await api(page, "bootstrap", cursor(initial));
+  assert.deepEqual(delta.notes.find((n) => n.id === note.id), note);
+  for (const unchanged of ["config", "prompts", "tasks", "runs", "imports", "formDrafts"])
+    assert.equal(Object.hasOwn(delta, unchanged), false);
+  const drafts = await page.evaluate(async () => {
+    const save = (key, text) => window.workbench.call("form.save", { key, value: { text } });
+    const [first, other, last, read] = await Promise.all([
+      save("note-add-work", "旧草稿"), save("note-add-idea", "待办草稿"),
+      save("note-add-work", "最终草稿"), window.workbench.call("bootstrap"),
+    ]);
+    if (![first, other, last, read].every((r) => r.ok)) throw new Error("草稿写入或读取失败");
+    return read.data.formDrafts;
+  });
+  assert.equal(drafts["note-add-work"].text, "最终草稿");
+  assert.equal(drafts["note-add-idea"].text, "待办草稿");
+  for (const key of ["note-add-work", "note-add-idea"])
+    await api(page, "form.save", { key, value: { text: "" } });
+  await api(page, "record.delete", { id: note.id });
+  await api(page, "record.purge", { id: note.id });
+  const newest = await api(page, "bootstrap", cursor(delta));
+  assert.equal(newest.notes.some((n) => n.id === note.id), false);
+  assert.equal(newest.formDrafts["note-add-work"].text, "");
+}
 async function until(fn, label) {
   for (let n = 0; n < 60; n++) {
     if (await fn()) return;
@@ -84,6 +111,7 @@ async function capture(page, file) {
 (async () => {
   try {
     let page = await launch();
+    await verifyRefresh(page);
     await application.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 800),
     );
@@ -115,15 +143,25 @@ async function capture(page, file) {
     const editDeadline = page.locator(".idea-detail").getByLabel("截止时间", { exact: true });
     assert.equal(await editDeadline.inputValue(), deadlineInput);
     await editDeadline.fill("");
-    await page.locator(".detail-edit-form textarea").fill("界面回归：编辑后的灵感");
+    await page
+      .locator(".detail-edit-form textarea")
+      .fill("界面回归：编辑后的灵感。补充第二句仍保持统一样式。");
     await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
     await until(
       async () =>
         (await api(page, "bootstrap")).notes.some(
-          (n) => n.text === "界面回归：编辑后的灵感" && n.dueAt === null,
+          (n) =>
+            n.text === "界面回归：编辑后的灵感。补充第二句仍保持统一样式。" &&
+            n.dueAt === null,
         ),
       "edit persisted",
     );
+    assert.equal(
+      (await page.locator(".idea-article .idea-content").textContent()).trim(),
+      "界面回归：编辑后的灵感。补充第二句仍保持统一样式。",
+    );
+    assert.equal(await page.locator(".idea-article h3, .idea-article .idea-body").count(), 0);
+    await capture(page, path.join(dir, "ideas-consistent-1280.png"));
     await page.getByRole("button", { name: "标记完成", exact: true }).click();
     await until(
       async () => (await api(page, "bootstrap")).notes[0].completedAt,
@@ -155,7 +193,49 @@ async function capture(page, file) {
     await page
       .locator(".work-item", { hasText: "界面回归：真实发生的工作" })
       .click();
+    const readSheetStyle = () =>
+      page.locator(".record-sheet .record-content").evaluate((el) => {
+        const s = getComputedStyle(el);
+        return {
+          text: el.textContent,
+          fontSize: s.fontSize,
+          fontWeight: s.fontWeight,
+          color: s.color,
+          whiteSpace: s.whiteSpace,
+        };
+      });
+    const styleBeforeEdit = await readSheetStyle();
+    assert.equal(styleBeforeEdit.text, "界面回归：真实发生的工作 & <原文>");
+    assert.equal(await page.locator(".record-sheet h3").count(), 0);
     await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+    const editedTwoSentences =
+      "楼盘性质添加军产房、人才房。客户来源添加一个‘驻点客户’。";
+    await page.locator(".detail-edit-form textarea").fill(editedTwoSentences);
+    await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
+    await until(
+      async () =>
+        (await api(page, "bootstrap")).notes.find((n) => n.id === work.id)
+          .text === editedTwoSentences,
+      "work text update",
+    );
+    const styleAfterTwoSentences = await readSheetStyle();
+    assert.equal(styleAfterTwoSentences.text, editedTwoSentences);
+    assert.equal(styleAfterTwoSentences.fontSize, styleBeforeEdit.fontSize);
+    assert.equal(styleAfterTwoSentences.fontWeight, styleBeforeEdit.fontWeight);
+    assert.equal(styleAfterTwoSentences.color, styleBeforeEdit.color);
+    assert.equal(await page.locator(".record-sheet").locator("h3, p").count(), 1);
+    const workRow = page.locator(`.work-item[data-note-id="${work.id}"]`);
+    assert.equal(
+      (await workRow.locator(".item-title").textContent()).trim(),
+      editedTwoSentences,
+    );
+    assert.equal(await workRow.locator(".item-description").count(), 0);
+    await capture(page, path.join(dir, "work-consistent-1280.png"));
+
+    await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+    await page
+      .locator(".detail-edit-form textarea")
+      .fill("界面回归：真实发生的工作 & <原文>");
     await page.locator(".detail-edit-form input[type=date]").fill("2026-09-30");
     await page.getByRole("button", { name: "保存修改", exact: true }).first().click();
     await until(
@@ -274,11 +354,24 @@ async function capture(page, file) {
     );
     const otherRow = page.locator(`.work-item[data-note-id="${other.id}"]`);
     await otherRow.getByRole("button", { name: /删除工作记录/ }).click();
-    await page.locator(".ui-msg-dialog[open]").getByRole("button", { name: "删除这条记录" }).click();
+    assert.equal(await page.locator(".ui-msg-dialog[open]").count(), 0);
     await otherRow.waitFor({ state: "detached" });
     assert.equal(await page.locator(".detail-edit-form textarea").inputValue(), "保留未保存的编辑");
     assert.ok(!(await api(page, "bootstrap")).notes.some((n) => n.id === other.id));
+    // Toast 撤销可恢复软删除的工作记录
+    await page.locator(".toast .toast-action", { hasText: "撤销" }).click();
+    await otherRow.waitFor();
+    assert.ok((await api(page, "bootstrap")).notes.some((n) => n.id === other.id));
+    // 再次删除并关闭 Toast 彻底清理
+    await otherRow.getByRole("button", { name: /删除工作记录/ }).click();
+    await otherRow.waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "关闭提示" }).click();
+    await until(
+      async () => !(await api(page, "bootstrap")).notes.some((n) => n.id === other.id),
+      "work soft-deleted and purged",
+    );
     await page.locator(".note-detail").getByRole("button", { name: "取消", exact: true }).click();
+    await page.locator(".ui-msg-dialog[open]").getByRole("button", { name: "丢弃修改" }).click();
 
     // Completed ideas have the same row action, with no delete in the detail.
     await nav(page, "待办事项");
@@ -290,8 +383,13 @@ async function capture(page, file) {
       0,
     );
     await ideaRow.getByRole("button", { name: /删除待办/ }).click();
-    await page.locator(".ui-msg-dialog[open]").getByRole("button", { name: "删除这条待办" }).click();
+    assert.equal(await page.locator(".ui-msg-dialog[open]").count(), 0);
     await ideaRow.waitFor({ state: "detached" });
+    await page.locator(".toast .toast-action", { hasText: "撤销" }).click();
+    await ideaRow.waitFor();
+    await ideaRow.getByRole("button", { name: /删除待办/ }).click();
+    await ideaRow.waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "关闭提示" }).click();
     assert.ok(!(await api(page, "bootstrap")).notes.some((n) => n.id === ideaId));
 
     assert.deepEqual(errors, [], "no renderer exceptions");

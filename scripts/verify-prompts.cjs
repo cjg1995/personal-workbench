@@ -90,10 +90,7 @@ async function readClipboard() {
 
 async function confirmPromptDeletion(page, title) {
   await page.getByRole("button", { name: "删除提示词 · " + title, exact: true }).click();
-  await page
-    .locator(".ui-msg-dialog[open]")
-    .getByRole("button", { name: "删除这条提示词" })
-    .click();
+  assert.equal(await page.locator(".ui-msg-dialog[open]").count(), 0);
   await page.getByRole("status").filter({ hasText: "提示词已删除" }).waitFor();
 }
 
@@ -314,13 +311,23 @@ async function confirmPromptDeletion(page, title) {
       0,
     );
     await page.getByRole("button", { name: "删除提示词 · " + deletedTitle, exact: true }).click();
-    const deleteDialog = page.locator(".ui-msg-dialog[open]");
-    await deleteDialog.getByText(/永久移除/).waitFor();
-    await deleteDialog.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(await page.locator(".ui-msg-dialog[open]").count(), 0);
+    await page.getByRole("status").filter({ hasText: "提示词已删除" }).waitFor();
     assert.equal(
       (await page.locator(".read-title").innerText()).trim(),
       "多行代码审查",
+      "deleting another row keeps the current detail",
     );
+    // 撤销恢复
+    await page.locator(".toast .toast-action", { hasText: "撤销" }).click();
+    await until(
+      async () =>
+        (await page.locator('.filter-tab[data-tab="all"] .count').innerText()).trim() ===
+          "2",
+      "counts restored after undo",
+    );
+    // 回到原选中再删一次并关闭 Toast 彻底清理
+    await page.getByRole("button", { name: "查看 多行代码审查", exact: true }).click();
     await confirmPromptDeletion(page, deletedTitle);
     await until(
       async () =>
@@ -333,6 +340,7 @@ async function confirmPromptDeletion(page, title) {
       "多行代码审查",
       "deleting another row keeps the current detail",
     );
+    await page.getByRole("button", { name: "关闭提示" }).click();
 
     assert.deepEqual(
       await page.locator(".filter-tab").evaluateAll((tabs) =>
@@ -343,11 +351,13 @@ async function confirmPromptDeletion(page, title) {
     assert.ok(
       !(await api(page, "bootstrap")).prompts.some((p) => p.id === deletedId),
     );
-    const restore = await page.evaluate(
-      (id) => window.workbench.call("prompt.restore", { id }),
-      deletedId,
-    );
-    assert.equal(restore.ok, false);
+    await until(async () => {
+      const restore = await page.evaluate(
+        (id) => window.workbench.call("prompt.restore", { id }),
+        deletedId,
+      );
+      return restore.ok === false;
+    }, "prompt purged after toast dismiss");
 
     // 3 & 4. Scenarios 3 & 4: {{项目名称}} + {{ 项目名称 }}, insert variable, click variable locate,
     //    tricky value with newline + $& + <文本> + {{保留原样}}, clipboard verification, transient clear, raw copy

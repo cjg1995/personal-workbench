@@ -4,6 +4,7 @@ import type { Prompt } from "../../shared/types";
 import {
   extractPromptVariables,
   hasActualVariableValue,
+  hasPromptVariables,
   normalizePromptTags,
   promptCharCount,
   replacePromptVariables,
@@ -21,6 +22,7 @@ import {
   setGuard,
 } from "../state";
 import { activeDialog } from "../dialog";
+import { formatDateTime } from "../format";
 import Icon from "../components/Icon.vue";
 import "../prompts.css";
 
@@ -59,7 +61,11 @@ const editor = ref<EditorDraft | null>(null);
 const tagInput = ref("");
 
 const fillSession = ref<FillSession | null>(null);
+const renderedFillSession = ref<FillSession | null>(null);
 const copyError = ref<CopyErrorState | null>(null);
+const renderedCopyError = ref<CopyErrorState | null>(null);
+let fillCloseTimer: ReturnType<typeof setTimeout> | undefined;
+let copyErrorCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
 const titleInputRef = ref<HTMLInputElement>();
 const tagInputRef = ref<HTMLInputElement>();
@@ -147,12 +153,18 @@ const editorVariables = computed(() =>
   editor.value ? extractPromptVariables(editor.value.body) : [],
 );
 
+const unusedTags = computed(() => {
+  if (!editor.value) return [];
+  const current = new Set(editor.value.tags.map((t) => t.toLocaleLowerCase()));
+  return availableTags.value.filter((t) => !current.has(t.toLocaleLowerCase()));
+});
+
 const fillTokens = computed(() =>
-  fillSession.value ? tokenizePrompt(fillSession.value.prompt.body) : [],
+  renderedFillSession.value ? tokenizePrompt(renderedFillSession.value.prompt.body) : [],
 );
 
 const filledCount = computed(() => {
-  const session = fillSession.value;
+  const session = renderedFillSession.value;
   if (!session) return 0;
   return session.names.filter((name) =>
     hasActualVariableValue(session.values[name]),
@@ -174,17 +186,9 @@ function formatCompactDate(iso: string | null | undefined): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-function formatDetailTime(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function isTemplatePrompt(prompt: Prompt): boolean {
-  return extractPromptVariables(prompt.body).length > 0;
-}
+const templateIds = computed(() => new Set(
+  model.prompts.filter((p) => hasPromptVariables(p.body)).map((p) => p.id),
+));
 
 async function canLeave(reason: "navigate" | "close" = "navigate") {
   if (!editor.value || !editorDirty.value) return true;
@@ -210,6 +214,15 @@ watch(context, () => {
 function clearFilters() {
   search.value = "";
   selectedTag.value = "";
+}
+
+function filterByTag(tag: string) {
+  selectedTag.value = selectedTag.value === tag ? "" : tag;
+}
+
+function addSuggestedTag(tag: string) {
+  if (!editor.value) return;
+  editor.value.tags = normalizePromptTags([...editor.value.tags, tag]);
 }
 
 function openCreate() {
@@ -322,10 +335,12 @@ async function saveDraft() {
   if (!e || saving.value) return;
   if (!e.title.trim()) {
     titleInputRef.value?.focus();
+    notify("请先填写提示词标题", true);
     return;
   }
   if (!e.body.trim()) {
     bodyInputRef.value?.focus();
+    notify("请先填写提示词正文", true);
     return;
   }
   commitPendingTags();
@@ -359,13 +374,29 @@ async function saveDraft() {
 async function toggleStar(prompt: Prompt) {
   if (busyAction.value) return;
   busyAction.value = true;
+  const targetId = prompt.id;
+  const nextStarred = !prompt.starred;
   try {
     await attempt(async () => {
       await call<Prompt>("prompt.star", {
-        id: prompt.id,
-        starred: !prompt.starred,
+        id: targetId,
+        starred: nextStarred,
       });
       await reload();
+      notify(nextStarred ? "已收藏" : "已取消收藏", {
+        action: {
+          label: "撤销",
+          run: async () => {
+            await call<Prompt>("prompt.star", {
+              id: targetId,
+              starred: !nextStarred,
+            });
+            await reload();
+            selectedId.value = targetId;
+            notify(nextStarred ? "已取消收藏" : "已恢复收藏");
+          },
+        },
+      });
     });
   } finally {
     busyAction.value = false;
@@ -374,13 +405,14 @@ async function toggleStar(prompt: Prompt) {
 
 async function removePrompt(prompt: Prompt) {
   if (busyAction.value) return;
-  const wasSelected = selectedId.value === prompt.id;
-  const prevIndex = visiblePrompts.value.findIndex((p) => p.id === prompt.id);
+  const targetId = prompt.id;
+  const wasSelected = selectedId.value === targetId;
+  const prevIndex = visiblePrompts.value.findIndex((p) => p.id === targetId);
   busyAction.value = true;
   try {
     await attempt(async () => {
       const removed = await call<Prompt | null>("prompt.delete", {
-        id: prompt.id,
+        id: targetId,
       });
       if (!removed) return;
       await reload();
@@ -388,7 +420,21 @@ async function removePrompt(prompt: Prompt) {
         const list = visiblePrompts.value;
         selectedId.value = list[Math.min(prevIndex, list.length - 1)]?.id ?? null;
       }
-      notify("提示词已删除");
+      notify("提示词已删除", {
+        duration: 8000,
+        action: {
+          label: "撤销",
+          run: async () => {
+            await call<Prompt>("prompt.restore", { id: targetId });
+            await reload();
+            selectedId.value = targetId;
+            notify("已恢复提示词");
+          },
+        },
+        onDismiss: () => {
+          void call("prompt.purge", { id: targetId }).catch(() => {});
+        },
+      });
     });
   } finally {
     busyAction.value = false;
@@ -400,6 +446,11 @@ function closeFillDialog() {
     fillDialogRef.value.close();
   }
   fillSession.value = null;
+  if (fillCloseTimer) clearTimeout(fillCloseTimer);
+  fillCloseTimer = setTimeout(() => {
+    fillCloseTimer = undefined;
+    if (!fillSession.value) renderedFillSession.value = null;
+  }, 140);
 }
 
 function openFillDialog(prompt: Prompt) {
@@ -410,12 +461,18 @@ function openFillDialog(prompt: Prompt) {
   }
   const values: Record<string, string> = {};
   for (const name of vars) values[name] = "";
-  fillSession.value = {
+  if (fillCloseTimer) {
+    clearTimeout(fillCloseTimer);
+    fillCloseTimer = undefined;
+  }
+  const session: FillSession = {
     prompt,
     names: vars,
     values,
     pending: false,
   };
+  fillSession.value = session;
+  renderedFillSession.value = session;
   void nextTick(() => {
     const el = fillDialogRef.value;
     if (el && !el.open) el.showModal();
@@ -440,7 +497,13 @@ function onFillBackdropClick(event: MouseEvent) {
 }
 
 function openCopyError(text: string, error: string, fromFill: boolean) {
-  copyError.value = { text, error, fromFill, retrying: false };
+  if (copyErrorCloseTimer) {
+    clearTimeout(copyErrorCloseTimer);
+    copyErrorCloseTimer = undefined;
+  }
+  const state: CopyErrorState = { text, error, fromFill, retrying: false };
+  copyError.value = state;
+  renderedCopyError.value = state;
   void nextTick(() => {
     const el = copyErrorDialogRef.value;
     if (el && !el.open) el.showModal();
@@ -454,6 +517,11 @@ function closeCopyError() {
     copyErrorDialogRef.value.close();
   }
   copyError.value = null;
+  if (copyErrorCloseTimer) clearTimeout(copyErrorCloseTimer);
+  copyErrorCloseTimer = setTimeout(() => {
+    copyErrorCloseTimer = undefined;
+    if (!copyError.value) renderedCopyError.value = null;
+  }, 140);
 }
 
 function onCopyErrorBackdropClick(event: MouseEvent) {
@@ -513,9 +581,19 @@ async function retryCopyFromError() {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return;
+  if (activeDialog.value) return;
+  if (
+    fillSession.value &&
+    !copyError.value &&
+    (event.ctrlKey || event.metaKey) &&
+    event.key === "Enter"
+  ) {
+    event.preventDefault();
+    if (canCopyFilled.value) void copyFilled();
+    return;
+  }
   if (
     editor.value &&
-    !activeDialog.value &&
     !fillSession.value &&
     !copyError.value &&
     (event.ctrlKey || event.metaKey) &&
@@ -523,6 +601,16 @@ function onKeydown(event: KeyboardEvent) {
   ) {
     event.preventDefault();
     void saveDraft();
+    return;
+  }
+  if (
+    editor.value &&
+    !fillSession.value &&
+    !copyError.value &&
+    event.key === "Escape"
+  ) {
+    event.preventDefault();
+    void cancelEdit();
   }
 }
 
@@ -533,6 +621,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
   if (leaveGuard === canLeave) setGuard(null);
+  if (fillCloseTimer) clearTimeout(fillCloseTimer);
+  if (copyErrorCloseTimer) clearTimeout(copyErrorCloseTimer);
   if (copyErrorDialogRef.value?.open) copyErrorDialogRef.value.close();
   if (fillDialogRef.value?.open) fillDialogRef.value.close();
 });
@@ -574,7 +664,10 @@ onBeforeUnmount(() => {
                 aria-label="搜索提示词"
               />
             </label>
-            <label class="compact-select inline-label">
+            <label
+              v-if="availableTags.length || selectedTag"
+              class="compact-select inline-label"
+            >
               <Icon name="tag" :size="12" />
               <select v-model="selectedTag" aria-label="按标签筛选">
                 <option value="">全部标签</option>
@@ -614,6 +707,7 @@ onBeforeUnmount(() => {
               <article
                 v-for="p in visiblePrompts"
                 :key="p.id"
+                v-memo="[p, p.id === selectedId, busyAction]"
                 class="prompt-row"
                 :class="{ selected: p.id === selectedId }"
                 :data-id="p.id"
@@ -623,15 +717,17 @@ onBeforeUnmount(() => {
                   class="select-prompt"
                   :aria-pressed="p.id === selectedId"
                   :aria-label="'查看 ' + p.title"
+                  :title="templateIds.has(p.id) ? '双击填写变量并复制' : '双击复制提示词'"
                   @click="selectedId = p.id"
+                  @dblclick="openFillDialog(p)"
                 >
                   <span
                     class="prompt-icon"
-                    :class="{ templ: isTemplatePrompt(p) }"
-                    :title="isTemplatePrompt(p) ? '带变量的模板' : '纯文本提示词'"
+                    :class="{ templ: templateIds.has(p.id) }"
+                    :title="templateIds.has(p.id) ? '带变量的模板' : '纯文本提示词'"
                   >
                     <Icon
-                      :name="isTemplatePrompt(p) ? 'braces' : 'paragraph'"
+                      :name="templateIds.has(p.id) ? 'braces' : 'paragraph'"
                       :size="17"
                     />
                   </span>
@@ -709,14 +805,18 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <div v-if="selectedPrompt.tags.length" class="tag-set">
-                <span
+                <button
                   v-for="tag in selectedPrompt.tags"
                   :key="tag"
-                  class="tag-chip"
+                  type="button"
+                  class="tag-chip tag-chip-btn"
+                  :class="{ active: selectedTag === tag }"
+                  :title="selectedTag === tag ? '取消标签筛选' : `筛选标签「${tag}」`"
+                  @click="filterByTag(tag)"
                 >
                   <Icon name="tag" :size="11" />
                   <span>{{ tag }}</span>
-                </span>
+                </button>
               </div>
             </div>
 
@@ -737,7 +837,7 @@ onBeforeUnmount(() => {
               <div class="entry-line">
                 <span class="inline-caption">
                   <Icon name="history" :size="13" />
-                  <span>更新于 {{ formatDetailTime(selectedPrompt.updatedAt) }}</span>
+                  <span>更新于 {{ formatDateTime(selectedPrompt.updatedAt) }}</span>
                 </span>
                 <span v-if="selectedVariables.length" class="inline-caption">
                   <Icon name="braces" :size="13" />
@@ -795,7 +895,7 @@ onBeforeUnmount(() => {
           <div class="form-head">
             <h2>
               <Icon name="penbox" :size="17" />
-              编辑内容
+              {{ editor.id ? "编辑提示词" : "新建提示词" }}
             </h2>
             <div class="form-actions">
               <span v-if="editorDirty" class="form-status">未保存</span>
@@ -852,6 +952,18 @@ onBeforeUnmount(() => {
                   autocomplete="off"
                   @keydown="onTagKeydown"
                 />
+              </div>
+              <div v-if="unusedTags.length" class="tag-suggestions">
+                <span class="tag-suggestions-label">已有标签</span>
+                <button
+                  v-for="tag in unusedTags"
+                  :key="tag"
+                  type="button"
+                  class="tag-suggest-btn"
+                  @click="addSuggestedTag(tag)"
+                >
+                  + {{ tag }}
+                </button>
               </div>
             </div>
 
@@ -951,7 +1063,7 @@ onBeforeUnmount(() => {
       @cancel.prevent="closeFillDialog"
       @click="onFillBackdropClick"
     >
-      <template v-if="fillSession">
+      <template v-if="renderedFillSession">
         <div class="dialog-header">
           <div class="dialog-heading">
             <span class="dialog-symbol">
@@ -959,7 +1071,7 @@ onBeforeUnmount(() => {
             </span>
             <div>
               <h2 id="fill-dialog-title">填写变量并复制</h2>
-              <p>{{ fillSession.prompt.title }}</p>
+              <p>{{ renderedFillSession.prompt.title }}</p>
             </div>
           </div>
           <button
@@ -977,19 +1089,19 @@ onBeforeUnmount(() => {
             <div class="fill-subhead">
               <h3>本次取值</h3>
               <span class="trailing"
-                >已填写 {{ filledCount }} / {{ fillSession.names.length }}</span
+                >已填写 {{ filledCount }} / {{ renderedFillSession.names.length }}</span
               >
             </div>
             <div class="fill-fields">
               <div
-                v-for="(varName, idx) in fillSession.names"
+                v-for="(varName, idx) in renderedFillSession.names"
                 :key="varName"
                 class="form-group"
               >
                 <label :for="'prompt-var-' + idx">{{ varName }}</label>
                 <textarea
                   :id="'prompt-var-' + idx"
-                  :value="fillSession.values[varName]"
+                  :value="renderedFillSession.values[varName]"
                   class="value-input"
                   rows="2"
                   data-var-input
@@ -1016,9 +1128,9 @@ onBeforeUnmount(() => {
               >
                 <template v-if="token.name">
                   <span
-                    v-if="hasActualVariableValue(fillSession.values[token.name])"
+                    v-if="hasActualVariableValue(renderedFillSession.values[token.name])"
                     class="replacement"
-                    >{{ fillSession.values[token.name] }}</span
+                    >{{ renderedFillSession.values[token.name] }}</span
                   >
                   <span v-else class="placeholder">{{ token.raw }}</span>
                 </template>
@@ -1038,10 +1150,11 @@ onBeforeUnmount(() => {
               type="button"
               class="btn primary"
               :disabled="!canCopyFilled"
+              title="复制到剪贴板（Ctrl+Enter）"
               @click="copyFilled"
             >
               <Icon name="copy-p" :size="15" />
-              <span>{{ fillSession.pending ? "正在复制…" : "复制到剪贴板" }}</span>
+              <span>{{ renderedFillSession.pending ? "正在复制…" : "复制到剪贴板" }}</span>
             </button>
           </div>
         </div>
@@ -1056,7 +1169,7 @@ onBeforeUnmount(() => {
       @cancel.prevent="closeCopyError"
       @click="onCopyErrorBackdropClick"
     >
-      <template v-if="copyError">
+      <template v-if="renderedCopyError">
         <div class="dialog-header">
           <div class="dialog-heading">
             <span class="dialog-symbol warn">
@@ -1078,12 +1191,12 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="copy-error-body">
-          <div v-if="copyError.error" class="copy-error-reason">
-            {{ copyError.error }}
+          <div v-if="renderedCopyError.error" class="copy-error-reason">
+            {{ renderedCopyError.error }}
           </div>
           <textarea
             ref="manualCopyAreaRef"
-            :value="copyError.text"
+            :value="renderedCopyError.text"
             class="manual-copy-area"
             readonly
             aria-label="待手动复制的正文"
@@ -1099,11 +1212,11 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="btn primary"
-              :disabled="copyError.retrying"
+              :disabled="renderedCopyError.retrying"
               @click="retryCopyFromError"
             >
               <Icon name="refresh" :size="14" />
-              <span>{{ copyError.retrying ? "正在重试…" : "重试复制" }}</span>
+              <span>{{ renderedCopyError.retrying ? "正在重试…" : "重试复制" }}</span>
             </button>
           </div>
         </div>

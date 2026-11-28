@@ -1,0 +1,278 @@
+/* ==========================================================================
+   统一动效系统（主窗口 / 差异对比窗口 / 代码编辑器窗口共用）
+   ========================================================================== */
+
+:root {
+  /* 时长令牌：收敛为 4 档可感知梯度 */
+  --motion-instant: 80ms;   /* 密集列表行悬停、按下反馈 */
+  --motion-fast: 120ms;     /* 按钮/输入框状态变化、下拉浮层、切页淡入 */
+  --motion-base: 160ms;     /* 模态弹窗、Toast 入场 */
+  --motion-slow: 200ms;     /* 侧栏收起展开等结构性位移 */
+
+  /* 退场时长：约为入场的 70%～75%，收起更利落 */
+  --motion-exit-fast: 90ms;
+  --motion-exit-base: 120ms;
+
+  /* 缓动曲线 */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* 兼容既有样式变量 */
+  --dur: var(--motion-fast);
+  --ease: var(--ease-out);
+}
+
+/* Vue <Transition name="pop">：向下展开的下拉菜单、选择器、右键菜单 */
+.pop-enter-active,
+.pop-up-enter-active {
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.pop-leave-active,
+.pop-up-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--motion-exit-fast) var(--ease-in),
+    transform var(--motion-exit-fast) var(--ease-in);
+}
+
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+}
+
+/* Vue <Transition name="pop-up">：向上展开的浮层（如 .ops-up） */
+.pop-up-enter-from,
+.pop-up-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+/* 原生 <details> 展开菜单的入场对齐 */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+/* Vue <Transition name="bar">：全宽工具条展开收起（不做水平缩放避免两侧露白） */
+.bar-enter-active {
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.bar-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--motion-exit-fast) var(--ease-in),
+    transform var(--motion-exit-fast) var(--ease-in);
+}
+
+.bar-enter-from,
+.bar-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* Vue <Transition name="fade">：纯遮罩淡入淡出 */
+.fade-enter-active {
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.fade-leave-active {
+  pointer-events: none;
+  transition: opacity var(--motion-exit-fast) var(--ease-in);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Vue <Transition name="overlay-pop">：带遮罩的顶部快速面板（跳转、切换器、命令面板） */
+.overlay-pop-enter-active {
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.overlay-pop-leave-active {
+  pointer-events: none;
+  transition: opacity var(--motion-exit-fast) var(--ease-in);
+}
+
+.overlay-pop-enter-active > * {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.overlay-pop-leave-active > * {
+  transition: transform var(--motion-exit-fast) var(--ease-in);
+}
+
+.overlay-pop-enter-from,
+.overlay-pop-leave-to {
+  opacity: 0;
+}
+
+.overlay-pop-enter-from > *,
+.overlay-pop-leave-to > * {
+  transform: translateY(-4px) scale(0.985);
+}
+
+/* Vue <Transition name="modal">：带遮罩的居中模态弹窗（如 .git-dialog-overlay） */
+.modal-enter-active {
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+.modal-leave-active {
+  pointer-events: none;
+  transition: opacity var(--motion-exit-base) var(--ease-in);
+}
+
+.modal-enter-active > * {
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.modal-leave-active > * {
+  transition: transform var(--motion-exit-base) var(--ease-in);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from > *,
+.modal-leave-to > * {
+  transform: translateY(6px) scale(0.985);
+}
+
+/* Vue <Transition name="toast">：底部提示条入场、退场与连续替换微反馈 */
+.toast-enter-active {
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.toast-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--motion-exit-base) var(--ease-in),
+    transform var(--motion-exit-base) var(--ease-in);
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.toast.toast-refresh {
+  animation: toast-refresh var(--motion-fast) var(--ease-out);
+}
+
+@keyframes toast-refresh {
+  from {
+    opacity: 0.78;
+    transform: translateY(4px);
+  }
+}
+
+/* 原生 <dialog> 入场与退场过渡（Chromium @starting-style + allow-discrete） */
+.ui-msg-dialog,
+.rules-dialog,
+.prompt-dialog {
+  opacity: 0;
+  transform: translateY(6px) scale(0.985);
+  transition:
+    opacity var(--motion-exit-base) var(--ease-in),
+    transform var(--motion-exit-base) var(--ease-in),
+    overlay var(--motion-exit-base) allow-discrete,
+    display var(--motion-exit-base) allow-discrete;
+}
+
+.ui-msg-dialog:not([open]),
+.rules-dialog:not([open]),
+.prompt-dialog:not([open]),
+.ui-msg-dialog:not([open])::backdrop,
+.rules-dialog:not([open])::backdrop,
+.prompt-dialog:not([open])::backdrop {
+  pointer-events: none;
+}
+
+.ui-msg-dialog[open],
+.rules-dialog[open],
+.prompt-dialog[open] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out),
+    overlay var(--motion-base) allow-discrete,
+    display var(--motion-base) allow-discrete;
+}
+
+@starting-style {
+  .ui-msg-dialog[open],
+  .rules-dialog[open],
+  .prompt-dialog[open] {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+.ui-msg-dialog::backdrop,
+.rules-dialog::backdrop,
+.prompt-dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity var(--motion-exit-base) var(--ease-in),
+    overlay var(--motion-exit-base) allow-discrete,
+    display var(--motion-exit-base) allow-discrete;
+}
+
+.ui-msg-dialog[open]::backdrop,
+.rules-dialog[open]::backdrop,
+.prompt-dialog[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    overlay var(--motion-base) allow-discrete,
+    display var(--motion-base) allow-discrete;
+}
+
+@starting-style {
+  .ui-msg-dialog[open]::backdrop,
+  .rules-dialog[open]::backdrop,
+  .prompt-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* 页面切换：只做快速淡入，不带退场延迟、不改变几何坐标 */
+.workarea.page-entering {
+  animation: page-in var(--motion-fast) var(--ease-out);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 系统级“减少动态效果”统一降级（覆盖全部三个窗口与 ::backdrop） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  ::backdrop {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -11,6 +11,7 @@ import { TaskManager } from "../src/core/tasks.js";
 import { BackupService } from "../src/core/backup.js";
 import {
   extractPromptVariables,
+  hasPromptVariables,
   hasActualVariableValue,
   normalizePromptTags,
   replacePromptVariables,
@@ -47,6 +48,9 @@ test("模板解析：支持中文与首尾空格归一，忽略空占位符、�
   ].join("\n");
 
   assert.deepEqual(extractPromptVariables(body), ["项目名称", "A", "B"]);
+  for (const line of body.split("\n")) {
+    assert.equal(hasPromptVariables(line), extractPromptVariables(line).length > 0);
+  }
 
   const tokens = tokenizePrompt(body);
   const varTokens = tokens.filter((t) => t.name);
@@ -189,7 +193,7 @@ test("备份恢复保留现存提示词，兼容无提示词的旧备份并拒�
     f.prompts.save({ id: active.id, title: "已被改动", body: "改后正文" });
     f.prompts.save({ title: "备份后新增", body: "新正文" });
 
-    const preview = f.backup.preview(backupZip);
+    const preview = await f.backup.preview(backupZip);
     assert.equal(preview.counts.prompt, 1);
     assert.equal(preview.currentCounts.prompt, 2);
 
@@ -227,7 +231,7 @@ test("备份恢复保留现存提示词，兼容无提示词的旧备份并拒�
     );
     fs.writeFileSync(legacyZip, zipSync(legacyEntries));
 
-    const legacyPreview = f.backup.preview(legacyZip);
+    const legacyPreview = await f.backup.preview(legacyZip);
     assert.equal(legacyPreview.counts.prompt, 0);
     assert.equal(legacyPreview.counts.note, 1);
 
@@ -275,7 +279,10 @@ test("升级和旧备份恢复时清理历史删除标记，保留现存提示�
     const { manifest } = await f.backup.create(file);
     const archive = unzipSync(fs.readFileSync(file));
     archive["manifest.json"] = strToU8(
-      JSON.stringify({ ...manifest, counts: f.store.counts() }),
+      JSON.stringify({
+        ...manifest,
+        counts: { ...manifest.counts, prompt: 2, note: 2 },
+      }),
     );
     fs.writeFileSync(file, zipSync(archive));
 
@@ -287,7 +294,7 @@ test("升级和旧备份恢复时清理历史删除标记，保留现存提示�
       reopened.close();
     }
 
-    const preview = f.backup.preview(file);
+    const preview = await f.backup.preview(file);
     assert.equal(preview.manifest.counts.prompt, 2);
     assert.equal(preview.manifest.counts.note, 2);
     assert.equal(preview.counts.prompt, 1);
@@ -298,6 +305,34 @@ test("升级和旧备份恢复时清理历史删除标记，保留现存提示�
     assert.equal(f.store.get("note", "old-note"), undefined);
     assert.deepEqual(f.prompts.get(prompt.id), { ...prompt, deletedAt: null });
     assert.deepEqual(f.records.get(note.id), note);
+  } finally {
+    f.store.close();
+  }
+});
+
+test("提示词软删除支持撤销恢复与清理，恢复后保留收藏、标签和编辑时间", () => {
+  const f = fixture();
+  try {
+    const created = f.prompts.save({
+      title: "软删除验证",
+      body: "正文 {{变量}}",
+      tags: ["效率", "写作"],
+    });
+    const starred = f.prompts.star(created.id, true);
+    const soft = f.prompts.softRemove(starred.id);
+    assert.ok(soft.deletedAt);
+    assert.equal(f.prompts.list().length, 0);
+    assert.throws(() => f.prompts.get(starred.id), /不存在/);
+
+    const restored = f.prompts.restore(starred.id);
+    assert.deepEqual(restored, starred);
+    assert.equal(f.prompts.purge(starred.id), false);
+    assert.equal(f.prompts.list().length, 1);
+
+    f.prompts.softRemove(starred.id);
+    assert.equal(f.prompts.purge(starred.id), true);
+    assert.equal(f.store.get("prompt", starred.id), undefined);
+    assert.throws(() => f.prompts.restore(starred.id), /无法恢复/);
   } finally {
     f.store.close();
   }

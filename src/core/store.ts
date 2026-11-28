@@ -32,9 +32,9 @@ export class Store {
       create table objects (kind text not null, id text not null, value text not null check(json_valid(value)), updated_at text not null, primary key(kind,id));
       pragma user_version=1; commit;`);
     this.assertHealthy();
-    this.purgeLegacyDeletedEntries();
+    this.purgeDeleted();
   }
-  private purgeLegacyDeletedEntries() {
+  purgeDeleted() {
     this.db.exec(`delete from objects
       where kind in ('note', 'prompt')
         and json_type(value, '$.deletedAt') = 'text'
@@ -98,14 +98,23 @@ export class Store {
     try {
       this.db.exec("pragma journal_mode=WAL; pragma busy_timeout=5000;");
       this.assertHealthy();
-      this.purgeLegacyDeletedEntries();
+      this.purgeDeleted();
     } catch (e) {
       this.db.close();
       throw e;
     }
   }
   counts() {
-    return Object.fromEntries(buckets.map((b) => [b, this.list(b).length]));
+    const rows = this.db.prepare(`
+      select kind, count(*) total
+      from objects
+      where kind not in ('note', 'prompt')
+         or json_type(value, '$.deletedAt') is not 'text'
+         or json_extract(value, '$.deletedAt') = ''
+      group by kind
+    `).all() as { kind: string; total: number }[];
+    const totals = new Map(rows.map((row) => [row.kind, row.total]));
+    return Object.fromEntries(buckets.map((kind) => [kind, totals.get(kind) ?? 0]));
   }
   static inspect(file: string) {
     const db = new DatabaseSync(file, { readOnly: true });
@@ -118,11 +127,11 @@ export class Store {
         db.prepare("pragma user_version").get() as { user_version: number }
       ).user_version;
       if (v !== 1) throw new Error("备份数据版本不支持");
-      const rows = db.prepare("select kind,id,value from objects").all() as {
+      const rows = db.prepare("select kind,id,value from objects").iterate() as Iterable<{
         kind: string;
         id: string;
         value: string;
-      }[];
+      }>;
       const counts = Object.fromEntries(buckets.map((b) => [b, 0]));
       for (const row of rows) {
         if (!buckets.includes(row.kind as Bucket))

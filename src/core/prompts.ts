@@ -9,6 +9,7 @@ export class PromptsService {
   list(): Prompt[] {
     return this.store
       .list<Prompt>("prompt")
+      .filter((p) => !p.deletedAt)
       .sort(
         (a, b) =>
           Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
@@ -21,7 +22,7 @@ export class PromptsService {
       "prompt",
       requireText(promptId, "提示词 ID", 100),
     );
-    if (!prompt) throw new Error("提示词不存在");
+    if (!prompt || prompt.deletedAt) throw new Error("提示词不存在");
     return prompt;
   }
 
@@ -78,5 +79,33 @@ export class PromptsService {
     const prompt = this.get(promptId);
     this.store.delete("prompt", prompt.id);
     return prompt;
+  }
+
+  softRemove(promptId: string): Prompt {
+    const prompt = this.get(promptId);
+    const deleted: Prompt = { ...prompt, deletedAt: now() };
+    return this.store.set("prompt", prompt.id, deleted);
+  }
+
+  restore(promptId: string): Prompt {
+    const prompt = this.store.get<Prompt>(
+      "prompt",
+      requireText(promptId, "提示词 ID", 100),
+    );
+    if (!prompt || !prompt.deletedAt) {
+      throw new Error("提示词已清理或无法恢复");
+    }
+    const restored: Prompt = { ...prompt, deletedAt: null };
+    return this.store.set("prompt", restored.id, restored);
+  }
+
+  purge(promptId: string): boolean {
+    const prompt = this.store.get<Prompt>(
+      "prompt",
+      requireText(promptId, "提示词 ID", 100),
+    );
+    if (!prompt || !prompt.deletedAt) return false;
+    this.store.delete("prompt", prompt.id);
+    return true;
   }
 }

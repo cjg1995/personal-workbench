@@ -206,7 +206,7 @@ export class ProjectService {
         for (const f of fs.readdirSync(shared))
           if (f.endsWith(".xml")) docs.push(xml(path.join(shared, f)));
       const workspace = path.join(p.path, ".idea", "workspace.xml");
-      if (fs.existsSync(workspace)) docs.push(xml(workspace));
+      if (fs.existsSync(workspace)) docs.push(xml(workspace, "workspace:" + p.id));
       const run = docs
         .flatMap((d) => Array.from(d.getElementsByTagName("configuration")))
         .find(
@@ -338,7 +338,7 @@ export class ProjectService {
       };
     }
     if (p.type === "spring") {
-      const workspace = xml(path.join(p.path, ".idea", "workspace.xml"));
+      const workspace = xml(path.join(p.path, ".idea", "workspace.xml"), "workspace:" + p.id);
       const run = Array.from(
         workspace.getElementsByTagName("configuration"),
       ).find(

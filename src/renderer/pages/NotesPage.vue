@@ -23,9 +23,11 @@ import {
   formatGroupDate,
   formatMonthDay,
   formatMonthTitle,
+  formatNoteLabel,
+  formatNotePreview,
+  formatNoteText,
   formatTimeHM,
   getMonthDays,
-  splitNoteText,
   weekdayChar,
 } from "../format";
 import Icon from "../components/Icon.vue";
@@ -69,6 +71,8 @@ const editTextarea = ref<HTMLTextAreaElement>();
 const workListRef = ref<HTMLElement>();
 const editor = ref<Note | null>(null);
 const baseline = ref("");
+const nowMs = ref(Date.now());
+let overdueTimer: ReturnType<typeof setInterval> | undefined;
 const editDeadline = computed({
   get: () => localDeadline(editor.value?.dueAt),
   set: (value: string) => {
@@ -77,6 +81,12 @@ const editDeadline = computed({
     catch { notify("请选择有效的截止时间", true); }
   },
 });
+
+function isOverdue(note: Note | null | undefined): boolean {
+  if (!note || note.kind !== "idea" || note.completedAt || !note.dueAt) return false;
+  const ts = Date.parse(note.dueAt);
+  return Number.isFinite(ts) && ts < nowMs.value;
+}
 
 const currentYear = computed(
   () => Number(model.today.slice(0, 4)) || new Date().getFullYear(),
@@ -293,7 +303,7 @@ const ideaGroups = computed(() => {
   return Array.from(map.values());
 });
 
-const editorParts = computed(() => splitNoteText(editor.value?.text || ""));
+const editorText = computed(() => formatNoteText(editor.value?.text || ""));
 
 async function canLeave() {
   return (
@@ -312,9 +322,21 @@ function closeMonthPicker() {
   monthPickerOpen.value = false;
 }
 
+function onWindowKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && monthPickerOpen.value) {
+    monthPickerOpen.value = false;
+  }
+}
+
 onMounted(() => {
   window.addEventListener("click", closeMonthPicker);
+  window.addEventListener("keydown", onWindowKeydown);
   window.addEventListener("resize", resizeComposer);
+  if (props.kind === "idea") {
+    overdueTimer = setInterval(() => {
+      nowMs.value = Date.now();
+    }, 30_000);
+  }
   void nextTick(() => {
     resizeComposer();
     if (prefilledText) {
@@ -330,7 +352,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   setGuard(null);
+  if (overdueTimer) clearInterval(overdueTimer);
   window.removeEventListener("click", closeMonthPicker);
+  window.removeEventListener("keydown", onWindowKeydown);
   window.removeEventListener("resize", resizeComposer);
 });
 
@@ -378,7 +402,7 @@ watch(
   },
 );
 
-watch([tab, month], () => {
+watch([tab, month, filtered], () => {
   if (dirty.value) return;
   if (!filtered.value.some((n) => n.id === selected.value)) {
     selected.value = filtered.value[0]?.id || null;
@@ -411,6 +435,19 @@ async function startEdit() {
 
 function cancelEdit() {
   loadEditor();
+}
+
+async function requestCancelEdit() {
+  if (await canLeave()) cancelEdit();
+}
+
+async function copyNote() {
+  const value = editor.value?.text;
+  if (!value) return;
+  await attempt(async () => {
+    await call("clipboard.text", { text: value });
+    notify("已复制到剪贴板");
+  });
 }
 
 async function selectMonth(nextMonth: string) {
@@ -598,12 +635,27 @@ async function toggleComplete(target?: Note) {
       selected.value = filtered.value[0]?.id || null;
     }
     loadEditor();
+    const targetId = item.id;
+    const prevDone = !markingDone;
     notify(
       edit
         ? "已保存并标记完成"
         : markingDone
           ? "已标记完成"
           : "已重新打开待办",
+      {
+        action: {
+          label: "撤销",
+          run: async () => {
+            await call("record.complete", { id: targetId, done: prevDone });
+            await reload();
+            tab.value = prevDone ? "completed" : "active";
+            selected.value = targetId;
+            loadEditor();
+            notify(prevDone ? "已恢复为已完成" : "已恢复为未完成");
+          },
+        },
+      },
     );
   });
   busy.value = false;
@@ -611,17 +663,54 @@ async function toggleComplete(target?: Note) {
 
 async function remove(note: Note) {
   if (busy.value) return;
+  const targetId = note.id;
+  const isIdea = note.kind === "idea";
+  const wasCompleted = !!note.completedAt;
+  const prevIndex = filtered.value.findIndex((n) => n.id === targetId);
+  const wasSelected = selected.value === targetId;
   busy.value = true;
   try {
     await attempt(async () => {
-      const removed = await call<Note | null>("record.delete", { id: note.id });
+      const removed = await call<Note | null>("record.delete", { id: targetId });
       if (!removed) return;
-      if (selected.value === note.id) {
+      if (wasSelected) {
+        editing.value = false;
+        baseline.value = "";
         selected.value = null;
         loadEditor();
       }
       await reload();
-      notify(note.kind === "idea" ? "待办已删除" : "记录已删除");
+      if (wasSelected && !dirty.value) {
+        const list = filtered.value;
+        selected.value = list[Math.min(prevIndex, list.length - 1)]?.id ?? null;
+        loadEditor();
+      }
+      notify(isIdea ? "待办已删除" : "记录已删除", {
+        duration: 8000,
+        action: {
+          label: "撤销",
+          run: async () => {
+            const restored = await call<Note>("record.restore", { id: targetId });
+            await reload();
+            if (!dirty.value) {
+              if (isIdea) tab.value = wasCompleted ? "completed" : "active";
+              else if (
+                month.value &&
+                restored.happenedOn &&
+                !restored.happenedOn.startsWith(month.value)
+              ) {
+                month.value = restored.happenedOn.slice(0, 7);
+              }
+              selected.value = restored.id;
+              loadEditor();
+            }
+            notify(isIdea ? "已恢复待办" : "已恢复工作记录");
+          },
+        },
+        onDismiss: () => {
+          void call("record.purge", { id: targetId }).catch(() => {});
+        },
+      });
     });
   } finally {
     busy.value = false;
@@ -701,6 +790,16 @@ async function createWorkFromIdea() {
       <label v-else class="entry-date-chip">
         <span class="entry-date-label">截止时间</span>
         <input v-model="composerDeadline" type="datetime-local" aria-label="新待办截止时间" />
+        <button
+          v-if="composerDeadline"
+          type="button"
+          class="chip-clear-btn"
+          title="清除截止时间"
+          aria-label="清除截止时间"
+          @click.prevent="composerDeadline = ''"
+        >
+          <Icon name="close" :size="11" />
+        </button>
       </label>
       <button
         type="submit"
@@ -739,12 +838,13 @@ async function createWorkFromIdea() {
           </strong>
         </button>
 
-        <div
-          v-if="monthPickerOpen"
-          class="month-popover"
-          role="dialog"
-          aria-label="选择月份"
-        >
+        <Transition name="pop">
+          <div
+            v-if="monthPickerOpen"
+            class="month-popover"
+            role="dialog"
+            aria-label="选择月份"
+          >
           <div class="month-popover-head">
             <button
               type="button"
@@ -809,13 +909,15 @@ async function createWorkFromIdea() {
               <button
                 type="button"
                 class="text-action"
+                :class="{ current: month === currentMonth }"
                 @click="selectMonth(currentMonth)"
               >
                 本月
               </button>
             </div>
           </div>
-        </div>
+          </div>
+        </Transition>
       </div>
 
       <div
@@ -958,11 +1060,8 @@ async function createWorkFromIdea() {
                     }}</small>
                   </span>
                   <span class="grow">
-                    <span class="item-title">{{ splitNoteText(n.text).title }}</span>
-                    <span v-if="splitNoteText(n.text).body" class="item-description">
-                      {{ splitNoteText(n.text).body }}
-                    </span>
-                    <span v-else-if="n.projectId" class="item-description">
+                    <span class="item-title">{{ formatNotePreview(n.text) }}</span>
+                    <span v-if="n.projectId" class="item-description">
                       {{ projectName(n.projectId) }}
                     </span>
                   </span>
@@ -971,7 +1070,7 @@ async function createWorkFromIdea() {
                   type="button"
                   class="list-delete-button"
                   :disabled="busy"
-                  :aria-label="'删除工作记录 · ' + splitNoteText(n.text).title"
+                  :aria-label="'删除工作记录 · ' + formatNoteLabel(n.text)"
                   title="删除工作记录"
                   @click="remove(n)"
                 >
@@ -991,16 +1090,26 @@ async function createWorkFromIdea() {
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
           <template v-if="editor">
-            <button
-              v-if="!editing"
-              type="button"
-              class="btn compact"
-              @click="startEdit"
-            >
-              <Icon name="penbox" :size="14" />编辑记录
-            </button>
+            <div v-if="!editing" class="row" style="gap: 6px">
+              <button
+                type="button"
+                class="icon-btn small blank"
+                title="复制内容"
+                aria-label="复制记录内容"
+                @click="copyNote"
+              >
+                <Icon name="copy" :size="14" />
+              </button>
+              <button
+                type="button"
+                class="btn compact"
+                @click="startEdit"
+              >
+                <Icon name="penbox" :size="14" />编辑记录
+              </button>
+            </div>
             <div v-else class="row" style="gap: 6px">
-              <button type="button" class="btn compact" @click="cancelEdit">
+              <button type="button" class="btn compact" @click="requestCancelEdit">
                 取消
               </button>
               <button
@@ -1054,15 +1163,7 @@ async function createWorkFromIdea() {
                 title="双击编辑"
                 @dblclick="startEdit()"
               >
-                <h3
-                  :class="{
-                    'long-single':
-                      !editorParts.body && editorParts.title.length > 68,
-                  }"
-                >
-                  {{ editorParts.title }}
-                </h3>
-                <p v-if="editorParts.body">{{ editorParts.body }}</p>
+                <p class="record-content">{{ editorText }}</p>
               </article>
             </template>
 
@@ -1079,7 +1180,7 @@ async function createWorkFromIdea() {
                 </dt>
                 <dd>{{ formatDateTime(editor.createdAt) }}</dd>
               </div>
-              <div>
+              <div v-if="editor.updatedAt !== editor.createdAt">
                 <dt><Icon name="history" :size="14" />最近修改</dt>
                 <dd>{{ formatDateTime(editor.updatedAt) }}</dd>
               </div>
@@ -1202,13 +1303,16 @@ async function createWorkFromIdea() {
                 @click="select(n)"
               >
                 <span class="grow">
-                  <span class="item-title">{{ splitNoteText(n.text).title }}</span>
-                  <span v-if="splitNoteText(n.text).body" class="item-description">
-                    {{ splitNoteText(n.text).body }}
-                  </span>
+                  <span class="item-title">{{ formatNotePreview(n.text) }}</span>
                 </span>
-                <time v-if="n.dueAt" class="idea-time" :datetime="n.dueAt" :title="'截止时间 ' + formatDateTime(n.dueAt)">
-                  到期 {{ formatDateTime(n.dueAt) }}
+                <time
+                  v-if="n.dueAt"
+                  class="idea-time"
+                  :class="{ overdue: isOverdue(n) }"
+                  :datetime="n.dueAt"
+                  :title="(isOverdue(n) ? '已逾期 · ' : '截止时间 ') + formatDateTime(n.dueAt)"
+                >
+                  {{ isOverdue(n) ? "已逾期 · " : "到期 " }}{{ formatDateTime(n.dueAt) }}
                 </time>
                 <span v-else-if="!n.importBatch" class="idea-time">{{
                   formatTimeHM(n.createdAt)
@@ -1218,7 +1322,7 @@ async function createWorkFromIdea() {
                 type="button"
                 class="list-delete-button"
                 :disabled="busy"
-                :aria-label="'删除待办 · ' + splitNoteText(n.text).title"
+                :aria-label="'删除待办 · ' + formatNoteLabel(n.text)"
                 title="删除待办"
                 @click="remove(n)"
               >
@@ -1238,16 +1342,26 @@ async function createWorkFromIdea() {
             <span v-if="dirty" class="badge pending">未保存</span>
           </div>
           <template v-if="editor">
-            <button
-              v-if="!editing"
-              type="button"
-              class="btn compact"
-              @click="startEdit"
-            >
-              <Icon name="penbox" :size="14" />编辑
-            </button>
+            <div v-if="!editing" class="row" style="gap: 6px">
+              <button
+                type="button"
+                class="icon-btn small blank"
+                title="复制内容"
+                aria-label="复制待办内容"
+                @click="copyNote"
+              >
+                <Icon name="copy" :size="14" />
+              </button>
+              <button
+                type="button"
+                class="btn compact"
+                @click="startEdit"
+              >
+                <Icon name="penbox" :size="14" />编辑
+              </button>
+            </div>
             <div v-else class="row" style="gap: 6px">
-              <button type="button" class="btn compact" @click="cancelEdit">
+              <button type="button" class="btn compact" @click="requestCancelEdit">
                 取消
               </button>
               <button
@@ -1277,34 +1391,40 @@ async function createWorkFromIdea() {
                     required
                   />
                 </label>
-                <label class="detail-edit-row todo-edit-deadline">
-                  <span>截止时间</span>
-                  <input v-model="editDeadline" type="datetime-local" />
-                </label>
+                <div class="detail-edit-row todo-edit-deadline">
+                  <label class="detail-edit-row-inner">
+                    <span>截止时间</span>
+                    <input v-model="editDeadline" type="datetime-local" />
+                  </label>
+                  <button
+                    v-if="editDeadline"
+                    type="button"
+                    class="text-action"
+                    @click="editDeadline = ''"
+                  >
+                    清除
+                  </button>
+                </div>
               </div>
             </template>
 
             <template v-else>
-              <h3
-                class="editable"
-                :class="{
-                  'long-single':
-                    !editorParts.body && editorParts.title.length > 60,
-                }"
+              <p
+                class="idea-content editable"
                 title="双击编辑"
                 @dblclick="startEdit()"
               >
-                {{ editorParts.title }}
-              </h3>
-              <p v-if="editorParts.body" class="idea-body">
-                {{ editorParts.body }}
+                {{ editorText }}
               </p>
             </template>
 
             <dl class="record-fields">
               <div v-if="editor.dueAt && !editing">
                 <dt><Icon name="calendar2" :size="14" />截止时间</dt>
-                <dd><time :datetime="editor.dueAt">{{ formatDateTime(editor.dueAt) }}</time></dd>
+                <dd class="row" style="gap: 8px; align-items: center">
+                  <time :datetime="editor.dueAt">{{ formatDateTime(editor.dueAt) }}</time>
+                  <span v-if="isOverdue(editor)" class="badge danger">已逾期</span>
+                </dd>
               </div>
               <div>
                 <dt>
@@ -1314,7 +1434,7 @@ async function createWorkFromIdea() {
                 </dt>
                 <dd>{{ formatDateTime(editor.createdAt) }}</dd>
               </div>
-              <div>
+              <div v-if="editor.updatedAt !== editor.createdAt">
                 <dt><Icon name="history" :size="14" />最近修改</dt>
                 <dd>{{ formatDateTime(editor.updatedAt) }}</dd>
               </div>

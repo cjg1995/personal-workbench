@@ -1220,3 +1220,197 @@ test("ConfigService 自动迁移全部项目默认未跟踪规则、保留用户
     /隐藏全部未跟踪文件/,
   );
 });
+test("仅存在未跟踪文件（含项目规则隐藏文件）不阻断 Pull/Merge/Rebase/Revert/Cherry-pick/Undo，冲突时仍保护本地文件", async () => {
+  const f = fixture(false, { include: ["pages/"], exclude: ["*.rar"] });
+  try {
+    const remote = path.join(root, "remote-untracked-" + randomUUID());
+    fs.mkdirSync(remote);
+    git(remote, "init", "--bare");
+    git(f.repo, "remote", "add", "origin", remote);
+    const preview = await f.client.pushPreview(f.repo, "origin", "dev");
+    await f.client.execute(f.repo, "push", {
+      remote: "origin",
+      branch: "dev",
+      head: preview.head,
+    });
+
+    const other = path.join(root, "clone-untracked-" + randomUUID());
+    git(root, "clone", "-b", "dev", remote, other);
+    git(other, "config", "user.name", "Remote");
+    git(other, "config", "user.email", "remote@example.invalid");
+    git(other, "config", "commit.gpgsign", "false");
+
+    // 创建被项目规则隐藏的未跟踪文件与可见的未跟踪文件
+    write(f.repo, "AGENTS.md", "hidden root note\n");
+    write(f.repo, "pages/backup.rar", "hidden archive\n");
+    write(f.repo, "pages/draft.vue", "visible untracked\n");
+
+    const beforeStatus = await f.client.status(f.repo);
+    assert.equal(beforeStatus.files.every((file) => file.untracked), true);
+    assert.equal(
+      beforeStatus.files.find((file) => file.path === "AGENTS.md")
+        ?.inTrackedDirectory,
+      false,
+    );
+    assert.equal(
+      beforeStatus.files.find((file) => file.path === "pages/backup.rar")
+        ?.inTrackedDirectory,
+      false,
+    );
+    assert.equal(
+      beforeStatus.files.find((file) => file.path === "pages/draft.vue")
+        ?.inTrackedDirectory,
+      true,
+    );
+
+    // 1) Pull Merge
+    write(other, "remote-merge.txt", "merge ok\n");
+    git(other, "add", ".");
+    git(other, "commit", "-m", "remote merge");
+    git(other, "push");
+    await f.client.execute(f.repo, "fetch");
+    await f.client.execute(f.repo, "pull", { strategy: "merge" });
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "remote-merge.txt"), "utf8"),
+      "merge ok\n",
+    );
+
+    // 2) Pull Rebase（真实分叉提交）
+    write(f.repo, "local-commit.txt", "local\n");
+    git(f.repo, "add", "local-commit.txt");
+    git(f.repo, "commit", "-m", "local commit");
+    write(other, "remote-rebase.txt", "rebase ok\n");
+    git(other, "add", ".");
+    git(other, "commit", "-m", "remote rebase");
+    git(other, "push");
+    await f.client.execute(f.repo, "fetch");
+    await f.client.execute(f.repo, "pull", { strategy: "rebase" });
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "remote-rebase.txt"), "utf8"),
+      "rebase ok\n",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "local-commit.txt"), "utf8"),
+      "local\n",
+    );
+
+    // 3) Pull 遇到远端新增同名文件时，由 Git 安全拦截且保留本地未跟踪文件
+    write(other, "AGENTS.md", "remote collision\n");
+    git(other, "add", "AGENTS.md");
+    git(other, "commit", "-m", "remote collide untracked");
+    git(other, "push");
+    await f.client.execute(f.repo, "fetch");
+    await assert.rejects(
+      f.client.execute(f.repo, "pull", { strategy: "merge" }),
+      (err: Error) => !/先提交或 Stash/.test(err.message),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "AGENTS.md"), "utf8"),
+      "hidden root note\n",
+    );
+
+    // 4) Merge / Rebase / Revert / Cherry-pick / Undo-last 均允许仅存在未跟踪文件
+    await f.client.execute(f.repo, "create-branch", {
+      name: "topic/extra",
+      ref: "HEAD",
+    });
+    await f.client.execute(f.repo, "checkout", { branch: "topic/extra" });
+    write(f.repo, "topic.txt", "topic\n");
+    git(f.repo, "add", "topic.txt");
+    git(f.repo, "commit", "-m", "topic commit");
+    const topicCommit = git(f.repo, "rev-parse", "HEAD");
+    await f.client.execute(f.repo, "checkout", { branch: "dev" });
+
+    await f.client.execute(f.repo, "cherry-pick", { ref: topicCommit });
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "topic.txt"), "utf8"),
+      "topic\n",
+    );
+    const pickedCommit = git(f.repo, "rev-parse", "HEAD");
+    await f.client.execute(f.repo, "revert", { ref: pickedCommit });
+    assert.equal(fs.existsSync(path.join(f.repo, "topic.txt")), false);
+
+    // Undo-last 撤销刚才未推送的 revert 提交
+    const beforeUndo = git(f.repo, "rev-parse", "HEAD");
+    await f.client.execute(f.repo, "undo-last", { head: beforeUndo });
+    assert.equal(git(f.repo, "rev-parse", "HEAD"), pickedCommit);
+    // 清理 undo-last 留下的已暂存更改后再测 merge & rebase
+    git(f.repo, "restore", "--staged", "topic.txt");
+    git(f.repo, "restore", "--worktree", "topic.txt");
+
+    await f.client.execute(f.repo, "create-branch", {
+      name: "topic/merge-src",
+      ref: "HEAD",
+    });
+    await f.client.execute(f.repo, "checkout", { branch: "topic/merge-src" });
+    write(f.repo, "merged.txt", "merged\n");
+    git(f.repo, "add", "merged.txt");
+    git(f.repo, "commit", "-m", "merge src");
+    await f.client.execute(f.repo, "checkout", { branch: "dev" });
+    await f.client.execute(f.repo, "merge", { ref: "topic/merge-src", noFF: true });
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "merged.txt"), "utf8"),
+      "merged\n",
+    );
+
+    await f.client.execute(f.repo, "create-branch", {
+      name: "topic/rebase-base",
+      ref: "HEAD",
+    });
+    await f.client.execute(f.repo, "checkout", { branch: "topic/rebase-base" });
+    write(f.repo, "rebased.txt", "rebased\n");
+    git(f.repo, "add", "rebased.txt");
+    git(f.repo, "commit", "-m", "rebase base");
+    await f.client.execute(f.repo, "checkout", { branch: "dev" });
+    await f.client.execute(f.repo, "rebase", { ref: "topic/rebase-base" });
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "rebased.txt"), "utf8"),
+      "rebased\n",
+    );
+
+    // 所有未跟踪文件自始至终保持完整
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "AGENTS.md"), "utf8"),
+      "hidden root note\n",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "pages/backup.rar"), "utf8"),
+      "hidden archive\n",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(f.repo, "pages/draft.vue"), "utf8"),
+      "visible untracked\n",
+    );
+
+    // 5) 一旦存在已跟踪修改（含已暂存的新增文件），所有写操作仍正常拦截
+    await f.client.execute(f.repo, "stage", { files: ["pages/draft.vue"] });
+    await assert.rejects(
+      f.client.execute(f.repo, "pull", { strategy: "merge" }),
+      /先提交或 Stash/,
+    );
+    await assert.rejects(
+      f.client.execute(f.repo, "merge", { ref: "topic/extra" }),
+      /先提交或 Stash/,
+    );
+    await assert.rejects(
+      f.client.execute(f.repo, "rebase", { ref: "topic/extra" }),
+      /先提交或 Stash/,
+    );
+    await assert.rejects(
+      f.client.execute(f.repo, "revert", { ref: pickedCommit }),
+      /先提交或 Stash/,
+    );
+    await assert.rejects(
+      f.client.execute(f.repo, "cherry-pick", { ref: topicCommit }),
+      /先提交或 Stash/,
+    );
+    await assert.rejects(
+      f.client.execute(f.repo, "undo-last", {
+        head: git(f.repo, "rev-parse", "HEAD"),
+      }),
+      /无本地修改/,
+    );
+  } finally {
+    f.store.close();
+  }
+});

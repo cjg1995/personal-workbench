@@ -128,6 +128,7 @@
   padding: 8px;
   background: var(--paper);
   box-shadow: var(--shadow-md);
+  transform-origin: top left;
 }
 
 .git-quick-branch-menu > input {
@@ -373,7 +374,7 @@
   border-bottom: 1px solid var(--line-light);
   cursor: pointer;
   user-select: none;
-  transition: background var(--dur) var(--ease);
+  transition: background var(--motion-instant) var(--ease-out);
 }
 
 .git-file-row.rich:hover {
@@ -484,8 +485,9 @@
 
 .file-diff-btn {
   opacity: 0;
-  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+  transition: opacity var(--motion-instant) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .git-file-row.rich:hover .file-diff-btn,
@@ -510,7 +512,7 @@
   cursor: pointer;
   user-select: none;
   border-bottom: 1px solid var(--line-light);
-  transition: background var(--dur) var(--ease);
+  transition: background var(--motion-instant) var(--ease-out);
 }
 
 .git-file-row.detail:hover {
@@ -563,6 +565,7 @@
   border-bottom: 1px solid var(--line-light);
   font-size: 12px;
   white-space: nowrap;
+  transition: background var(--motion-instant) var(--ease-out);
 }
 
 .git-file-row:not(.rich):not(.detail):hover {
@@ -803,6 +806,15 @@
 .git-dropdown {
   top: calc(100% + 4px);
   right: 0;
+  transform-origin: top right;
+}
+
+.git-dropdown.ops-up {
+  transform-origin: bottom right;
+}
+
+.git-more[open] > .git-dropdown {
+  animation: pop-in var(--motion-fast) var(--ease-out);
 }
 
 .git-dropdown button,
@@ -830,6 +842,7 @@
 
 .git-context-menu {
   position: fixed;
+  transform-origin: top left;
 }
 
 /* Git Log / 分支 / Stash 卡片视图 */
@@ -884,6 +897,7 @@
   padding: 0 9px;
   font-size: 12px;
   white-space: nowrap;
+  transition: background var(--motion-instant) var(--ease-out);
 }
 
 .git-log-input {
@@ -936,6 +950,7 @@
   text-align: left;
   white-space: nowrap;
   font-size: 12px !important;
+  transition: background var(--motion-instant) var(--ease-out);
 }
 
 .git-log-row.active {
@@ -1012,12 +1027,15 @@
   left: 2px;
   width: 1px;
   background: var(--line);
-  transition: background var(--dur) var(--ease), width var(--dur) var(--ease);
+  transform-origin: left center;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .git-log-splitter:hover::after,
 .git-log-layout.resizing .git-log-splitter::after {
-  width: 2px;
+  transform: scaleX(2);
   background: var(--brand);
 }
 
@@ -1460,6 +1478,20 @@
   color: var(--warning-ink);
 }
 
+.submit-diff-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.submit-diff-stage .diff-nav-pill {
+  top: 8px;
+  right: 22px;
+}
+
 .submit-diff-host {
   flex: 1;
   min-height: 0;
@@ -1622,7 +1654,10 @@ body:has(.diff-window) #app {
   min-height: 27px;
   padding: 3px 8px;
   outline: none;
-  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .diff-window button {
@@ -2221,6 +2256,27 @@ button.close-button.inverse {
 button.close-button.inverse:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.14);
   color: #ffffff;
+}
+
+.sync-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.git-stash-actions .stash-drop-btn {
+  margin-left: 8px;
+}
+
+.git-output summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-output-clear {
+  font-size: 11.5px;
 }
 
 @media (max-width: 1140px) {

@@ -23,7 +23,12 @@ import {
   notify,
   setGuard,
 } from "../state";
-import { formatMonthDay, formatMonthTitle, splitNoteText } from "../format";
+import {
+  formatMonthDay,
+  formatMonthTitle,
+  formatNoteLabel,
+  formatNotePreview,
+} from "../format";
 import Icon from "../components/Icon.vue";
 
 const month = ref(context.value.month || model.today.slice(0, 7)),
@@ -46,6 +51,14 @@ const imageInput = ref<HTMLInputElement | null>(null),
 const maxImageWidth = 1240;
 
 const monthTitle = computed(() => formatMonthTitle(month.value));
+const currentMonth = computed(() => model.today.slice(0, 7));
+const monthsWithRecords = computed(() => {
+  const set = new Set<string>();
+  for (const n of model.notes) {
+    if (n.kind === "work" && n.happenedOn) set.add(n.happenedOn.slice(0, 7));
+  }
+  return set;
+});
 const images = computed(() => draft.value?.images ?? []);
 const shotUrls = computed(() => {
   const urls = new Map<string, string>();
@@ -179,6 +192,12 @@ function closePopovers() {
   monthPickerOpen.value = false;
 }
 
+function onWindowKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && (monthPickerOpen.value || entryMenuId.value)) {
+    closePopovers();
+  }
+}
+
 onBeforeUnmount(() => {
   unmounted = true;
   setGuard(null);
@@ -187,6 +206,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("dragover", guardDrag);
   document.removeEventListener("drop", dropEverywhere);
   window.removeEventListener("click", closePopovers);
+  window.removeEventListener("keydown", onWindowKeydown);
 });
 
 function edited() {
@@ -224,8 +244,14 @@ onMounted(() => {
   document.addEventListener("dragover", guardDrag);
   document.addEventListener("drop", dropEverywhere);
   window.addEventListener("click", closePopovers);
+  window.addEventListener("keydown", onWindowKeydown);
   void load();
 });
+
+async function refreshMaterials() {
+  await load(false);
+  notify("素材已刷新");
+}
 
 async function selectMonthValue(next: string) {
   if (!next || next === month.value) {
@@ -344,6 +370,41 @@ function canMoveInSection(entry: MonthlyEntry, delta: number) {
   return idx >= 0 && idx + delta >= 0 && idx + delta < list.length;
 }
 
+function onEntryKeydown(event: KeyboardEvent, entry: MonthlyEntry) {
+  if (
+    ((event.ctrlKey || event.metaKey) && event.key === "Enter") ||
+    event.key === "Escape"
+  ) {
+    event.preventDefault();
+    if (entry.text.trim()) {
+      editingEntryId.value = null;
+      void attempt(flush);
+    }
+  }
+}
+
+function changeEntrySection(
+  entry: MonthlyEntry,
+  nextSection: string,
+  closeMenu = false,
+) {
+  if (closeMenu) entryMenuId.value = null;
+  const prevSection = entry.section;
+  if (prevSection === nextSection) return;
+  entry.section = nextSection;
+  edited();
+  notify(`已移至「${nextSection}」`, {
+    action: {
+      label: "撤销",
+      run: () => {
+        entry.section = prevSection;
+        edited();
+        notify("已撤销章节调整");
+      },
+    },
+  });
+}
+
 async function remove(entryId: string) {
   if (!draft.value) return;
   entryMenuId.value = null;
@@ -355,9 +416,27 @@ async function remove(entryId: string) {
     ))
   )
     return;
-  draft.value.entries = draft.value.entries.filter((e) => e.id !== entryId);
+  const index = draft.value.entries.findIndex((e) => e.id === entryId);
+  if (index < 0) return;
+  const removed = JSON.parse(JSON.stringify(draft.value.entries[index])) as MonthlyEntry;
+  draft.value.entries.splice(index, 1);
   if (editingEntryId.value === entryId) editingEntryId.value = null;
   edited();
+  notify("已从正文移除", {
+    action: {
+      label: "撤销",
+      run: () => {
+        if (!draft.value) return;
+        draft.value.entries.splice(
+          Math.min(index, draft.value.entries.length),
+          0,
+          removed,
+        );
+        edited();
+        notify("已恢复月报条目");
+      },
+    },
+  });
 }
 
 async function shrinkShot(file: Blob, order: number): Promise<MonthlyImage> {
@@ -400,14 +479,29 @@ async function addShots(list: Array<File | Blob>) {
   }
   imageBusy.value = true;
   imageError.value = "";
-  const replaced = (draft.value.images?.length || 0) > 0;
+  const prevShot = draft.value.images?.[0]
+    ? ({ ...draft.value.images[0] } as MonthlyImage)
+    : null;
+  const replaced = !!prevShot;
   try {
     const shot = await shrinkShot(candidates[0], 1);
     (draft.value.images ??= []).splice(0, draft.value.images.length, shot);
     edited();
-    notify(
-      replaced ? "已用新截图替换原截图" : "已加入截图，导出 Word 时自动带上",
-    );
+    if (replaced && prevShot) {
+      notify("已用新截图替换原截图", {
+        action: {
+          label: "撤销",
+          run: () => {
+            if (!draft.value) return;
+            draft.value.images = [prevShot];
+            edited();
+            notify("已恢复原截图");
+          },
+        },
+      });
+    } else {
+      notify("已加入截图，导出 Word 时自动带上");
+    }
   } catch (e) {
     imageError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -458,9 +552,24 @@ function onPickShots(event: Event) {
 }
 function removeShot(shotId: string) {
   if (!draft.value?.images) return;
+  const target = draft.value.images.find((i) => i.id === shotId);
+  if (!target) return;
+  const backupShot = { ...target } as MonthlyImage;
   draft.value.images = draft.value.images.filter((i) => i.id !== shotId);
   imageError.value = "";
   edited();
+  notify("已移除截图", {
+    action: {
+      label: "撤销",
+      run: () => {
+        if (!draft.value) return;
+        draft.value.images = [backupShot];
+        imageError.value = "";
+        edited();
+        notify("已恢复截图");
+      },
+    },
+  });
 }
 
 async function exportFile() {
@@ -469,7 +578,16 @@ async function exportFile() {
     const result = await call("monthly.export", {
       month: month.value,
     });
-    notify(result ? "文件已写入：" + result.path : "已取消导出");
+    if (result) {
+      notify("文件已写入：" + result.path, {
+        action: {
+          label: "打开文件夹",
+          run: () => attempt(() => call("monthly.open-exported")),
+        },
+      });
+    } else {
+      notify("已取消导出");
+    }
   });
 }
 
@@ -494,11 +612,12 @@ const majorSections = [
           <button
             type="button"
             class="icon-btn blank"
+            :disabled="loading"
             title="刷新素材"
             aria-label="刷新素材"
-            @click="load(false)"
+            @click="refreshMaterials"
           >
-            <Icon name="refresh" :size="15" />
+            <Icon name="refresh" :size="15" :class="{ spinning: loading }" />
           </button>
         </div>
 
@@ -565,22 +684,19 @@ const majorSections = [
               v-model="selected"
               type="checkbox"
               :value="n.id"
-              :aria-label="'选择素材 ' + splitNoteText(n.text).title"
+              :aria-label="'选择素材 ' + formatNoteLabel(n.text)"
               @click.stop
             />
             <div class="grow">
               <div class="date">
                 <span>{{ formatMonthDay(n.happenedOn, true) }}</span>
               </div>
-              <strong>{{ splitNoteText(n.text).title }}</strong>
-              <p v-if="splitNoteText(n.text).body">
-                {{ splitNoteText(n.text).body }}
-              </p>
+              <strong>{{ formatNotePreview(n.text) }}</strong>
             </div>
           </div>
         </div>
 
-        <div class="material-foot">
+        <div v-if="selectableMaterials.length" class="material-foot">
           <span class="section-label">加入章节</span>
           <div class="row">
             <select
@@ -602,6 +718,10 @@ const majorSections = [
               加入正文
             </button>
           </div>
+        </div>
+        <div v-else-if="materials.length" class="material-foot material-foot-done">
+          <Icon name="check-circle" :size="14" />
+          <span>本月素材已全部加入正文</span>
         </div>
       </section>
 
@@ -640,12 +760,13 @@ const majorSections = [
               <Icon name="down" :size="12" />
             </button>
 
-            <div
-              v-if="monthPickerOpen"
-              class="month-popover right"
-              role="dialog"
-              aria-label="切换月报月份"
-            >
+            <Transition name="pop">
+              <div
+                v-if="monthPickerOpen"
+                class="month-popover right"
+                role="dialog"
+                aria-label="切换月报月份"
+              >
               <div class="month-popover-head">
                 <button
                   type="button"
@@ -681,6 +802,15 @@ const majorSections = [
                   "
                 >
                   {{ m }} 月
+                  <i
+                    v-if="
+                      monthsWithRecords.has(
+                        `${pickerYear}-${String(m).padStart(2, '0')}`,
+                      )
+                    "
+                    class="month-dot"
+                    aria-hidden="true"
+                  />
                 </button>
               </div>
               <div class="month-popover-foot">
@@ -694,12 +824,14 @@ const majorSections = [
                 <button
                   type="button"
                   class="text-action"
-                  @click="selectMonthValue(model.today.slice(0, 7))"
+                  :class="{ current: month === currentMonth }"
+                  @click="selectMonthValue(currentMonth)"
                 >
                   本月
                 </button>
               </div>
-            </div>
+              </div>
+            </Transition>
           </div>
 
           <button
@@ -731,15 +863,26 @@ const majorSections = [
               <ul v-if="images.length" class="shot-list">
                 <li v-for="shot in images" :key="shot.id" class="shot-item">
                   <img :src="shotUrls.get(shot.id)" :alt="shot.name" />
-                  <button
-                    type="button"
-                    class="shot-remove"
-                    aria-label="移除截图"
-                    title="移除这张截图"
-                    @click="removeShot(shot.id)"
-                  >
-                    <Icon name="close" :size="12" />
-                  </button>
+                  <div class="shot-actions">
+                    <button
+                      type="button"
+                      class="shot-replace"
+                      :disabled="imageBusy"
+                      title="替换为其他图片（也可直接 Ctrl+V 粘贴）"
+                      @click="pickShots"
+                    >
+                      替换截图
+                    </button>
+                    <button
+                      type="button"
+                      class="shot-remove"
+                      aria-label="移除截图"
+                      title="移除这张截图"
+                      @click="removeShot(shot.id)"
+                    >
+                      <Icon name="close" :size="12" />
+                    </button>
+                  </div>
                 </li>
               </ul>
 
@@ -808,35 +951,38 @@ const majorSections = [
                     :aria-label="s + '正文'"
                     placeholder="输入正文…"
                     @input="edited"
+                    @keydown="onEntryKeydown($event, e)"
                   />
                   <div class="entry-inline-controls">
                     <select
-                      v-model="e.section"
+                      :value="e.section"
                       aria-label="调整条目章节"
-                      @change="edited"
+                      @change="changeEntrySection(e, ($event.target as HTMLSelectElement).value)"
                     >
                       <option v-for="sec in sections" :key="sec" :value="sec">
                         {{ sec }}
                       </option>
                     </select>
-                    <button
-                      type="button"
-                      class="btn compact"
-                      aria-label="上移条目"
-                      :disabled="!canMoveInSection(e, -1)"
-                      @click="moveInSection(e, -1)"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      class="btn compact"
-                      aria-label="下移条目"
-                      :disabled="!canMoveInSection(e, 1)"
-                      @click="moveInSection(e, 1)"
-                    >
-                      ↓
-                    </button>
+                    <template v-if="entriesIn(e.section).length > 1">
+                      <button
+                        type="button"
+                        class="btn compact"
+                        aria-label="上移条目"
+                        :disabled="!canMoveInSection(e, -1)"
+                        @click="moveInSection(e, -1)"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        class="btn compact"
+                        aria-label="下移条目"
+                        :disabled="!canMoveInSection(e, 1)"
+                        @click="moveInSection(e, 1)"
+                      >
+                        ↓
+                      </button>
+                    </template>
                     <button
                       type="button"
                       class="delete-action"
@@ -848,6 +994,7 @@ const majorSections = [
                       v-if="e.text.trim()"
                       type="button"
                       class="btn light-brand compact push"
+                      title="完成编辑（Ctrl+Enter / Esc）"
                       @click="editingEntryId = null"
                     >
                       完成编辑
@@ -890,52 +1037,56 @@ const majorSections = [
                     >
                       <Icon name="more" :size="14" />
                     </button>
-                    <div
-                      v-if="entryMenuId === e.id"
-                      class="entry-menu"
-                      role="menu"
-                    >
-                      <div class="entry-menu-section">
-                        <small>目标章节</small>
-                        <select
-                          v-model="e.section"
-                          aria-label="调整条目章节"
-                          @change="edited"
-                        >
-                          <option
-                            v-for="sec in sections"
-                            :key="sec"
-                            :value="sec"
+                    <Transition name="pop">
+                      <div
+                        v-if="entryMenuId === e.id"
+                        class="entry-menu"
+                        role="menu"
+                      >
+                        <div class="entry-menu-section">
+                          <small>目标章节</small>
+                          <select
+                            :value="e.section"
+                            aria-label="调整条目章节"
+                            @change="changeEntrySection(e, ($event.target as HTMLSelectElement).value, true)"
                           >
-                            {{ sec }}
-                          </option>
-                        </select>
+                            <option
+                              v-for="sec in sections"
+                              :key="sec"
+                              :value="sec"
+                            >
+                              {{ sec }}
+                            </option>
+                          </select>
+                        </div>
+                        <template v-if="entriesIn(e.section).length > 1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            :disabled="!canMoveInSection(e, -1)"
+                            @click="moveInSection(e, -1)"
+                          >
+                            <Icon name="up" :size="12" />上移条目
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            :disabled="!canMoveInSection(e, 1)"
+                            @click="moveInSection(e, 1)"
+                          >
+                            <Icon name="down" :size="12" />下移条目
+                          </button>
+                        </template>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          class="danger-item"
+                          @click="remove(e.id)"
+                        >
+                          <Icon name="trash" :size="12" />从正文移除
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        :disabled="!canMoveInSection(e, -1)"
-                        @click="moveInSection(e, -1)"
-                      >
-                        <Icon name="up" :size="12" />上移条目
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        :disabled="!canMoveInSection(e, 1)"
-                        @click="moveInSection(e, 1)"
-                      >
-                        <Icon name="down" :size="12" />下移条目
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        class="danger-item"
-                        @click="remove(e.id)"
-                      >
-                        <Icon name="trash" :size="12" />从正文移除
-                      </button>
-                    </div>
+                    </Transition>
                   </span>
                 </div>
               </div>
@@ -982,35 +1133,38 @@ const majorSections = [
                     :aria-label="sec.key + '正文'"
                     placeholder="输入正文…"
                     @input="edited"
+                    @keydown="onEntryKeydown($event, e)"
                   />
                   <div class="entry-inline-controls">
                     <select
-                      v-model="e.section"
+                      :value="e.section"
                       aria-label="调整条目章节"
-                      @change="edited"
+                      @change="changeEntrySection(e, ($event.target as HTMLSelectElement).value)"
                     >
                       <option v-for="sOpt in sections" :key="sOpt" :value="sOpt">
                         {{ sOpt }}
                       </option>
                     </select>
-                    <button
-                      type="button"
-                      class="btn compact"
-                      aria-label="上移条目"
-                      :disabled="!canMoveInSection(e, -1)"
-                      @click="moveInSection(e, -1)"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      class="btn compact"
-                      aria-label="下移条目"
-                      :disabled="!canMoveInSection(e, 1)"
-                      @click="moveInSection(e, 1)"
-                    >
-                      ↓
-                    </button>
+                    <template v-if="entriesIn(e.section).length > 1">
+                      <button
+                        type="button"
+                        class="btn compact"
+                        aria-label="上移条目"
+                        :disabled="!canMoveInSection(e, -1)"
+                        @click="moveInSection(e, -1)"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        class="btn compact"
+                        aria-label="下移条目"
+                        :disabled="!canMoveInSection(e, 1)"
+                        @click="moveInSection(e, 1)"
+                      >
+                        ↓
+                      </button>
+                    </template>
                     <button
                       type="button"
                       class="delete-action"
@@ -1022,6 +1176,7 @@ const majorSections = [
                       v-if="e.text.trim()"
                       type="button"
                       class="btn light-brand compact push"
+                      title="完成编辑（Ctrl+Enter / Esc）"
                       @click="editingEntryId = null"
                     >
                       完成编辑
@@ -1063,52 +1218,56 @@ const majorSections = [
                     >
                       <Icon name="more" :size="14" />
                     </button>
-                    <div
-                      v-if="entryMenuId === e.id"
-                      class="entry-menu"
-                      role="menu"
-                    >
-                      <div class="entry-menu-section">
-                        <small>目标章节</small>
-                        <select
-                          v-model="e.section"
-                          aria-label="调整条目章节"
-                          @change="edited"
-                        >
-                          <option
-                            v-for="sOpt in sections"
-                            :key="sOpt"
-                            :value="sOpt"
+                    <Transition name="pop">
+                      <div
+                        v-if="entryMenuId === e.id"
+                        class="entry-menu"
+                        role="menu"
+                      >
+                        <div class="entry-menu-section">
+                          <small>目标章节</small>
+                          <select
+                            :value="e.section"
+                            aria-label="调整条目章节"
+                            @change="changeEntrySection(e, ($event.target as HTMLSelectElement).value, true)"
                           >
-                            {{ sOpt }}
-                          </option>
-                        </select>
+                            <option
+                              v-for="sOpt in sections"
+                              :key="sOpt"
+                              :value="sOpt"
+                            >
+                              {{ sOpt }}
+                            </option>
+                          </select>
+                        </div>
+                        <template v-if="entriesIn(e.section).length > 1">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            :disabled="!canMoveInSection(e, -1)"
+                            @click="moveInSection(e, -1)"
+                          >
+                            <Icon name="up" :size="12" />上移条目
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            :disabled="!canMoveInSection(e, 1)"
+                            @click="moveInSection(e, 1)"
+                          >
+                            <Icon name="down" :size="12" />下移条目
+                          </button>
+                        </template>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          class="danger-item"
+                          @click="remove(e.id)"
+                        >
+                          <Icon name="trash" :size="12" />从正文移除
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        :disabled="!canMoveInSection(e, -1)"
-                        @click="moveInSection(e, -1)"
-                      >
-                        <Icon name="up" :size="12" />上移条目
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        :disabled="!canMoveInSection(e, 1)"
-                        @click="moveInSection(e, 1)"
-                      >
-                        <Icon name="down" :size="12" />下移条目
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        class="danger-item"
-                        @click="remove(e.id)"
-                      >
-                        <Icon name="trash" :size="12" />从正文移除
-                      </button>
-                    </div>
+                    </Transition>
                   </span>
                 </div>
               </div>

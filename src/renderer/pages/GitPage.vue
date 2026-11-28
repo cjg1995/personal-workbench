@@ -7,6 +7,7 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
+  shallowRef,
   watch,
 } from "vue";
 import type {
@@ -18,6 +19,7 @@ import type {
   RepositoryState,
 } from "../../shared/git-client";
 import {
+  attempt,
   call,
   confirm,
   context,
@@ -28,6 +30,8 @@ import {
   setGuard,
   leaveGuard,
 } from "../state";
+import { activeDialog } from "../dialog";
+import { formatDateTime } from "../format";
 import { submitTabForProject } from "../../shared/submit-policy";
 import { gitOperationLabel } from "../../shared/git-labels";
 import { describeUntrackedRule } from "../../shared/git-untracked";
@@ -42,7 +46,7 @@ import CloseButton from "../components/CloseButton.vue";
 
 const projectId = ref(context.value.projectId || "homeproject"),
   tab = ref("changes"),
-  state = ref<RepositoryState>(),
+  state = shallowRef<RepositoryState>(),
   busy = ref(false),
   error = ref(""),
   statusError = ref(""),
@@ -119,6 +123,17 @@ async function stageVisible(onlyChecked: boolean) {
     files: state.value?.files
       .filter((f) => paths.has(f.path))
       .map((f) => f.path),
+  });
+}
+
+async function unstageVisible(onlyChecked: boolean) {
+  const paths = onlyChecked
+    ? new Set(checked.value)
+    : new Set(files.value.map((f) => f.path));
+  await execute("unstage", {
+    files: (state.value?.files || [])
+      .filter((f) => paths.has(f.path) && f.staged)
+      .flatMap((f) => [f.path, ...(f.oldPath ? [f.oldPath] : [])]),
   });
 }
 
@@ -317,11 +332,15 @@ function resetDetailWidth() {
 const dialog = ref(""),
   form = ref<Record<string, any>>({}),
   preview = ref<any>(),
+  previewLoading = ref(false),
+  previewError = ref(""),
   menu = ref<{ x: number; y: number; file?: ChangeFile; commit?: GitCommit }>();
 let disposed = false,
   refreshId = 0,
   logId = 0,
   detailId = 0,
+  previewId = 0,
+  previewTimer: ReturnType<typeof setTimeout> | undefined,
   unsubscribe: (() => void) | undefined,
   refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -329,33 +348,30 @@ function showUntrackedFile(file: ChangeFile) {
   return !file.untracked || file.inTrackedDirectory !== false;
 }
 
-const totalVisibleChanges = computed(
-  () => state.value?.files.filter(showUntrackedFile).length || 0,
-);
+const visibleChanges = computed(() => (state.value?.files || []).filter(showUntrackedFile));
+const totalVisibleChanges = computed(() => visibleChanges.value.length);
+const sortedChanges = computed(() => [...visibleChanges.value].sort((a, b) =>
+  sort.value === "status"
+    ? a.status.localeCompare(b.status) || a.path.localeCompare(b.path)
+    : a.path.localeCompare(b.path),
+));
 
 const files = computed(() => {
   const text = query.value.toLowerCase();
-  return (state.value?.files || [])
-    .filter(
-      (f) =>
-        showUntrackedFile(f) &&
-        (!text || f.path.toLowerCase().includes(text)) &&
-        (filter.value === "staged"
-          ? f.staged
-          : filter.value === "unstaged"
-            ? f.unstaged
-            : filter.value === "conflicts"
-              ? f.conflicted
-              : filter.value === "untracked"
-                ? f.untracked
-                : true),
-    )
-    .slice()
-    .sort((a, b) =>
-      sort.value === "status"
-        ? a.status.localeCompare(b.status) || a.path.localeCompare(b.path)
-        : a.path.localeCompare(b.path),
-    );
+  if (!text && filter.value === "all") return sortedChanges.value;
+  return sortedChanges.value.filter(
+    (f) =>
+      (!text || f.path.toLowerCase().includes(text)) &&
+      (filter.value === "staged"
+        ? f.staged
+        : filter.value === "unstaged"
+          ? f.unstaged
+          : filter.value === "conflicts"
+            ? f.conflicted
+            : filter.value === "untracked"
+              ? f.untracked
+              : true),
+  );
 });
 
 const hiddenUntrackedCount = computed(
@@ -405,6 +421,47 @@ const someVisibleChecked = computed(
     !allVisibleChecked.value &&
     files.value.some((f) => checkedSet.value.has(f.path)),
 );
+const checkedFiles = computed(() =>
+  (state.value?.files || []).filter((f) => checkedSet.value.has(f.path)),
+);
+const hasCheckedStageable = computed(() =>
+  checkedFiles.value.some((f) => !f.staged || f.unstaged || f.untracked),
+);
+const hasCheckedStaged = computed(() =>
+  checkedFiles.value.some((f) => f.staged),
+);
+const hasCheckedRollbackable = computed(() =>
+  checkedFiles.value.some((f) => f.unstaged && !f.untracked),
+);
+const hasVisibleStageable = computed(() =>
+  files.value.some((f) => !f.staged || f.unstaged || f.untracked),
+);
+const hasVisibleStaged = computed(() =>
+  files.value.some((f) => f.staged),
+);
+const hasUntrackedFiles = computed(() =>
+  (state.value?.files || []).some((f) => f.untracked),
+);
+const hasChangesFilter = computed(
+  () => !!query.value.trim() || filter.value !== "all",
+);
+const hasMoreFileOps = computed(
+  () =>
+    (hasSelection.value &&
+      (hasCheckedStaged.value || hasCheckedRollbackable.value)) ||
+    !!selected.value,
+);
+const trackedChangeCount = computed(
+  () => state.value?.files.filter((f) => !f.untracked).length || 0,
+);
+const pullBlockedReason = computed(() => {
+  if (!state.value) return "";
+  if (!state.value.branch || !state.value.upstream)
+    return "当前分支尚未配置上游分支，无法 Pull";
+  if (trackedChangeCount.value)
+    return `当前有 ${trackedChangeCount.value} 个已跟踪修改，Pull 前需先提交或 Stash`;
+  return "";
+});
 
 const detailFiles = computed<ChangeFile[]>(() =>
   (details.value?.files || []).map((f) => ({
@@ -501,6 +558,9 @@ async function execute(operation: string, p: Record<string, any> = {}) {
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     output.value = error.value;
+    if (operation === "push" && dialog.value === "push" && /重新预览/.test(error.value)) {
+      void loadPushPreview();
+    }
   } finally {
     await refresh();
     busy.value = false;
@@ -557,9 +617,116 @@ async function showDiff(file: ChangeFile, comparison?: GitComparison) {
   }
 }
 
+function closeAllDetails() {
+  pageRoot.value
+    ?.querySelectorAll<HTMLDetailsElement>("details.git-more[open]")
+    .forEach((el) => {
+      el.open = false;
+    });
+}
+
+async function ensureBranchesLoaded() {
+  if (branches.value.length) return;
+  const project = projectId.value;
+  try {
+    const rows = await call<GitBranch[]>("git.branches", {
+      projectId: project,
+    });
+    if (!disposed && project === projectId.value) branches.value = rows;
+  } catch {}
+}
+
+async function loadPushPreview() {
+  if (dialog.value !== "push") return;
+  const remote = String(form.value.remote || "").trim();
+  const branch = String(form.value.branch || "").trim();
+  if (!remote || !branch) {
+    preview.value = undefined;
+    previewError.value = "";
+    return;
+  }
+  const id = ++previewId;
+  const project = projectId.value;
+  previewLoading.value = true;
+  previewError.value = "";
+  try {
+    const result = await call("git.push-preview", {
+      remote,
+      branch,
+      projectId: project,
+    });
+    if (
+      !disposed &&
+      id === previewId &&
+      dialog.value === "push" &&
+      project === projectId.value
+    ) {
+      preview.value = result;
+    }
+  } catch (e) {
+    if (!disposed && id === previewId && dialog.value === "push") {
+      preview.value = undefined;
+      previewError.value = e instanceof Error ? e.message : String(e);
+    }
+  } finally {
+    if (id === previewId) previewLoading.value = false;
+  }
+}
+
+watch(
+  () => [dialog.value, form.value.remote, form.value.branch],
+  ([kind]) => {
+    clearTimeout(previewTimer);
+    if (kind !== "push") return;
+    preview.value = undefined;
+    previewError.value = "";
+    previewTimer = setTimeout(() => void loadPushPreview(), 220);
+  },
+);
+
+watch(amend, async (next) => {
+  if (!next || message.value.trim() || !state.value?.head) return;
+  const project = projectId.value;
+  const head = state.value.head;
+  try {
+    const info = await call<{ message: string }>("git.commit-details", {
+      projectId: project,
+      ref: head,
+    });
+    if (
+      !disposed &&
+      amend.value &&
+      project === projectId.value &&
+      !message.value.trim() &&
+      info?.message
+    ) {
+      message.value = info.message.trim();
+    }
+  } catch {}
+});
+
+function clearChangesFilter() {
+  query.value = "";
+  filter.value = "all";
+}
+
+async function copyGitText(text: string, label: string) {
+  await attempt(async () => {
+    await call("git.copy", { projectId: projectId.value, text });
+    notify(`已复制${label}`);
+  });
+}
+
+async function revealGitFile(filePath: string) {
+  await attempt(() =>
+    call("git.reveal", { projectId: projectId.value, file: filePath }),
+  );
+}
+
 function open(kind: string, values: Record<string, any> = {}) {
   dialog.value = kind;
   preview.value = undefined;
+  previewError.value = "";
   form.value = {
     remote: state.value?.remotes[0] || "origin",
     branch: state.value?.branch || "",
@@ -576,6 +743,10 @@ function open(kind: string, values: Record<string, any> = {}) {
   };
   menu.value = undefined;
   moreOpsOpen.value = false;
+  closeAllDetails();
+  if (["merge", "rebase", "compare", "create-branch"].includes(kind)) {
+    void ensureBranchesLoaded();
+  }
   void nextTick(() =>
     document
       .querySelector<HTMLElement>(
@@ -610,19 +781,14 @@ async function submitDialog() {
     return;
   }
   if (dialog.value === "push" && !preview.value) {
-    try {
-      preview.value = await call("git.push-preview", {
-        ...form.value,
-        projectId: projectId.value,
-      });
-    } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), true);
-    }
+    await loadPushPreview();
     return;
   }
   await execute(dialog.value, {
     ...form.value,
-    ...(dialog.value === "push" ? { head: preview.value?.head } : {}),
+    ...(dialog.value === "push"
+      ? { head: preview.value?.head, confirmed: true }
+      : {}),
   });
 }
 
@@ -650,6 +816,17 @@ async function loadLog(append = false) {
     if (id !== logId || disposed || project !== projectId.value) return;
     commits.value = append ? [...commits.value, ...rows] : rows;
     logMore.value = rows.length === 150;
+    if (!append) {
+      if (!commits.value.length) {
+        chosenCommit.value = undefined;
+        details.value = undefined;
+      } else if (
+        !chosenCommit.value ||
+        !commits.value.some((c) => c.hash === chosenCommit.value?.hash)
+      ) {
+        void selectCommit(commits.value[0]);
+      }
+    }
   } catch (e) {
     if (id === logId) notify(e instanceof Error ? e.message : String(e), true);
   } finally {
@@ -761,20 +938,26 @@ function commitMenu(commit: GitCommit, event: MouseEvent) {
   };
 }
 
-function closeMenu() {
+function closeMenu(event?: Event) {
   menu.value = undefined;
   quickBranchOpen.value = false;
   moreOpsOpen.value = false;
+  const target = event?.target as HTMLElement | null;
+  pageRoot.value
+    ?.querySelectorAll<HTMLDetailsElement>("details.git-more[open]")
+    .forEach((el) => {
+      if (!target || !el.contains(target)) el.open = false;
+    });
 }
 
 function key(event: KeyboardEvent) {
-  if (route.value !== "review") return;
+  if (route.value !== "review" || activeDialog.value) return;
   if (event.key === "F5") {
     event.preventDefault();
     void refresh();
+    return;
   }
-  if (event.ctrlKey && event.key === "Enter") {
-    event.preventDefault();
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     if (
       !dialog.value &&
       !submitOpen.value &&
@@ -782,16 +965,45 @@ function key(event: KeyboardEvent) {
       tab.value === "changes" &&
       (stagedCount.value || amend.value) &&
       message.value.trim()
-    )
+    ) {
+      event.preventDefault();
       void execute("commit", { message: message.value, amend: amend.value });
+    }
+    return;
   }
   if (event.key === "Escape") {
-    menu.value = undefined;
-    moreOpsOpen.value = false;
-    if (quickBranchOpen.value) closeQuickBranches();
-    if (!busy.value) dialog.value = "";
-    commitOpen.value = false;
-    void closeSubmit();
+    if (menu.value) {
+      menu.value = undefined;
+      return;
+    }
+    if (moreOpsOpen.value) {
+      moreOpsOpen.value = false;
+      return;
+    }
+    if (quickBranchOpen.value) {
+      closeQuickBranches();
+      return;
+    }
+    const openDetails = pageRoot.value?.querySelectorAll<HTMLDetailsElement>(
+      "details.git-more[open]",
+    );
+    if (openDetails?.length) {
+      openDetails.forEach((el) => {
+        el.open = false;
+      });
+      return;
+    }
+    if (dialog.value) {
+      if (!busy.value) dialog.value = "";
+      return;
+    }
+    if (commitOpen.value) {
+      commitOpen.value = false;
+      return;
+    }
+    if (submitOpen.value) {
+      void closeSubmit();
+    }
   }
 }
 
@@ -833,11 +1045,20 @@ onMounted(() => {
   window.addEventListener("keydown", key);
   window.addEventListener("click", closeMenu);
   window.addEventListener("focus", onFocus);
-  unsubscribe = window.workbench.onChanged(() => {
+  unsubscribe = window.workbench.onChanged((_revision, gitChanged) => {
+    if (gitChanged === false) return;
     if (!refreshTimer)
       refreshTimer = setTimeout(() => {
         refreshTimer = undefined;
-        if (route.value === "review" && !busy.value) void refresh();
+        if (route.value === "review" && !busy.value) {
+          void (async () => {
+            const prevHead = state.value?.head;
+            await readStatus();
+            if (tab.value === "log" && commits.value.length && state.value?.head === prevHead)
+              return;
+            await loadTab();
+          })();
+        }
       }, 450);
   });
 });
@@ -874,6 +1095,7 @@ onBeforeUnmount(() => {
   ++detailId;
   unsubscribe?.();
   clearTimeout(refreshTimer);
+  clearTimeout(previewTimer);
   window.removeEventListener("keydown", key);
   window.removeEventListener("click", closeMenu);
   window.removeEventListener("focus", onFocus);
@@ -924,11 +1146,12 @@ onBeforeUnmount(() => {
           <Icon name="down" :size="13" />
         </button>
 
-        <div
-          v-if="quickBranchOpen"
-          class="git-quick-branch-menu"
-          @keydown="quickBranchKey"
-        >
+        <Transition name="pop">
+          <div
+            v-if="quickBranchOpen"
+            class="git-quick-branch-menu"
+            @keydown="quickBranchKey"
+          >
           <input
             ref="quickBranchInput"
             v-model="quickBranchQuery"
@@ -1008,7 +1231,8 @@ onBeforeUnmount(() => {
               没有匹配的分支
             </p>
           </div>
-        </div>
+          </div>
+        </Transition>
       </div>
 
       <div class="vdiv" aria-hidden="true" />
@@ -1018,10 +1242,20 @@ onBeforeUnmount(() => {
           {{ state?.upstream || "未配置上游" }}
         </div>
         <div class="sync-count">
-          <Icon name="arrow-up" :size="13" />
-          <span>{{ state?.ahead || 0 }}</span>
-          <Icon name="arrow-down" :size="13" style="margin-left: 6px" />
-          <span>{{ state?.behind || 0 }}</span>
+          <span
+            class="sync-metric"
+            :title="`领先上游 ${state?.ahead || 0} 个提交（待推送）`"
+          >
+            <Icon name="arrow-up" :size="13" />
+            <span>{{ state?.ahead || 0 }}</span>
+          </span>
+          <span
+            class="sync-metric"
+            :title="`落后上游 ${state?.behind || 0} 个提交（待拉取）`"
+          >
+            <Icon name="arrow-down" :size="13" style="margin-left: 6px" />
+            <span>{{ state?.behind || 0 }}</span>
+          </span>
         </div>
       </div>
 
@@ -1142,7 +1376,16 @@ onBeforeUnmount(() => {
           <button type="button" :disabled="repositoryBusy" @click="execute('fetch')">
             <Icon name="refresh" :size="14" />Fetch
           </button>
-          <button type="button" :disabled="repositoryBusy" @click="open('pull')">
+          <button
+            type="button"
+            :disabled="repositoryBusy || !state?.branch || !state?.upstream"
+            :title="
+              !state?.branch || !state?.upstream
+                ? '当前分支尚未配置上游分支，请先 Push 或关联上游'
+                : '拉取上游分支变更'
+            "
+            @click="open('pull')"
+          >
             <Icon name="pull" :size="14" />Pull
           </button>
           <button type="button" :disabled="repositoryBusy" @click="open('push')">
@@ -1150,10 +1393,11 @@ onBeforeUnmount(() => {
           </button>
         </span>
         <button
+          v-if="canSubmit"
           type="button"
           class="btn primary compact"
-          :disabled="!canSubmit || busy || (repositoryBusy && !activeSubmitTask)"
-          :title="canSubmit ? '提交已暂存内容与已跟踪修改' : '此项目尚未配置提测流程'"
+          :disabled="busy || (repositoryBusy && !activeSubmitTask)"
+          title="提交已暂存内容与已跟踪修改"
           @click="openSubmit()"
         >
           <Icon name="merge" :size="14" />一键提测
@@ -1188,7 +1432,7 @@ onBeforeUnmount(() => {
             >
           </div>
           <button
-            v-if="checked.length"
+            v-if="checked.length && hasCheckedStageable"
             type="button"
             class="btn light-brand compact"
             :disabled="repositoryBusy"
@@ -1198,7 +1442,17 @@ onBeforeUnmount(() => {
             暂存所选 · {{ checked.length }}
           </button>
           <button
-            v-else
+            v-else-if="checked.length && hasCheckedStaged"
+            type="button"
+            class="btn compact"
+            :disabled="repositoryBusy"
+            @click="stage('unstage')"
+          >
+            <Icon name="minus" :size="13" />
+            取消暂存所选 · {{ checked.length }}
+          </button>
+          <button
+            v-else-if="hasVisibleStageable || !hasVisibleStaged"
             type="button"
             class="btn light-brand compact"
             :disabled="repositoryBusy || !files.length"
@@ -1207,6 +1461,17 @@ onBeforeUnmount(() => {
           >
             <Icon name="plus" :size="13" />
             全部暂存
+          </button>
+          <button
+            v-else
+            type="button"
+            class="btn compact"
+            :disabled="repositoryBusy"
+            title="取消暂存当前列表中的全部文件"
+            @click="unstageVisible(false)"
+          >
+            <Icon name="minus" :size="13" />
+            全部取消暂存
           </button>
         </div>
 
@@ -1253,6 +1518,7 @@ onBeforeUnmount(() => {
           :selected="selected"
           :checked="checked"
           :busy="repositoryBusy"
+          :filtered="hasChangesFilter"
           multiple
           @select="selected = $event.path"
           @toggle="toggle"
@@ -1260,10 +1526,11 @@ onBeforeUnmount(() => {
           @menu="fileMenu"
           @stage="stage('stage', $event)"
           @unstage="stage('unstage', $event)"
+          @clear-filter="clearChangesFilter"
         />
 
         <div
-          v-if="files.length || checked.length"
+          v-if="hasMoreFileOps"
           class="selection-row"
           @click.stop
         >
@@ -1275,35 +1542,39 @@ onBeforeUnmount(() => {
             >
               <Icon name="down" :size="12" />更多文件操作
             </button>
-            <div v-if="moreOpsOpen" class="git-dropdown ops-up" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                :disabled="repositoryBusy || !hasSelection"
-                @click="stage('unstage')"
-              >
-                取消暂存所选（Unstage）
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                :disabled="repositoryBusy || !hasSelection"
-                @click="stage('rollback')"
-              >
-                回滚所选未暂存修改…
-              </button>
-              <button
-                v-if="selected"
-                type="button"
-                role="menuitem"
-                @click="
-                  showDiff(state!.files.find((f) => f.path === selected)!);
-                  moreOpsOpen = false;
-                "
-              >
-                打开当前文件差异对比 ↗
-              </button>
-            </div>
+            <Transition name="pop-up">
+              <div v-if="moreOpsOpen" class="git-dropdown ops-up" role="menu">
+                <button
+                  v-if="hasCheckedStaged"
+                  type="button"
+                  role="menuitem"
+                  :disabled="repositoryBusy"
+                  @click="stage('unstage')"
+                >
+                  取消暂存所选（Unstage）
+                </button>
+                <button
+                  v-if="hasCheckedRollbackable"
+                  type="button"
+                  role="menuitem"
+                  :disabled="repositoryBusy"
+                  @click="stage('rollback')"
+                >
+                  回滚所选未暂存修改…
+                </button>
+                <button
+                  v-if="selected"
+                  type="button"
+                  role="menuitem"
+                  @click="
+                    showDiff(state!.files.find((f) => f.path === selected)!);
+                    moreOpsOpen = false;
+                  "
+                >
+                  打开当前文件差异对比 ↗
+                </button>
+              </div>
+            </Transition>
           </div>
         </div>
 
@@ -1459,14 +1730,24 @@ onBeforeUnmount(() => {
                   : "没有匹配的提交"
               }}
             </p>
-            <button
-              v-if="!logAll && hasAppliedLogFilter"
-              type="button"
-              class="link"
-              @click="setLogScope(true)"
-            >
-              在全部分支中搜索
-            </button>
+            <div class="row" style="gap: 10px; justify-content: center">
+              <button
+                v-if="!logAll && hasAppliedLogFilter"
+                type="button"
+                class="link"
+                @click="setLogScope(true)"
+              >
+                在全部分支中搜索
+              </button>
+              <button
+                v-if="hasAppliedLogFilter"
+                type="button"
+                class="link"
+                @click="clearLogFilters"
+              >
+                清除筛选
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1488,7 +1769,21 @@ onBeforeUnmount(() => {
       >
         <template v-if="details">
           <div class="git-log-detail-head">
-            <code>{{ details.commit }}</code>
+            <div class="row spaced" style="gap: 8px; align-items: center">
+              <code :title="details.commit">{{ details.commit }}</code>
+              <button
+                type="button"
+                class="icon-btn small blank"
+                title="复制提交号"
+                aria-label="复制提交号"
+                @click="copyGitText(details.commit, '提交号')"
+              >
+                <Icon name="copy" :size="12" />
+              </button>
+            </div>
+            <p v-if="chosenCommit" class="git-help">
+              {{ chosenCommit.author }} · {{ formatDateTime(chosenCommit.date) }}
+            </p>
             <pre>{{ details.message }}</pre>
             <p class="git-help">{{ details.files.length }} 个文件</p>
           </div>
@@ -1559,6 +1854,7 @@ onBeforeUnmount(() => {
               Checkout
             </button>
             <button
+              v-if="!branch.current"
               type="button"
               class="btn compact"
               :disabled="repositoryBusy"
@@ -1567,6 +1863,7 @@ onBeforeUnmount(() => {
               Merge
             </button>
             <button
+              v-if="!branch.current"
               type="button"
               class="btn compact"
               :disabled="repositoryBusy"
@@ -1574,10 +1871,11 @@ onBeforeUnmount(() => {
             >
               Rebase
             </button>
-            <details class="git-more">
+            <details v-if="!branch.current || !branch.remote" class="git-more">
               <summary><Icon name="more" :size="14" /></summary>
               <div class="git-dropdown">
                 <button
+                  v-if="!branch.current"
                   type="button"
                   @click="
                     open('compare', { base: 'HEAD', target: branch.name })
@@ -1601,7 +1899,10 @@ onBeforeUnmount(() => {
                   v-if="!branch.remote && !branch.current"
                   type="button"
                   :disabled="repositoryBusy"
-                  @click="execute('delete-branch', { branch: branch.name })"
+                  @click="
+                    closeAllDetails();
+                    execute('delete-branch', { branch: branch.name });
+                  "
                 >
                   删除已合并分支
                 </button>
@@ -1609,7 +1910,17 @@ onBeforeUnmount(() => {
             </details>
           </div>
         </div>
-        <p v-if="!filteredBranches.length" class="git-empty">没有匹配分支</p>
+        <div v-if="!filteredBranches.length" class="git-empty">
+          <p>没有匹配的分支</p>
+          <button
+            v-if="branchQuery"
+            type="button"
+            class="link"
+            @click="branchQuery = ''"
+          >
+            清除搜索
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1635,7 +1946,7 @@ onBeforeUnmount(() => {
             <strong>{{ stash.ref }}</strong>
             <span>{{ stash.subject }}</span>
             <small>
-              {{ stash.date.slice(0, 19).replace("T", " ") }} ·
+              {{ formatDateTime(stash.date) }} ·
               {{ stash.hash.slice(0, 8) }}
             </small>
           </div>
@@ -1644,9 +1955,10 @@ onBeforeUnmount(() => {
               Diff
             </button>
             <button
+              v-if="stash.hasUntracked"
               type="button"
               class="btn compact"
-              title="查看包含的未跟踪文件；未包含时会提示"
+              title="查看包含的未跟踪文件"
               @click="stashDiff(stash, true)"
             >
               未跟踪文件
@@ -1671,7 +1983,7 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              class="btn stop compact"
+              class="btn stop compact stash-drop-btn"
               :disabled="repositoryBusy"
               @click="execute('stash-drop', stash)"
             >
@@ -1684,18 +1996,28 @@ onBeforeUnmount(() => {
     </div>
 
     <details v-if="output" class="git-output card">
-      <summary>最近操作结果 / Git 钩子输出</summary>
+      <summary>
+        <span>最近操作结果 / Git 钩子输出</span>
+        <button
+          type="button"
+          class="text-action git-output-clear"
+          @click.prevent.stop="output = ''"
+        >
+          清除
+        </button>
+      </summary>
       <pre>{{ output }}</pre>
     </details>
 
     <!-- 右键菜单 -->
-    <div
-      v-if="menu"
-      class="git-context-menu"
-      :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
-      role="menu"
-      @click.stop
-    >
+    <Transition name="pop">
+      <div
+        v-if="menu"
+        class="git-context-menu"
+        :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
+        role="menu"
+        @click.stop
+      >
       <template v-if="menu.file">
         <button
           type="button"
@@ -1708,6 +2030,7 @@ onBeforeUnmount(() => {
           打开对比 ↗
         </button>
         <button
+          v-if="!menu.file.staged || menu.file.unstaged || menu.file.untracked"
           type="button"
           role="menuitem"
           :disabled="repositoryBusy"
@@ -1716,6 +2039,7 @@ onBeforeUnmount(() => {
           Stage
         </button>
         <button
+          v-if="menu.file.staged"
           type="button"
           role="menuitem"
           :disabled="repositoryBusy"
@@ -1724,6 +2048,7 @@ onBeforeUnmount(() => {
           Unstage
         </button>
         <button
+          v-if="menu.file.unstaged && !menu.file.untracked"
           type="button"
           role="menuitem"
           :disabled="repositoryBusy"
@@ -1731,10 +2056,16 @@ onBeforeUnmount(() => {
         >
           回滚未暂存修改…
         </button>
-        <button type="button" role="menuitem" @click="history(menu.file)">
+        <button
+          v-if="!menu.file.untracked"
+          type="button"
+          role="menuitem"
+          @click="history(menu.file)"
+        >
           查看文件历史
         </button>
         <button
+          v-if="!menu.file.untracked"
           type="button"
           role="menuitem"
           @click="
@@ -1751,7 +2082,7 @@ onBeforeUnmount(() => {
           type="button"
           role="menuitem"
           @click="
-            call('git.copy', { projectId, text: menu.file.path });
+            copyGitText(menu.file.path, '相对路径');
             closeMenu();
           "
         >
@@ -1761,7 +2092,7 @@ onBeforeUnmount(() => {
           type="button"
           role="menuitem"
           @click="
-            call('git.reveal', { projectId, file: menu.file.path });
+            revealGitFile(menu.file.path);
             closeMenu();
           "
         >
@@ -1774,7 +2105,7 @@ onBeforeUnmount(() => {
           type="button"
           role="menuitem"
           @click="
-            call('git.copy', { projectId, text: menu.commit.hash });
+            copyGitText(menu.commit.hash, '提交号');
             closeMenu();
           "
         >
@@ -1829,44 +2160,48 @@ onBeforeUnmount(() => {
           撤销最后一次提交…
         </button>
       </template>
-    </div>
+      </div>
+    </Transition>
 
     <!-- 一键提测弹窗 -->
-    <div
-      v-if="submitOpen"
-      class="git-dialog-overlay"
-      @click.self="closeSubmit"
-    >
-      <section
-        class="git-dialog git-submit-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="一键提测"
+    <Transition name="modal">
+      <div
+        v-if="submitOpen"
+        class="git-dialog-overlay"
+        @click.self="closeSubmit"
       >
-        <div class="section-head">
-          <h2>
-            一键提测 ·
-            {{ model.config?.projects.find((p) => p.id === projectId)?.name }}
-          </h2>
-          <CloseButton label="关闭提测窗口" @click="closeSubmit" />
-        </div>
-        <div class="git-submit-content">
-          <SubmitPage
-            ref="submitPage"
-            :key="projectId"
-            :project-id="projectId"
-            :task-id="submitTaskId"
-          />
-        </div>
-      </section>
-    </div>
+        <section
+          class="git-dialog git-submit-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="一键提测"
+        >
+          <div class="section-head">
+            <h2>
+              一键提测 ·
+              {{ model.config?.projects.find((p) => p.id === projectId)?.name }}
+            </h2>
+            <CloseButton label="关闭提测窗口" @click="closeSubmit" />
+          </div>
+          <div class="git-submit-content">
+            <SubmitPage
+              ref="submitPage"
+              :key="projectId"
+              :project-id="projectId"
+              :task-id="submitTaskId"
+            />
+          </div>
+        </section>
+      </div>
+    </Transition>
 
     <!-- Git 操作弹窗 -->
-    <div
-      v-if="dialog"
-      class="git-dialog-overlay"
-      @click.self="!busy && (dialog = '')"
-    >
+    <Transition name="modal">
+      <div
+        v-if="dialog"
+        class="git-dialog-overlay"
+        @click.self="!busy && (dialog = '')"
+      >
       <form class="git-dialog" @submit.prevent="submitDialog">
         <div class="dialog-head">
           <h2>
@@ -1893,7 +2228,7 @@ onBeforeUnmount(() => {
         <template v-if="dialog === 'push'">
           <label>
             远程仓库
-            <select v-model="form.remote" :disabled="!!preview">
+            <select v-model="form.remote" :disabled="busy">
               <option v-for="remote in state?.remotes" :key="remote">
                 {{ remote }}
               </option>
@@ -1901,16 +2236,40 @@ onBeforeUnmount(() => {
           </label>
           <label>
             目标分支
-            <input v-model="form.branch" :disabled="!!preview" required />
+            <input v-model="form.branch" :disabled="busy" required />
           </label>
-          <pre v-if="preview" class="git-push-preview">{{
-            preview.commits || "无新增提交"
-          }}{{ preview.newBranch ? "\n将创建远程分支" : "" }}</pre>
+          <p v-if="previewLoading" class="git-help" role="status">
+            正在读取待推送提交…
+          </p>
+          <p v-else-if="previewError" class="error small" role="alert">
+            {{ previewError }}
+          </p>
+          <template v-else-if="preview">
+            <p class="small">
+              {{ preview.branch }} → {{ preview.remote }}/{{ preview.target }}
+              <span v-if="preview.newBranch" class="muted">· 将创建远程分支</span>
+            </p>
+            <pre class="git-push-preview">{{
+              preview.commits || "无新增提交"
+            }}</pre>
+          </template>
         </template>
 
         <template v-else-if="dialog === 'pull'">
           <p class="small">上游分支 · {{ state?.upstream || "未配置" }}</p>
-          <label>
+          <div v-if="pullBlockedReason" class="notice warning small">
+            <p>{{ pullBlockedReason }}</p>
+            <button
+              v-if="state?.branch && state?.upstream && trackedChangeCount"
+              type="button"
+              class="btn compact"
+              style="margin-top: 8px"
+              @click="open('stash-push')"
+            >
+              先新建 Stash
+            </button>
+          </div>
+          <label v-else>
             Pull 策略
             <select v-model="form.strategy">
               <option value="merge">Merge · 合并远程变更</option>
@@ -1924,7 +2283,7 @@ onBeforeUnmount(() => {
             说明
             <input v-model="form.message" placeholder="临时保存说明" />
           </label>
-          <label class="git-checkbox">
+          <label v-if="hasUntrackedFiles" class="git-checkbox">
             <input v-model="form.untracked" type="checkbox" />包含未跟踪文件
           </label>
         </template>
@@ -1932,11 +2291,11 @@ onBeforeUnmount(() => {
         <template v-else-if="dialog === 'compare'">
           <label>
             原始版本
-            <input v-model="form.base" required placeholder="分支或提交号" />
+            <input v-model="form.base" required list="git-refs" placeholder="分支或提交号" />
           </label>
           <label v-if="!form.working">
             目标版本
-            <input v-model="form.target" required placeholder="分支或提交号" />
+            <input v-model="form.target" required list="git-refs" placeholder="分支或提交号" />
           </label>
           <label class="git-checkbox">
             <input v-model="form.working" type="checkbox" />目标为当前工作区
@@ -1967,7 +2326,7 @@ onBeforeUnmount(() => {
           </label>
           <label v-if="dialog === 'create-branch'">
             起点提交号 / 分支
-            <input v-model="form.ref" required />
+            <input v-model="form.ref" required list="git-refs" />
           </label>
         </template>
 
@@ -1986,12 +2345,25 @@ onBeforeUnmount(() => {
           <button
             type="submit"
             class="btn primary"
-            :disabled="repositoryBusy"
+            :disabled="
+              repositoryBusy ||
+              (dialog === 'push' && previewLoading) ||
+              (dialog === 'pull' && !!pullBlockedReason)
+            "
           >
-            {{ dialog === "push" && !preview ? "预览待推送提交" : "继续" }}
+            {{
+              dialog === "push"
+                ? previewLoading
+                  ? "预览中…"
+                  : preview
+                    ? "确认推送"
+                    : "重新预览"
+                : "继续"
+            }}
           </button>
         </footer>
       </form>
-    </div>
+      </div>
+    </Transition>
   </div>
 </template>

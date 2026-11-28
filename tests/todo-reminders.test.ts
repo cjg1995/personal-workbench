@@ -63,6 +63,8 @@ test("只提醒到期未完成的待办，成功后重启去重，修改截止�
     records.save({ ...cancelled, dueAt: null });
     const removed = records.save({ kind: "idea", text: "已删除", dueAt: at(1000) });
     records.remove(removed.id);
+    const softRemoved = records.save({ kind: "idea", text: "软删除待撤销", dueAt: at(1000) });
+    records.softRemove(softRemoved.id);
     const completed = records.save({ kind: "idea", text: "已完成", dueAt: at(1000) });
     records.complete(completed.id, true);
     const due = records.save({ kind: "idea", text: "<待办> & 提醒", dueAt: at(1000) });
@@ -91,6 +93,17 @@ test("只提醒到期未完成的待办，成功后重启去重，修改截止�
     reminders.refresh();
     await until(() => !reminders.hasPending());
     assert.deepEqual(shown, [due.id, rescheduled.id]);
+    // 软删除的到期未完成待办在恢复后可重新触发提醒
+    const restoredTodo = records.save({ kind: "idea", text: "撤销删除后提醒", dueAt: at(1000) });
+    records.softRemove(restoredTodo.id);
+    clock += 1000;
+    reminders.refresh();
+    await delay(15);
+    assert.deepEqual(shown, [due.id, rescheduled.id]);
+    records.restore(restoredTodo.id);
+    reminders.refresh();
+    await until(() => shown.length === 3);
+    assert.deepEqual(shown, [due.id, rescheduled.id, restoredTodo.id]);
   } finally {
     completeShow();
     await reminders.stop();

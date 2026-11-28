@@ -10,15 +10,9 @@ contextBridge.exposeInMainWorld("workbench", {
   replyDialog: (id, response) =>
     ipcRenderer.send("workbench:dialog-reply", { id, response }),
   onChanged: (callback) => {
-    const listener = () => callback();
+    const listener = (_event, revision, gitChanged) => callback(revision, gitChanged);
     ipcRenderer.on("workbench:changed", listener);
     return () => ipcRenderer.removeListener("workbench:changed", listener);
-  },
-  onReviewProgress: (callback) => {
-    const listener = (_event, message) => callback(message);
-    ipcRenderer.on("workbench:review-progress", listener);
-    return () =>
-      ipcRenderer.removeListener("workbench:review-progress", listener);
   },
   onNavigate: (callback) => {
     const listener = (_event, destination) => callback(destination);
@@ -29,6 +23,11 @@ contextBridge.exposeInMainWorld("workbench", {
     const listener = (_event, request) => callback(request);
     ipcRenderer.on("workbench:git-diff", listener);
     return () => ipcRenderer.removeListener("workbench:git-diff", listener);
+  },
+  onDiffHistory: (callback) => {
+    const listener = (_event, direction) => callback(direction);
+    ipcRenderer.on("workbench:diff-history", listener);
+    return () => ipcRenderer.removeListener("workbench:diff-history", listener);
   },
   onCommitDraft: (callback) => {
     const listener = (_event, draft) => callback(draft);
@@ -49,6 +48,11 @@ contextBridge.exposeInMainWorld("workbench", {
     const listener = (_event, direction) => callback(direction);
     ipcRenderer.on("workbench:editor-history", listener);
     return () => ipcRenderer.removeListener("workbench:editor-history", listener);
+  },
+  onEditorOpen: (callback) => {
+    const listener = (_event, target) => callback(target);
+    ipcRenderer.on("workbench:editor-open", listener);
+    return () => ipcRenderer.removeListener("workbench:editor-open", listener);
   },
   onEditorSearch: (callback) => {
     const listener = (_event, payload) => callback(payload);

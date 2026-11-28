@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 import App from "./App.vue";
+import "./motion.css";
 import "./style.css";
 import "./git.css";
-import "./idea-editor.css";
 createApp(App).mount("#app");

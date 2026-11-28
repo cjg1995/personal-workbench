@@ -68,6 +68,7 @@ export class IdeaSplitEditor {
   private canInclude = false;
   private folded = false;
   private expanded = new Set<number>();
+  private hiddenPairs: { key: number; original: monaco.Range; modified: monaco.Range }[] = [];
   private zones: Record<Side, string[]> = { original: [], modified: [] };
   private syncing = false;
   private request = 0;
@@ -257,18 +258,23 @@ export class IdeaSplitEditor {
   private foldContext() {
     if (!this.model || !this.changes) return;
     const hidden: Record<Side, monaco.Range[]> = { original: [], modified: [] };
+    const pairs: { key: number; original: monaco.Range; modified: monaco.Range }[] = [];
     let old = 1, next = 1;
     const gap = (a: number, b: number) => {
       const length = Math.min(a - old, b - next) - 6;
       if (!this.folded || length < 8 || this.expanded.has(old + 3)) return;
-      hidden.original.push(new monaco.Range(old + 3, 1, old + 2 + length, 1));
-      hidden.modified.push(new monaco.Range(next + 3, 1, next + 2 + length, 1));
+      const origRange = new monaco.Range(old + 3, 1, old + 2 + length, 1);
+      const modRange = new monaco.Range(next + 3, 1, next + 2 + length, 1);
+      hidden.original.push(origRange);
+      hidden.modified.push(modRange);
+      pairs.push({ key: old + 3, original: origRange, modified: modRange });
     };
     for (const change of this.changes) {
       const a = lines(change, "original"), b = lines(change, "modified");
       gap(a[0], b[0]); old = a[1]; next = b[1];
     }
     gap(this.model.original.getLineCount() + 1, this.model.modified.getLineCount() + 1);
+    this.hiddenPairs = pairs;
     for (const side of sides) {
       const code = this.codes[side] as Code & { setHiddenAreas(ranges: monaco.Range[], owner: unknown): void };
       code.setHiddenAreas(hidden[side], this);
@@ -288,6 +294,25 @@ export class IdeaSplitEditor {
   private resizePanes(fraction: number) {
     this.sashFraction = Math.min(0.82, Math.max(0.18, fraction));
     this.root.style.gridTemplateColumns = `minmax(0,${this.sashFraction}fr) var(--idea-gutter-width) minmax(0,${1 - this.sashFraction}fr)`;
+  }
+
+  revealPosition(side: Side, position: monaco.IPosition, focusCaret = true) {
+    if (this.folded && this.hiddenPairs.length) {
+      let expandedAny = false;
+      for (const pair of this.hiddenPairs) {
+        const range = pair[side];
+        if (position.lineNumber >= range.startLineNumber && position.lineNumber <= range.endLineNumber) {
+          this.expanded.add(pair.key);
+          expandedAny = true;
+        }
+      }
+      if (expandedAny) this.foldContext();
+    }
+    const code = this.codes[side];
+    code.setPosition(position);
+    code.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
+    if (focusCaret) code.focus();
+    this.drawSoon();
   }
 
   revealChange(change: Change) {

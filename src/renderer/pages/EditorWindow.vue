@@ -3,13 +3,14 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRe
 import { monaco, language, diffCodeOptions, ideaFoldingOptions, ideaImportHiddenAreas } from "../monaco";
 import { completeJavaStatement, expandJavaOutput, isJavaOutputAbbreviation, javaCallArguments, preserveJavaCallSuffix, type JavaEdit } from "../java-editing";
 import { installParameterHints } from "../parameter-hints";
-import type { GitBlameLine } from "../../shared/types";
+import type { EditorOpenTarget, GitBlameLine } from "../../shared/types";
 import type { EditorTreeEntry, JavaFileKind } from "../../shared/editor-tree";
 import { showJavaDiagnostic } from "../../shared/java-diagnostics";
 import * as tsLanguage from "monaco-editor/languages/features/typescript/register.js";
 import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker.js?worker";
 import "monaco-editor/editor/contrib/documentSymbols/browser/outlineModel.js";
 import { call } from "../state";
+import { activeDialog } from "../dialog";
 import Icon from "../components/Icon.vue";
 import CloseButton from "../components/CloseButton.vue";
 import FileTypeIcon from "../components/FileTypeIcon.vue";
@@ -27,6 +28,7 @@ interface Context {
   java: boolean;
   status: string;
   error: string;
+  initialOpen?: EditorOpenTarget;
 }
 interface DiskFile {
   file: string;
@@ -91,6 +93,7 @@ const paletteMode = ref<"" | "files" | "locations">("");
 const paletteTitle = ref("");
 const paletteQuery = ref("");
 const fileResults = ref<string[]>([]);
+const fileSearching = ref(false);
 const locationResults = ref<Target[]>([]);
 const selectedResult = ref(0);
 const paletteScroll = ref(0);
@@ -134,7 +137,7 @@ const filteredProjects = computed(() => {
     (item.group || "").toLowerCase().includes(q)) : projectOptions.value;
 });
 const groupedProjects = computed(() => {
-  const ordered = ["推荐官", "HomeProject"];
+  const ordered = ["HomeProject", "推荐官"];
   const names: string[] = [];
   for (const name of ordered) {
     if (filteredProjects.value.some((p) => (p.group || "其他") === name)) names.push(name);
@@ -224,6 +227,7 @@ let disposed = false;
 let unlistenLsp: (() => void) | undefined;
 let unlistenDisk: (() => void) | undefined;
 let fileSearchTimer: ReturnType<typeof setTimeout> | undefined;
+let fileSearchPromise: Promise<void> | null = null;
 let textSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let textSearchId = 0;
 let revealTimer: ReturnType<typeof setTimeout> | undefined;
@@ -236,6 +240,9 @@ let cursorStopTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressCursorHistory = false;
 let unlistenHistory: (() => void) | undefined;
 let unlistenSearch: (() => void) | undefined;
+let unlistenOpen: (() => void) | undefined;
+let editorReady = false;
+let queuedOpen: EditorOpenTarget | undefined;
 let paletteToken = 0;
 let tabOrder: string[] = [];
 let tabResizeObserver: ResizeObserver | undefined;
@@ -616,8 +623,16 @@ async function switchProject(project: ProjectOption, mode: "window" | "new") {
   finally { projectBusy.value = false; }
 }
 
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
 function message(text: string) {
   status.value = text;
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = text
+    ? setTimeout(() => {
+        if (status.value === text) status.value = "";
+        statusTimer = undefined;
+      }, 5000)
+    : undefined;
 }
 function sessionKey() { return `editor-session-${context.value?.projectId || ""}`; }
 function fullPath(file: string) { return `${context.value!.root.replace(/[\\/]$/, "")}\\${file.replaceAll("/", "\\")}`; }
@@ -750,7 +765,11 @@ async function openFile(file: string, position?: { line: number; column: number 
   editor.setModel(tab.model);
   editor.updateOptions({ readOnly: tab.readonly });
   clearCtrlHover();
-  if (isNew) preFoldImports(tab);
+  if (isNew) {
+    const areas = position ? ideaImportHiddenAreas(tab.model) : [];
+    const insideImports = !!position && areas.some((range) => position.line >= range.startLineNumber && position.line <= range.endLineNumber);
+    if (!insideImports) preFoldImports(tab);
+  }
   if (tab.restore && !position) {
     editor.setPosition({ lineNumber: tab.restore.lineNumber, column: tab.restore.column });
     editor.setScrollTop(tab.restore.scrollTop);
@@ -1253,7 +1272,14 @@ function handleMouseButtons(event: MouseEvent) {
   else if (event.button === 4) navigateHistory(1);
 }
 
-function closePalette() { paletteToken++; paletteMode.value = ""; paletteQuery.value = ""; }
+function closePalette() {
+  if (fileSearchTimer) { clearTimeout(fileSearchTimer); fileSearchTimer = undefined; }
+  fileSearchPromise = null;
+  fileSearching.value = false;
+  paletteToken++;
+  paletteMode.value = "";
+  paletteQuery.value = "";
+}
 watch(selectedResult, async () => {
   await nextTick();
   const list = paletteList.value, row = paletteMode.value === "locations" ? 42 : 30;
@@ -1262,26 +1288,63 @@ watch(selectedResult, async () => {
   else if ((selectedResult.value + 1) * row > list.scrollTop + list.clientHeight)
     list.scrollTop = (selectedResult.value + 1) * row - list.clientHeight;
 });
+function recentLocalFiles() {
+  return switcherOrder().filter((file) => !file.startsWith("jdt:"));
+}
 async function showFiles() {
+  if (fileSearchTimer) { clearTimeout(fileSearchTimer); fileSearchTimer = undefined; }
+  fileSearchPromise = null;
+  fileSearching.value = false;
   paletteToken++;
   paletteMode.value = "files";
   paletteTitle.value = "打开项目文件";
   paletteQuery.value = "";
-  fileResults.value = [];
+  fileResults.value = recentLocalFiles();
   selectedResult.value = 0;
   paletteScroll.value = 0;
   await nextTick();
   if (paletteList.value) paletteList.value.scrollTop = 0;
   paletteInput.value?.focus();
 }
+function runFileSearch(query: string, token: number) {
+  fileSearching.value = true;
+  const task: Promise<void> = (async () => {
+    try {
+      const results = await call<string[]>("editor.file-search", { query });
+      if (paletteMode.value !== "files" || token !== paletteToken) return;
+      fileResults.value = results;
+      selectedResult.value = 0;
+    } catch (error) {
+      if (token === paletteToken) message(String(error));
+    } finally {
+      if (token === paletteToken) {
+        fileSearchPromise = null;
+        fileSearching.value = false;
+      }
+    }
+  })();
+  fileSearchPromise = task;
+  return task;
+}
 function updateFileSearch() {
-  if (fileSearchTimer) clearTimeout(fileSearchTimer);
-  const query = paletteQuery.value;
-  fileSearchTimer = setTimeout(async () => {
-    if (paletteMode.value !== "files" || !query) { fileResults.value = []; return; }
-    try { fileResults.value = await call<string[]>("editor.file-search", { query }); }
-    catch (error) { message(String(error)); }
+  if (fileSearchTimer) { clearTimeout(fileSearchTimer); fileSearchTimer = undefined; }
+  const token = ++paletteToken;
+  const query = paletteQuery.value.trim();
+  if (!query) {
+    fileSearchPromise = null;
+    fileSearching.value = false;
+    fileResults.value = recentLocalFiles();
     selectedResult.value = 0;
+    return;
+  }
+  const lower = query.toLowerCase();
+  fileResults.value = fileResults.value.filter((file) => file.toLowerCase().includes(lower));
+  selectedResult.value = 0;
+  fileSearching.value = true;
+  fileSearchTimer = setTimeout(() => {
+    fileSearchTimer = undefined;
+    if (paletteMode.value !== "files" || token !== paletteToken) return;
+    void runFileSearch(query, token);
   }, 90);
 }
 const visibleLocations = computed(() => {
@@ -1293,12 +1356,23 @@ const paletteStart = computed(() => Math.max(0, Math.floor(paletteScroll.value /
 const paletteFiles = computed(() => fileResults.value.slice(paletteStart.value, paletteStart.value + 42));
 const paletteLocations = computed(() => visibleLocations.value.slice(paletteStart.value, paletteStart.value + 42));
 const paletteCount = computed(() => paletteMode.value === "files" ? fileResults.value.length : visibleLocations.value.length);
-async function acceptPalette(index = selectedResult.value) {
+async function acceptPalette(index?: number) {
   if (paletteMode.value === "files") {
-    const file = fileResults.value[index];
+    const query = paletteQuery.value.trim();
+    if (index === undefined && query) {
+      if (fileSearchTimer) {
+        clearTimeout(fileSearchTimer);
+        fileSearchTimer = undefined;
+        await runFileSearch(query, paletteToken);
+      } else if (fileSearchPromise) {
+        await fileSearchPromise;
+      }
+    }
+    const targetIndex = index ?? selectedResult.value;
+    const file = fileResults.value[targetIndex];
     if (file) { closePalette(); await openFile(file); }
   } else if (paletteMode.value === "locations") {
-    const target = visibleLocations.value[index];
+    const target = visibleLocations.value[index ?? selectedResult.value];
     if (target) await jump(target);
   }
 }
@@ -1390,11 +1464,18 @@ function closeGoto() {
 function commitGoto() {
   const tab = current.value;
   if (!tab) { closeGoto(); return; }
-  const line = Math.trunc(Number(gotoValue.value.trim()));
-  if (!Number.isFinite(line) || line < 1) { gotoInput.value?.select(); return; }
-  const target = Math.min(tab.model.getLineCount(), line);
-  editor?.setPosition({ lineNumber: target, column: 1 });
-  editor?.revealLineInCenter(target);
+  const match = /^(\d+)(?:\s*[:：]\s*(\d+))?$/.exec(gotoValue.value.trim());
+  const line = match ? Number(match[1]) : NaN;
+  const col = match?.[2] ? Number(match[2]) : 1;
+  if (!Number.isFinite(line) || line < 1) {
+    message("请输入有效行号（如 42 或 42:10）");
+    gotoInput.value?.select();
+    return;
+  }
+  const targetLine = Math.min(tab.model.getLineCount(), line);
+  const targetCol = Math.max(1, Math.min(tab.model.getLineMaxColumn(targetLine), col || 1));
+  editor?.setPosition({ lineNumber: targetLine, column: targetCol });
+  editor?.revealLineInCenter(targetLine);
   gotoOpen.value = false;
   editor?.focus();
 }
@@ -1475,6 +1556,7 @@ function expandJavaOutputAtCursor() {
   return true;
 }
 function handleKeys(event: KeyboardEvent) {
+  if (activeDialog.value) return;
   const ctrl = event.ctrlKey || event.metaKey;
   const target = event.target as HTMLElement | null;
   const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
@@ -1543,7 +1625,7 @@ function handleKeys(event: KeyboardEvent) {
   else if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); goHistory(-1); }
   else if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); goHistory(1); }
   else if (event.key === "Escape" && searchTypesOpen.value) { searchTypesOpen.value = false; event.preventDefault(); }
-  else if (event.key === "Escape" && searchVisible.value && !paletteMode.value) { searchVisible.value = false; editor?.focus(); }
+  else if (event.key === "Escape" && searchVisible.value && !paletteMode.value) { event.preventDefault(); closeSearch(); }
 }
 function handleKeyUp(event: KeyboardEvent) {
   if (event.key !== "Control" && event.key !== "Meta") return;
@@ -1766,6 +1848,17 @@ onMounted(async () => {
     unlistenLsp = window.workbench.onEditorLsp(lspNotification);
     unlistenHistory = window.workbench.onEditorHistory((direction) => navigateHistory(direction < 0 ? -1 : 1));
     unlistenSearch = window.workbench.onEditorSearch(onSearchStream);
+    const applyExternalOpen = async (target: EditorOpenTarget) => {
+      if (!target) return;
+      const pos = { line: Math.max(1, target.line || 1), column: Math.max(1, target.column || 1) };
+      if (target.uri?.startsWith("jdt:")) await openVirtual(target.uri, pos, true);
+      else if (target.file) await openFile(target.file, pos, true);
+    };
+    queuedOpen = context.value.initialOpen;
+    unlistenOpen = window.workbench.onEditorOpen((target) => {
+      if (editorReady) void applyExternalOpen(target);
+      else queuedOpen = target;
+    });
     unlistenDisk = window.workbench.onEditorDisk(async (file) => {
       const tab = tabs.value.find((item) => item.file === file);
       if (!tab || tab.readonly) return;
@@ -1802,13 +1895,26 @@ onMounted(async () => {
           scrollTop: Number(item.scrollTop) || 0,
         };
       }
-      if (session.active && tabs.value.some((item) => item.file === session.active)) await openFile(session.active);
+      if (!queuedOpen && session.active && tabs.value.some((item) => item.file === session.active)) await openFile(session.active);
       history = Array.isArray(session.history) ? session.history.slice(-200) : [];
       historyIndex = Math.min(history.length - 1, Number(session.historyIndex) || 0);
+      editorReady = true;
+      if (queuedOpen) {
+        const target = queuedOpen;
+        queuedOpen = undefined;
+        await applyExternalOpen(target);
+      }
       await nextTick();
       updateTabOverflow();
       scrollActiveTabIntoView();
-    } catch { /* A stale session does not block the editor. */ }
+    } catch {
+      editorReady = true;
+      if (queuedOpen) {
+        const target = queuedOpen;
+        queuedOpen = undefined;
+        await applyExternalOpen(target);
+      }
+    }
   } catch (error) { message(error instanceof Error ? error.message : String(error)); }
 });
 onBeforeUnmount(() => {
@@ -1823,7 +1929,9 @@ onBeforeUnmount(() => {
   unlistenDisk?.();
   unlistenHistory?.();
   unlistenSearch?.();
+  unlistenOpen?.();
   stopSearchClock();
+  if (statusTimer) clearTimeout(statusTimer);
   if (cursorStopTimer) clearTimeout(cursorStopTimer);
   tabResizeObserver?.disconnect();
   providers.forEach((item) => item.dispose());
@@ -1859,13 +1967,14 @@ onBeforeUnmount(() => {
       </div>
     </header>
     <div v-if="projectPickerOpen" class="editor-project-backdrop" @click="projectPickerOpen = false"></div>
-    <section
-      v-if="projectPickerOpen"
-      class="editor-project-picker"
-      role="dialog"
-      aria-label="切换项目"
-      @keydown="onProjectPickerKeydown"
-    >
+    <Transition name="pop">
+      <section
+        v-if="projectPickerOpen"
+        class="editor-project-picker"
+        role="dialog"
+        aria-label="切换项目"
+        @keydown="onProjectPickerKeydown"
+      >
       <div class="editor-project-search">
         <Icon name="search" :size="14" class="editor-project-search-icon" />
         <input
@@ -1934,7 +2043,8 @@ onBeforeUnmount(() => {
         </template>
         <p v-if="!orderedFilteredProjects.length" class="editor-project-empty">没有匹配的项目</p>
       </div>
-    </section>
+      </section>
+    </Transition>
     <div class="editor-workspace">
       <aside class="editor-sidebar" :style="{ width: `${sidebarWidth}px` }">
         <div class="editor-sidebar-title">项目</div>
@@ -1984,6 +2094,12 @@ onBeforeUnmount(() => {
           <div class="editor-search-bar"><Icon name="search" :size="15" />
             <input ref="searchInput" v-model="searchQuery" placeholder="搜索项目内容" aria-label="搜索项目内容"
               @input="updateTextSearch()" @keydown.esc="closeSearch" />
+            <CloseButton
+              v-if="searchQuery"
+              label="清除搜索内容"
+              :size="12"
+              @click="searchQuery = ''; updateTextSearch(true); searchInput?.focus()"
+            />
             <span class="editor-search-count">{{ searching ? `搜索中… ${searchElapsed.toFixed(1)}s${searchResults.length ? ` · ${searchResults.length} 处` : ''}` : searchResults.length >= 500 ? '前 500 处' : searchResults.length ? `${searchResults.length} 处` : '' }}</span>
             <button class="editor-search-filter" :class="{ active: searchTypeFilter.length }"
               @click.stop="toggleSearchTypes">
@@ -1993,19 +2109,32 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="searching" class="editor-search-progress"></div>
           <div v-if="searchTypesOpen" class="editor-search-types-backdrop" @mousedown="searchTypesOpen = false"></div>
-          <div v-if="searchTypesOpen" class="editor-search-types" role="group" aria-label="文件类型" @mousedown.stop>
-            <div class="editor-search-types-list">
-              <label v-for="type in searchTypes" :key="type.ext">
-                <input v-model="searchTypeFilter" type="checkbox" :value="type.ext" />
-                <span>.{{ type.ext }}</span><small>{{ type.count }}</small>
-              </label>
-              <p v-if="!searchTypes.length" class="editor-search-types-empty">正在读取项目文件类型…</p>
+          <Transition name="pop">
+            <div v-if="searchTypesOpen" class="editor-search-types" role="group" aria-label="文件类型" @mousedown.stop>
+              <div class="editor-search-types-list">
+                <label v-for="type in searchTypes" :key="type.ext">
+                  <input v-model="searchTypeFilter" type="checkbox" :value="type.ext" />
+                  <span>.{{ type.ext }}</span><small>{{ type.count }}</small>
+                </label>
+                <p v-if="!searchTypes.length" class="editor-search-types-empty">正在读取项目文件类型…</p>
+              </div>
+              <div class="editor-search-types-foot">
+                <button class="link" :disabled="!searchTypeFilter.length" @click="searchTypeFilter = []">清除筛选</button>
+              </div>
             </div>
-            <div class="editor-search-types-foot">
-              <button class="link" :disabled="!searchTypeFilter.length" @click="searchTypeFilter = []">清除筛选</button>
-            </div>
-          </div>
+          </Transition>
           <div class="editor-search-results">
+            <div v-if="!searching && searchQuery.trim() && !searchGroups.length" class="editor-search-empty">
+              <span>未找到匹配内容</span>
+              <button
+                v-if="searchTypeFilter.length"
+                type="button"
+                class="link"
+                @click="searchTypeFilter = []"
+              >
+                清除文件类型筛选
+              </button>
+            </div>
             <div v-for="group in searchGroups" :key="group.file" class="editor-search-group">
               <div class="editor-search-file" :title="group.file">{{ group.file }} <span>{{ group.hits.length }}</span></div>
               <button v-for="(hit, index) in group.hits" :key="`${hit.line}:${hit.column}:${index}`"
@@ -2024,56 +2153,70 @@ onBeforeUnmount(() => {
       <span class="editor-status-message">{{ status }}</span>
       <span v-if="current">{{ caret.line }}:{{ caret.column }} · {{ current.encoding.toUpperCase() }} · {{ current.model.getEOL() === '\r\n' ? 'CRLF' : 'LF' }}</span>
     </footer>
-    <div v-if="gotoOpen" class="editor-goto-backdrop" @mousedown.self="closeGoto">
-      <div class="editor-goto" role="dialog" aria-label="转到行">
-        <label for="editor-goto-line">转到行</label>
-        <input id="editor-goto-line" ref="gotoInput" v-model="gotoValue" inputmode="numeric" aria-label="行号" />
-        <small v-if="current">1 - {{ current.model.getLineCount() }}</small>
+    <Transition name="overlay-pop">
+      <div v-if="gotoOpen" class="editor-goto-backdrop" @mousedown.self="closeGoto">
+        <div class="editor-goto" role="dialog" aria-label="转到行">
+          <label for="editor-goto-line">转到行</label>
+          <input id="editor-goto-line" ref="gotoInput" v-model="gotoValue" inputmode="numeric" aria-label="行号" />
+          <small v-if="current">1 - {{ current.model.getLineCount() }}</small>
+        </div>
       </div>
-    </div>
+    </Transition>
     <div v-if="tabMenu" class="editor-menu-backdrop" @mousedown="tabMenu = null" @contextmenu.prevent="tabMenu = null"></div>
-    <div v-if="tabMenu" class="editor-tab-menu" :style="{ left: `${tabMenu.x}px`, top: `${tabMenu.y}px` }" role="menu">
-      <button role="menuitem" @click="closeTabGroup('current')">关闭</button>
-      <button role="menuitem" :disabled="tabs.length < 2" @click="closeTabGroup('others')">关闭其他</button>
-      <button role="menuitem" :disabled="tabIndex(tabMenu.file) <= 0" @click="closeTabGroup('left')">关闭左边</button>
-      <button role="menuitem" :disabled="tabIndex(tabMenu.file) >= tabs.length - 1" @click="closeTabGroup('right')">关闭右边</button>
-      <div class="editor-menu-separator"></div>
-      <button role="menuitem" @click="closeTabGroup('all')">关闭所有</button>
-    </div>
+    <Transition name="pop">
+      <div v-if="tabMenu" class="editor-tab-menu" :style="{ left: `${tabMenu.x}px`, top: `${tabMenu.y}px` }" role="menu">
+        <button role="menuitem" @click="closeTabGroup('current')">关闭</button>
+        <button role="menuitem" :disabled="tabs.length < 2" @click="closeTabGroup('others')">关闭其他</button>
+        <button role="menuitem" :disabled="tabIndex(tabMenu.file) <= 0" @click="closeTabGroup('left')">关闭左边</button>
+        <button role="menuitem" :disabled="tabIndex(tabMenu.file) >= tabs.length - 1" @click="closeTabGroup('right')">关闭右边</button>
+        <div class="editor-menu-separator"></div>
+        <button role="menuitem" @click="closeTabGroup('all')">关闭所有</button>
+      </div>
+    </Transition>
     <div v-if="blameMenu" class="editor-menu-backdrop" @mousedown="blameMenu = null" @contextmenu.prevent="blameMenu = null"></div>
-    <div v-if="blameMenu" class="editor-tab-menu editor-blame-menu" :style="{ left: `${blameMenu.x}px`, top: `${blameMenu.y}px` }" role="menu">
-      <button role="menuitem" :disabled="activeBlame?.loading && !activeBlame.snapshot" @click="toggleBlameFromMenu">
-        {{ activeBlame ? '关闭提交历史' : '显示提交历史' }}
-      </button>
-    </div>
-    <div v-if="tabListOpen" class="editor-menu-backdrop" @mousedown="tabListOpen = false" @contextmenu.prevent="tabListOpen = false"></div>
-    <div v-if="tabListOpen" class="editor-tab-list" :style="{ top: `${tabListPos.top}px`, right: `${tabListPos.right}px` }" role="menu">
-      <button v-for="file in tabListFiles" :key="file" role="menuitem" :class="{ active: file === activeFile }"
-        @click="pickTab(file)">
-        <FileTypeIcon :name="displayName(file)" :java-kind="tabs.find((tab) => tab.file === file)?.javaKind" :size="14" />
-        <span>{{ displayName(file) }}</span>
-        <code>{{ file }}</code>
-      </button>
-    </div>
-    <div v-if="switcher.open" class="editor-switcher-backdrop" @mousedown.self="cancelSwitcher">
-      <div class="editor-switcher" role="listbox" aria-label="最近打开的文件">
-        <div class="editor-switcher-head">切换文件<span>松开 Ctrl 打开 · Tab 继续选择</span></div>
-        <button v-for="(entry, index) in switcherEntries" :key="entry.file" class="editor-switcher-row"
-          :class="{ selected: index === switcher.index }" role="option" :aria-selected="index === switcher.index"
-          @mouseenter="switcher.index = index" @click="switcher.index = index; commitSwitcher()">
-          <FileTypeIcon :name="entry.name" :java-kind="entry.javaKind" :size="14" />
-          <span class="editor-switcher-name">{{ entry.name }}</span>
-          <code class="editor-switcher-path">{{ entry.file }}</code>
+    <Transition name="pop">
+      <div v-if="blameMenu" class="editor-tab-menu editor-blame-menu" :style="{ left: `${blameMenu.x}px`, top: `${blameMenu.y}px` }" role="menu">
+        <button role="menuitem" :disabled="activeBlame?.loading && !activeBlame.snapshot" @click="toggleBlameFromMenu">
+          {{ activeBlame ? '关闭提交历史' : '显示提交历史' }}
         </button>
       </div>
-    </div>
-    <div v-if="paletteMode" class="editor-palette-backdrop" @mousedown.self="closePalette">
+    </Transition>
+    <div v-if="tabListOpen" class="editor-menu-backdrop" @mousedown="tabListOpen = false" @contextmenu.prevent="tabListOpen = false"></div>
+    <Transition name="pop">
+      <div v-if="tabListOpen" class="editor-tab-list" :style="{ top: `${tabListPos.top}px`, right: `${tabListPos.right}px` }" role="menu">
+        <button v-for="file in tabListFiles" :key="file" role="menuitem" :class="{ active: file === activeFile }"
+          @click="pickTab(file)">
+          <FileTypeIcon :name="displayName(file)" :java-kind="tabs.find((tab) => tab.file === file)?.javaKind" :size="14" />
+          <span>{{ displayName(file) }}</span>
+          <code>{{ file }}</code>
+        </button>
+      </div>
+    </Transition>
+    <Transition name="overlay-pop">
+      <div v-if="switcher.open" class="editor-switcher-backdrop" @mousedown.self="cancelSwitcher">
+        <div class="editor-switcher" role="listbox" aria-label="最近打开的文件">
+          <div class="editor-switcher-head">切换文件<span>松开 Ctrl 打开 · Tab 继续选择</span></div>
+          <button v-for="(entry, index) in switcherEntries" :key="entry.file" class="editor-switcher-row"
+            :class="{ selected: index === switcher.index }" role="option" :aria-selected="index === switcher.index"
+            @mouseenter="switcher.index = index" @click="switcher.index = index; commitSwitcher()">
+            <FileTypeIcon :name="entry.name" :java-kind="entry.javaKind" :size="14" />
+            <span class="editor-switcher-name">{{ entry.name }}</span>
+            <code class="editor-switcher-path">{{ entry.file }}</code>
+          </button>
+        </div>
+      </div>
+    </Transition>
+    <Transition name="overlay-pop">
+      <div v-if="paletteMode" class="editor-palette-backdrop" @mousedown.self="closePalette">
       <div class="editor-palette" role="dialog" :aria-label="paletteTitle">
-        <div class="editor-palette-heading">{{ paletteTitle }} <CloseButton label="关闭" :size="13" @click="closePalette" /></div>
+        <div class="editor-palette-heading">{{ paletteMode === 'files' && !paletteQuery.trim() && paletteCount ? '最近打开的文件' : paletteTitle }} <CloseButton label="关闭" :size="13" @click="closePalette" /></div>
         <input ref="paletteInput" v-model="paletteQuery" :placeholder="paletteMode === 'files' ? '输入文件名或路径' : '筛选结果'"
           @input="paletteMode === 'files' ? updateFileSearch() : selectedResult = 0" @keydown="paletteKey" />
         <div ref="paletteList" class="editor-palette-list" @scroll="paletteScroll = ($event.target as HTMLElement).scrollTop">
-          <div class="editor-palette-spacer" :style="{ height: `${paletteCount * paletteRowHeight}px` }">
+          <div v-if="!paletteCount" class="editor-palette-empty">
+            {{ paletteMode === 'files' && fileSearching ? '搜索中…' : (paletteQuery.trim() ? '没有匹配项' : '输入关键词搜索项目文件') }}
+          </div>
+          <div v-else class="editor-palette-spacer" :style="{ height: `${paletteCount * paletteRowHeight}px` }">
           <template v-if="paletteMode === 'files'">
             <button v-for="(file, index) in paletteFiles" :key="file" :class="{ selected: paletteStart + index === selectedResult }"
               :style="{ top: `${(paletteStart + index) * paletteRowHeight}px`, height: `${paletteRowHeight}px` }"
@@ -2091,8 +2234,9 @@ onBeforeUnmount(() => {
           </template>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </Transition>
     <MessageDialog :dark="dark" />
   </div>
 </template>

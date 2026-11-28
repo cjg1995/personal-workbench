@@ -19,6 +19,7 @@ const projectId = ref(context.value.projectId || "employee"),
   config = ref<BuildConfig | null>(null),
   error = ref(""),
   busy = ref(false),
+  inspecting = ref(false),
   selected = ref(context.value.taskId || "");
 
 const androidProjects = computed(
@@ -36,20 +37,35 @@ const task = computed(() =>
   model.tasks.find((t) => t.id === (active.value?.id || selected.value)),
 );
 
-async function inspect() {
+async function inspect(manual = false) {
+  if (inspecting.value) return;
+  inspecting.value = true;
   config.value = null;
   error.value = "";
   try {
     config.value = await call("apk.inspect", { projectId: projectId.value });
+    if (manual) notify("配置检查已更新");
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    inspecting.value = false;
   }
 }
 
 watch(
+  history,
+  (list) => {
+    if (!active.value && (!selected.value || !list.some((t) => t.id === selected.value))) {
+      selected.value = list[0]?.id || "";
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   projectId,
   () => {
-    selected.value = "";
+    selected.value = history.value[0]?.id || "";
     void inspect();
   },
   { immediate: true },
@@ -80,10 +96,12 @@ async function start() {
           <button
             type="button"
             class="btn compact"
-            :disabled="!!active"
-            @click="inspect"
+            :disabled="!!active || inspecting"
+            @click="inspect(true)"
           >
-            <Icon name="refresh" :size="13" />重新检查
+            <Icon name="refresh" :size="13" :class="{ spinning: inspecting }" />{{
+              inspecting ? "检查中…" : "重新检查"
+            }}
           </button>
         </div>
 

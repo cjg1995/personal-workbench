@@ -52,7 +52,10 @@ export function extractPromptVariables(body: string): string[] {
 }
 
 export function hasPromptVariables(body: string): boolean {
-  return extractPromptVariables(body).length > 0;
+  for (const match of (body || "").matchAll(VARIABLE_PATTERN)) {
+    if (match[1].trim()) return true;
+  }
+  return false;
 }
 
 export function hasActualVariableValue(value: string | undefined | null): boolean {

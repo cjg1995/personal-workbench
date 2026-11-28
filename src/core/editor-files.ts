@@ -300,6 +300,53 @@ export class EditorFiles {
       .slice(0, Math.min(limit, 200)).map((item) => item.file);
   }
 
+  async quickSearch(root: string, query: string, limit = 150, extensions?: string[], timeoutMs = 2500): Promise<TextHit[]> {
+    if (!query || query.length > 200) return [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const selected = selectedExtensions(extensions);
+      const globs = selected.length ? selected : searchableExtensions;
+      const matched = await this.rg(root, [
+        "--hidden", "--line-number", "--column", "--ignore-case", "--fixed-strings",
+        "--no-heading", "--color", "never", "--max-columns", "300", "--max-columns-preview",
+        "--max-filesize", "4M",
+        ...this.exclusions(),
+        ...globs.flatMap((ext) => ["-g", `*.${ext}`]),
+        "--", query, ".",
+      ], 2 * 1024 * 1024, limit, controller.signal);
+      if (controller.signal.aborted) return [];
+      if (matched !== null) return matched.split(/\r?\n/).flatMap((line) => {
+        const hit = parseTextHit(line);
+        return hit ? [hit] : [];
+      }).slice(0, limit);
+      const hits: TextHit[] = [];
+      const files = await this.files(root);
+      for (const file of files) {
+        if (hits.length >= limit || controller.signal.aborted) break;
+        const extension = path.extname(file).slice(1).toLowerCase();
+        if (!globs.includes(extension)) continue;
+        try {
+          const target = projectFile(root, file);
+          const stat = await fs.promises.stat(target);
+          if (stat.size > maxFileBytes) continue;
+          const text = decode(await fs.promises.readFile(target)).text;
+          const lines = text.split(/\r?\n/);
+          for (let i = 0; i < lines.length && hits.length < limit; i++) {
+            let from = 0, at = -1;
+            while (hits.length < limit && (at = lines[i].toLowerCase().indexOf(query.toLowerCase(), from)) >= 0) {
+              hits.push({ file, line: i + 1, column: at + 1, text: lines[i].trim().slice(0, 240) });
+              from = at + Math.max(query.length, 1);
+            }
+          }
+        } catch { /* Deleted, binary, or inaccessible files are omitted. */ }
+      }
+      return hits;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async search(root: string, query: string, limit = 500, extensions?: string[]): Promise<TextHit[]> {
     const key = path.resolve(root).toLowerCase();
     this.cancelSearch(root);

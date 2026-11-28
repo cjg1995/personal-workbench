@@ -17,6 +17,8 @@ import {
   setGuard,
   dateLabel,
 } from "../state";
+import { activeDialog } from "../dialog";
+import { formatBytes, projectTypeLabels, splitFilePath } from "../format";
 import Icon from "../components/Icon.vue";
 
 function buildUntrackedDrafts(projects: ProjectConfig[]) {
@@ -44,6 +46,16 @@ const settingsRoot = ref<HTMLElement>(),
   restorePreview = ref<any>(null);
 
 const dirty = computed(() => JSON.stringify(form.value) !== saved.value);
+const sortedBackups = computed(() =>
+  [...backups.value].sort(
+    (a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0),
+  ),
+);
+const templateStatus = computed(() => {
+  const value = form.value.tools.template;
+  if (!value) return { text: "使用内置模板", cls: "success" };
+  return pathStatus("template", value);
+});
 
 function syncUntracked(project: ProjectConfig, field: "include" | "exclude") {
   const raw = untrackedDrafts.value[project.id]?.[field] ?? "";
@@ -58,7 +70,21 @@ function syncUntracked(project: ProjectConfig, field: "include" | "exclude") {
   }
 }
 
+function onKeydown(event: KeyboardEvent) {
+  if (
+    !activeDialog.value &&
+    dirty.value &&
+    !busy.value &&
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === "s"
+  ) {
+    event.preventDefault();
+    void save();
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener("keydown", onKeydown);
   if (tab.value === "projects" && typeof context.value.projectId === "string") {
     await nextTick();
     const target = settingsRoot.value?.querySelector<HTMLDetailsElement>(
@@ -100,7 +126,10 @@ setGuard(
       "丢弃配置",
     )),
 );
-onBeforeUnmount(() => setGuard(null));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  setGuard(null);
+});
 
 function pathStatus(key: string, value: string) {
   if (!value) return { text: "未填写", cls: "warn" };
@@ -142,10 +171,24 @@ async function save() {
   busy.value = false;
 }
 
-function discard() {
+async function discard() {
+  if (
+    !(await confirm(
+      "放弃未保存修改",
+      "当前未保存的项目与工具配置修改将被丢弃。",
+      "放弃修改",
+      { tone: "warning", danger: true },
+    ))
+  )
+    return;
   form.value = JSON.parse(saved.value);
   untrackedDrafts.value = buildUntrackedDrafts(form.value.projects);
   notify("已放弃未保存修改");
+  void attempt(refreshChecks);
+}
+
+function resetBuiltinTemplate() {
+  form.value.tools.template = "";
   void attempt(refreshChecks);
 }
 
@@ -195,10 +238,13 @@ async function createBackup() {
   busy.value = false;
 }
 
-async function previewRestore() {
+async function previewRestore(file?: string) {
   busy.value = true;
   await attempt(async () => {
-    restorePreview.value = await call("backup.preview");
+    restorePreview.value = await call(
+      "backup.preview",
+      file ? { file } : undefined,
+    );
   });
   busy.value = false;
 }
@@ -277,7 +323,7 @@ async function restore() {
           >
             <summary>
               <strong>{{ p.name }}</strong>
-              <span>{{ p.group }} · {{ p.type }}</span>
+              <span>{{ p.group }} · {{ projectTypeLabels[p.type] || p.type }}</span>
               <span
                 class="pill"
                 :class="pathStatus('project:' + p.id, p.path).cls"
@@ -292,7 +338,7 @@ async function restore() {
               <span>工作目录</span>
               <input
                 v-model="p.path"
-                :aria-label="p.id + ' 工作目录'"
+                :aria-label="p.name + ' 工作目录'"
                 @change="refreshChecks"
               />
               <button type="button" @click="pickProject(p)">选择…</button>
@@ -366,7 +412,7 @@ async function restore() {
               <span>未跟踪显示范围</span>
               <input
                 v-model="untrackedDrafts[p.id].include"
-                :aria-label="p.id + ' 未跟踪显示范围'"
+                :aria-label="p.name + ' 未跟踪显示范围'"
                 placeholder="留空按已有受跟踪目录，填 * 显示全部，逗号分隔，如 src/, WebRoot/"
                 @input="syncUntracked(p, 'include')"
               />
@@ -375,7 +421,7 @@ async function restore() {
               <span>未跟踪排除规则</span>
               <input
                 v-model="untrackedDrafts[p.id].exclude"
-                :aria-label="p.id + ' 未跟踪排除规则'"
+                :aria-label="p.name + ' 未跟踪排除规则'"
                 placeholder="留空不额外排除，填 * 全部隐藏，逗号分隔，如 *.rar, *.zip"
                 @input="syncUntracked(p, 'exclude')"
               />
@@ -459,25 +505,39 @@ async function restore() {
                 type="button"
                 class="btn"
                 :disabled="busy"
-                @click="previewRestore"
+                @click="previewRestore()"
               >
                 选择备份并预览
               </button>
             </div>
 
-            <table v-if="backups.length" class="table">
+            <table v-if="sortedBackups.length" class="table">
               <thead>
                 <tr>
                   <th>备份文件</th>
                   <th>日期</th>
                   <th>大小</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="b in backups" :key="b.path">
-                  <td class="path">{{ b.path }}</td>
+                <tr v-for="b in sortedBackups" :key="b.path">
+                  <td :title="b.path">
+                    <div class="backup-name">{{ splitFilePath(b.path).name }}</div>
+                    <div class="path small muted">{{ splitFilePath(b.path).dir }}</div>
+                  </td>
                   <td>{{ dateLabel(b.at) }}</td>
-                  <td>{{ (b.bytes / 1024).toFixed(1) }} KB</td>
+                  <td>{{ formatBytes(b.bytes) }}</td>
+                  <td>
+                    <button
+                      type="button"
+                      class="text-action"
+                      :disabled="busy"
+                      @click="previewRestore(b.path)"
+                    >
+                      预览恢复
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -507,7 +567,6 @@ async function restore() {
                       'note',
                       'prompt',
                       'monthly',
-                      'review',
                       'task',
                       'import',
                       'config',
@@ -521,7 +580,6 @@ async function restore() {
                             note: "记录",
                             prompt: "提示词",
                             monthly: "月报",
-                            review: "审查",
                             task: "任务",
                             import: "导入批次",
                             config: "配置",
@@ -568,8 +626,20 @@ async function restore() {
             <input
               v-model="form.tools.template"
               placeholder="留空使用内置空白模板（需保留五个章节槽位）"
+              @change="refreshChecks"
             />
             <button type="button" @click="pickTool('template')">选择…</button>
+            <button
+              v-if="form.tools.template"
+              type="button"
+              class="text-action"
+              @click="resetBuiltinTemplate"
+            >
+              恢复内置模板
+            </button>
+            <span class="pill" :class="templateStatus.cls">{{
+              templateStatus.text
+            }}</span>
             <button
               type="button"
               @click="attempt(() => call('settings.template'))"
@@ -588,6 +658,7 @@ async function restore() {
           type="button"
           class="btn primary"
           :disabled="busy"
+          title="保存配置（Ctrl+S）"
           @click="save"
         >
           保存配置

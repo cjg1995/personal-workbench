@@ -11,10 +11,12 @@ import CloseButton from "./CloseButton.vue";
 withDefaults(defineProps<{ dark?: boolean }>(), { dark: false });
 
 const dialogEl = ref<HTMLDialogElement>();
+const renderedDialog = ref(activeDialog.value);
 let unbind: (() => void) | undefined;
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
 const iconName = computed(() => {
-  switch (activeDialog.value?.tone) {
+  switch (renderedDialog.value?.tone) {
     case "danger":
       return "trash";
     case "warning":
@@ -28,27 +30,32 @@ const iconName = computed(() => {
 });
 
 const stackedButtons = computed(() => {
-  const buttons = activeDialog.value?.buttons || [];
+  const buttons = renderedDialog.value?.buttons || [];
   if (buttons.length <= 1) return false;
   const totalLen = buttons.reduce((sum, b) => sum + b.label.length, 0);
   return buttons.length >= 3 && totalLen > 16;
 });
 
 const hasLongDetail = computed(() => {
-  const detail = activeDialog.value?.detail || "";
+  const detail = renderedDialog.value?.detail || "";
   return detail.length > 90 || detail.includes("\n");
 });
 
 const canDismiss = computed(() => {
-  const req = activeDialog.value;
+  const req = renderedDialog.value;
   return !!req && req.buttons.length > 0;
 });
 
 async function syncOpen() {
   const el = dialogEl.value;
-  if (!el) return;
   const req = activeDialog.value;
   if (req) {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = undefined;
+    }
+    renderedDialog.value = req;
+    if (!el) return;
     if (!el.open) {
       el.showModal();
     }
@@ -58,8 +65,15 @@ async function syncOpen() {
     );
     const target = btns[req.defaultId] || btns[0];
     target?.focus();
-  } else if (el.open) {
-    el.close();
+  } else {
+    if (el?.open) {
+      el.close();
+    }
+    if (closeTimer) clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      closeTimer = undefined;
+      if (!activeDialog.value) renderedDialog.value = null;
+    }, 140);
   }
 }
 
@@ -78,6 +92,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unbind?.();
+  if (closeTimer) clearTimeout(closeTimer);
   if (dialogEl.value?.open) dialogEl.value.close();
 });
 
@@ -123,24 +138,24 @@ function onKeydown(event: KeyboardEvent) {
     }"
     role="alertdialog"
     aria-modal="true"
-    :aria-labelledby="activeDialog ? 'ui-msg-title' : undefined"
-    :aria-describedby="activeDialog ? 'ui-msg-body' : undefined"
+    :aria-labelledby="renderedDialog ? 'ui-msg-title' : undefined"
+    :aria-describedby="renderedDialog ? 'ui-msg-body' : undefined"
     @cancel.prevent="dismiss"
     @click="onBackdropClick"
     @keydown="onKeydown"
   >
-    <div v-if="activeDialog" class="ui-msg-card">
+    <div v-if="renderedDialog" class="ui-msg-card">
       <div class="ui-msg-top">
         <span
           class="ui-msg-badge"
-          :class="'tone-' + activeDialog.tone"
+          :class="'tone-' + renderedDialog.tone"
           aria-hidden="true"
         >
           <Icon :name="iconName" :size="18" />
         </span>
         <div class="ui-msg-copy">
-          <h2 id="ui-msg-title">{{ activeDialog.title }}</h2>
-          <p id="ui-msg-body" class="ui-msg-text">{{ activeDialog.message }}</p>
+          <h2 id="ui-msg-title">{{ renderedDialog.title }}</h2>
+          <p id="ui-msg-body" class="ui-msg-text">{{ renderedDialog.message }}</p>
         </div>
         <CloseButton
           v-if="canDismiss"
@@ -150,8 +165,8 @@ function onKeydown(event: KeyboardEvent) {
         />
       </div>
 
-      <div v-if="activeDialog.detail" class="ui-msg-detail">
-        {{ activeDialog.detail }}
+      <div v-if="renderedDialog.detail" class="ui-msg-detail">
+        {{ renderedDialog.detail }}
       </div>
 
       <div
@@ -159,7 +174,7 @@ function onKeydown(event: KeyboardEvent) {
         :class="{ stacked: stackedButtons }"
       >
         <button
-          v-for="(btn, idx) in activeDialog.buttons"
+          v-for="(btn, idx) in renderedDialog.buttons"
           :key="idx + '-' + btn.label"
           type="button"
           data-dialog-btn
@@ -193,20 +208,9 @@ function onKeydown(event: KeyboardEvent) {
   width: min(510px, 92vw);
 }
 
-.ui-msg-dialog[open] {
-  animation: ui-msg-in 0.16s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
 .ui-msg-dialog::backdrop {
   background: rgba(23, 28, 38, 0.36);
   backdrop-filter: blur(2.5px);
-}
-
-@keyframes ui-msg-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.985);
-  }
 }
 
 .ui-msg-card {
@@ -354,10 +358,10 @@ function onKeydown(event: KeyboardEvent) {
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.14s cubic-bezier(0.22, 0.61, 0.36, 1),
-    border-color 0.14s cubic-bezier(0.22, 0.61, 0.36, 1),
-    color 0.14s cubic-bezier(0.22, 0.61, 0.36, 1),
-    box-shadow 0.14s cubic-bezier(0.22, 0.61, 0.36, 1);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .ui-msg-actions.stacked .ui-msg-btn {

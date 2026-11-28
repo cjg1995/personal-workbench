@@ -78,15 +78,13 @@ async function until(fn, label, attempts = 60) {
     await editor.keyboard.type("// pending conflict");
     assert.equal(await editor.locator(".editor-dirty").count(), 1);
     fs.writeFileSync(path.join(fixture, "src", "Alpha.java"), "external edit\r\n");
-    await application.evaluate(({ dialog }) => {
-      globalThis.__editorOriginalDialog = dialog.showMessageBox;
-      dialog.showMessageBox = async () => ({ response: 0 });
-    });
     await editor.keyboard.press("Control+s");
+    const conflictDialog = editor.getByRole("alertdialog", { name: "文件已变化" });
+    await conflictDialog.getByRole("button", { name: "取消", exact: true }).click();
     await editor.locator(".editor-stale").waitFor();
     assert.equal(fs.readFileSync(path.join(fixture, "src", "Alpha.java"), "utf8"), "external edit\r\n");
-    await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 2 }); });
     await editor.keyboard.press("Control+s");
+    await conflictDialog.getByRole("button", { name: "覆盖外部修改", exact: true }).click();
     await until(() => fs.readFileSync(path.join(fixture, "src", "Alpha.java"), "utf8").includes("pending conflict"), "explicit overwrite");
     await editor.locator(".editor-tab").filter({ hasText: "Beta.java" }).click();
     await editor.locator(".monaco-editor .view-line").first().click();
@@ -104,7 +102,6 @@ async function until(fn, label, attempts = 60) {
     assert.equal((await application.windows()).length, 2);
     assert.equal(await editor.locator(".editor-dirty").count(), 0);
     assert.equal(await editor.locator(".editor-header-actions button").count(), 2);
-    await application.evaluate(({ dialog }) => { dialog.showMessageBox = globalThis.__editorOriginalDialog; });
     await editor.screenshot({ path: path.join(root, ".local", "editor-ui.png") });
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ tabs: await editor.locator(".editor-tab").count(), searchHits: await editor.locator(".editor-search-hit").count(), screenshot: ".local/editor-ui.png" }));

@@ -33,12 +33,29 @@ export function formatFullDate(isoDate: string | null | undefined): string {
   return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${WEEKDAYS[d.getDay()]}`;
 }
 
+export const projectTypeLabels: Record<string, string> = {
+  tomcat: "Java / Tomcat",
+  spring: "Spring Boot",
+  h5: "UniApp H5",
+  vue: "Vue 前端",
+  wechat: "微信原生小程序",
+  "uni-wechat": "UniApp 小程序",
+};
+
+export function formatBytes(bytes: number | null | undefined): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "未指定";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}　${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function formatTimeHM(iso: string | null | undefined): string {
@@ -120,34 +137,11 @@ export function getMonthDays(monthStr: string): CalendarDay[] {
   return days;
 }
 
-export function splitNoteText(raw: string): { title: string; body: string } {
-  const normalized = (raw || "").replace(/\r\n/g, "\n").trim();
-  if (!normalized) return { title: "", body: "" };
-  const lines = normalized.split("\n");
-  if (lines.length > 1) {
-    const first = lines[0].trim();
-    const rest = lines.slice(1).join("\n").trim();
-    return { title: first || rest, body: first ? rest : "" };
-  }
-  if (normalized.length > 22) {
-    // Split on Chinese colon or period when prefix looks like a concise heading.
-    const colon = normalized.indexOf("：");
-    if (colon >= 3 && colon <= 36 && normalized.length - colon - 1 >= 6) {
-      return {
-        title: normalized.slice(0, colon).trim(),
-        body: normalized.slice(colon + 1).trim(),
-      };
-    }
-    const period = normalized.indexOf("。");
-    if (period >= 4 && period <= 36 && normalized.length - period - 1 >= 6) {
-      return {
-        title: normalized.slice(0, period).trim(),
-        body: normalized.slice(period + 1).trim(),
-      };
-    }
-  }
-  return { title: normalized, body: "" };
-}
+export {
+  formatNoteLabel,
+  formatNotePreview,
+  formatNoteText,
+} from "../shared/note-text";
 
 export function splitFilePath(filePath: string): { dir: string; name: string } {
   const slash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));

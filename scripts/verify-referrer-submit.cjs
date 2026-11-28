@@ -22,13 +22,16 @@ async function launch() {
   page = await application.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
   await page.waitForSelector("[data-page=work]");
-  await application.evaluate(({ dialog }) => {
+  await page.evaluate(() => {
     globalThis.workflowConfirmations = [];
     globalThis.workflowResponses = [];
-    dialog.showMessageBox = async (_window, options) => {
-      globalThis.workflowConfirmations.push(options);
-      return { response: globalThis.workflowResponses.shift() ?? 0 };
-    };
+    new MutationObserver(() => {
+      const dialog = document.querySelector("dialog[open][role=alertdialog]");
+      const buttons = dialog?.querySelectorAll("[data-dialog-btn]");
+      if (!buttons?.length) return;
+      globalThis.workflowConfirmations.push(dialog.innerText);
+      buttons[globalThis.workflowResponses.shift() ?? 0].click();
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"], childList: true });
   });
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800));
 }
@@ -97,7 +100,8 @@ async function task(projectId, state) {
     return task?.state === state ? task : false;
   }, projectId + " " + state);
 }
-const button = (name) => page.getByRole("button", { name, exact: true });
+const button = (name) => page.getByRole("dialog", { name: "一键提测", exact: true })
+  .getByRole("button", { name, exact: true });
 async function inspect() {
   await button("检查仓库与预览").click();
   await page.getByRole("heading", { name: "检查项", exact: true }).waitFor();
@@ -116,8 +120,8 @@ async function selectProject(id) {
   await until(async () => (await page.locator(".git-current-branch").textContent()) === git(fixtures[id].repo, "branch", "--show-current"), "selected project status");
 }
 async function openSubmit() {
-  await page.getByTitle('刷新（F5）').click();
-  await page.locator(".git-toolbar").getByRole("button", { name: "一键提测", exact: true }).click();
+  await page.getByRole("button", { name: "刷新仓库", exact: true }).click();
+  await page.getByRole("button", { name: "一键提测", exact: true }).click();
   await page.locator(".git-submit-dialog .check-list").waitFor();
 }
 async function editorReady(file) {
@@ -133,7 +137,7 @@ async function editInline(text) {
   await until(async () => (await page.locator('.submit-diff-path').textContent()).includes('未保存'), 'editor dirty');
   await until(async () => (await page.locator('.submit-diff-host .editor.modified .view-lines:not(.line-delete)').textContent()).replaceAll('\u00a0',' ').includes(text.trim()), 'typed editor text appears');
 }
-async function answer(response) { await application.evaluate((_e, value) => globalThis.workflowResponses.push(value), response); }
+async function answer(response) { await page.evaluate((value) => globalThis.workflowResponses.push(value), response); }
 async function checkSubmitFooter() {
   const toast = page.locator('.toast-close');
   await toast.evaluateAll((elements) => elements.forEach((element) => element.click()));
@@ -247,8 +251,8 @@ const fixtures = {};
     assert.equal(await page.getByRole("navigation").getByRole("button", { name: "一键提测", exact: true }).count(), 0);
     assert.equal(await page.getByLabel("仅显示已跟踪目录下的未跟踪文件", { exact: true }).count(), 0);
     for (let i = 0; i < 90; i++) write(backend.repo, `src/scroll-${String(i).padStart(3, "0")}.java`, "unstaged scroll\n");
-    await page.getByTitle("刷新（F5）").click();
-    await until(async () => (await page.locator(".git-selectionbar label").textContent()).includes("91 个文件"), "scroll files ready");
+    await page.getByRole("button", { name: "刷新仓库", exact: true }).click();
+    await until(async () => (await page.locator(".git-tabs .count").textContent()) === "91", "scroll files ready");
     await page.locator(".git-virtual-files").evaluate((element) => { element.scrollTop = 1300; });
     await until(async () => (await page.locator(".git-virtual-files").evaluate((element) => element.scrollTop)) === 1300, "scroll ready");
     await nav("工作记录");
@@ -267,9 +271,9 @@ const fixtures = {};
     assert.equal(await page.getByLabel("文件排序").inputValue(), "status");
     assert.equal(await page.getByLabel("选择当前列表全部文件").isChecked(), true);
     assert.equal(await page.getByLabel("本地提交说明").inputValue(), "保留的提交说明");
-    assert.equal(await application.evaluate(() => globalThis.workflowConfirmations.length), 0);
+    assert.equal(await page.evaluate(() => globalThis.workflowConfirmations.length), 0);
     assert.equal(await page.evaluate(() => window.__workbenchCanClose()), false);
-    assert.equal(await application.evaluate(() => globalThis.workflowConfirmations.length), 1);
+    assert.equal(await page.evaluate(() => globalThis.workflowConfirmations.length), 1);
     checks.push("离开再返回保留所选项目、查询、排序、勾选、当前文件和提交说明；导航不提示丢弃，关闭应用仍保护未提交说明");
     await page.getByRole("tab", { name: "Git Log", exact: true }).click();
     await page.locator(".git-log-row").first().click();
@@ -280,18 +284,18 @@ const fixtures = {};
     assert.equal(await page.getByRole("tab", { name: "Git Log", exact: true }).getAttribute("aria-selected"), "true");
     assert.equal(await page.locator(".git-log-detail code").first().textContent(), selectedHash);
     checks.push("Git 内部页签与选中提交详情保留");
-    await page.locator(".git-toolbar").getByRole("button", { name: /^Commit/ }).click();
-    const commit = page.getByRole("dialog", { name: "本地提交", exact: true });
-    await commit.waitFor();
-    assert.equal(await commit.getByRole("button", { name: "Commit", exact: true }).isDisabled(), true);
-    await commit.getByRole("button", { name: "暂存当前列表", exact: true }).click();
-    await until(() => commit.getByRole("button", { name: "Commit", exact: true }).isEnabled(), "staged commit enabled");
+    await page.getByRole("tab", { name: "本地变更" }).click();
+    const commit = page.locator(".commit-body");
+    const commitButton = commit.getByRole("button", { name: "提交", exact: true });
+    assert.equal(await commitButton.isDisabled(), true);
+    await page.getByRole("button", { name: /暂存所选/ }).click();
+    await until(() => commitButton.isEnabled(), "staged commit enabled");
     await commit.getByLabel("本地提交说明").fill("界面本地提交");
-    await commit.getByRole("button", { name: "Commit", exact: true }).click();
-    await until(async () => !(await commit.count()), "commit modal closes");
+    await commitButton.click();
+    await until(() => git(backend.repo, "log", "-1", "--format=%s") === "界面本地提交", "local commit");
     assert.equal(git(backend.repo, "log", "-1", "--format=%s"), "界面本地提交");
     assert.equal(fs.readFileSync(path.join(backend.repo, "AGENTS.md"), "utf8"), "hidden untracked\n");
-    checks.push("顶部 Commit 打开提交窗口，暂存当前列表后真实创建本地 Commit");
+    checks.push("本地变更页面暂存所选文件并创建本地提交");
     write(backend.repo, backend.file, "backend staged version\n");
     git(backend.repo, "add", backend.file);
     const backendLatest = "backend staged version\nlatest tracked edit\n" + Array.from({ length: 500 }, (_, i) => 'preview line ' + i).join('\n') + '\n';
@@ -331,7 +335,7 @@ const fixtures = {};
       const row = page.locator('.git-file-row').filter({ hasText: file });
       await row.waitFor();
       await row.locator('input[type=checkbox]').check();
-      await button('Stage').click();
+      await page.getByRole("button", { name: /^暂存所选/ }).click();
       await until(() => git(admin.repo, 'diff', '--cached', '--name-only').includes(file), file + ' staged from UI');
     }
     await page.getByLabel("搜索变更文件").fill("nothing matches");
@@ -347,9 +351,17 @@ const fixtures = {};
     await page.keyboard.press('Control+s');
     await until(() => fs.readFileSync(path.join(admin.repo, admin.file), 'utf8').includes('// Ctrl+S saved'), 'Ctrl+S writes working copy');
     assert.equal(git(admin.repo, 'show', ':' + admin.file), 'refsys-ui business change', 'initial save preserves existing index');
-    await editInline('// blur saved\n');
+    await editInline('// defer save until leave\n');
     await messageInput().click();
-    await until(() => fs.readFileSync(path.join(admin.repo, admin.file), 'utf8').includes('// blur saved'), 'blur saves after confirmation');
+    await page.waitForTimeout(150);
+    assert.ok((await page.locator('.submit-diff-path').textContent()).includes('未保存'), 'clicking commit message does not pop blur confirmation');
+    assert.doesNotMatch(fs.readFileSync(path.join(admin.repo, admin.file), 'utf8'), /defer save until leave/);
+    await answer(0);
+    await page.locator('.git-submit-dialog .file-item').filter({ hasText: adminPages[0] }).click();
+    await until(() => fs.readFileSync(path.join(admin.repo, admin.file), 'utf8').includes('// defer save until leave'), 'switching file saves after confirmation');
+    await editorReady(adminPages[0]);
+    await page.locator('.git-submit-dialog .file-item').filter({ hasText: admin.file }).click();
+    await editorReady(admin.file);
     await editInline('// cancelled draft\n');
     await answer(2);
     await page.locator('.git-submit-dialog .file-item').filter({ hasText: adminPages[0] }).click();
@@ -359,7 +371,7 @@ const fixtures = {};
     assert.equal(await page.evaluate(() => window.__workbenchCanClose()), false, 'application close protects editor');
     await answer(2);
     await page.keyboard.press('Escape');
-    await until(async () => (await application.evaluate(() => globalThis.workflowResponses.length)) === 0, 'Escape answered');
+    await until(async () => (await page.evaluate(() => globalThis.workflowResponses.length)) === 0, 'Escape answered');
     assert.equal(await page.locator('.git-submit-dialog').count(), 1, 'Escape cancellation retains modal');
     await answer(1);
     await page.locator('.git-submit-dialog .file-item').filter({ hasText: adminPages[0] }).click();
@@ -413,9 +425,9 @@ const fixtures = {};
     await task("refsys-wechat", "awaiting");
     assert.equal(await page.getByRole('textbox', { name: '提交说明', exact: true }).inputValue(), '小程序更新前的可编辑说明');
     await button("关闭提测窗口").click();
-    await page.getByTitle("任务中心", { exact: true }).click();
+    await page.getByRole("button", { name: /^任务中心/ }).click();
     await page.locator(".task-select").filter({ hasText: "推荐官小程序提交" }).click();
-    await button("返回核对并继续").click();
+    await page.getByRole("button", { name: "返回核对并继续", exact: true }).click();
     await page.getByRole("dialog", { name: "一键提测", exact: true }).waitFor();
     assert.equal(await page.getByLabel("Git 项目").inputValue(), "refsys-wechat");
     await page.getByRole("textbox", { name: "提交说明", exact: true }).fill("小程序提交暂存与修改");

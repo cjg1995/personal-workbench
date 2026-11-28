@@ -92,6 +92,54 @@ test("月份边界、无日期与来源变更保留人工月报；重复来源�
   assert.equal(f.records.draft("2026-10").entries[0].text, "人工编辑成果");
   f.store.close();
 });
+test("工作记录与待办支持软删除、限时撤销恢复、安全清理及重启自动清理", () => {
+  const f = fixture();
+  try {
+    const work = f.records.save({
+      kind: "work",
+      text: "可撤销删除的工作记录",
+      happenedOn: "2026-10-15",
+    });
+    const draft = f.records.addSources("2026-10", "陈嘉庚", "主要工作", [
+      work.id,
+    ]);
+    const soft = f.records.softRemove(work.id);
+    assert.ok(soft.deletedAt);
+    assert.equal(f.records.list("work").length, 0);
+    assert.equal(f.records.listAll().length, 0);
+    assert.throws(() => f.records.get(work.id), /记录不存在/);
+    assert.equal(f.records.sources(draft)[0].sources[0].deleted, true);
+
+    const restored = f.records.restore(work.id);
+    assert.equal(restored.deletedAt, null);
+    assert.deepEqual(restored, work);
+    assert.equal(f.records.sources(draft)[0].sources[0].deleted, false);
+    assert.equal(f.records.sources(draft)[0].sources[0].changed, false);
+    // 已恢复的记录不会被过期清理误删
+    assert.equal(f.records.purge(work.id), false);
+    assert.equal(f.records.get(work.id).text, "可撤销删除的工作记录");
+
+    // 再次软删除并彻底清理后不可恢复
+    f.records.softRemove(work.id);
+    assert.equal(f.records.purge(work.id), true);
+    assert.throws(() => f.records.restore(work.id), /无法恢复/);
+
+    // 未清理的软删除记录在重启打开数据库时自动清理
+    const idea = f.records.save({ kind: "idea", text: "关闭前未撤销的待办" });
+    f.records.softRemove(idea.id);
+    f.store.close();
+    const reopened = new Store(path.join(f.dir, "data.sqlite"));
+    try {
+      assert.equal(reopened.get("note", idea.id), undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    try {
+      f.store.close();
+    } catch {}
+  }
+});
 test("SQLite WAL 一致备份、恢复预览、保护副本、恢复后任务中断与数据原样", async () => {
   const f = fixture();
   const n = f.records.save({
@@ -108,26 +156,53 @@ test("SQLite WAL 一致备份、恢复预览、保护副本、恢复后任务中
     {},
   );
   const file = path.join(f.dir, "backup.zip");
+  const snapshotDir = path.join(f.dir, "snapshots", randomUUID());
+  fs.mkdirSync(snapshotDir, { recursive: true });
+  const snapshot = path.join(snapshotDir, "source.txt");
+  fs.writeFileSync(snapshot, "备份时的导入原文");
   const saved = await f.backup.create(file);
   assert.equal(saved.manifest.counts.note, 1);
   task.state = "cancelled";
   f.tasks.save(task);
   f.records.save({ ...n, text: "后来的记录" });
-  const p = f.backup.preview(file);
+  fs.writeFileSync(snapshot, "后来的导入原文");
+  const p = await f.backup.preview(file);
   assert.equal(p.counts.note, 1);
+  assert.deepEqual(fs.readdirSync(path.join(f.dir, "staging")), []);
+  const second = await f.backup.preview(file);
+  assert.deepEqual(second.counts, p.counts);
+  const originalSize = fs.statSync(file).size;
+  fs.appendFileSync(file, "changed");
+  await assert.rejects(f.backup.restore(p.token), /备份文件在预览后已变化/);
+  fs.truncateSync(file, originalSize);
   const restored = await f.backup.restore(p.token);
   assert.ok(fs.existsSync(restored.protectedBackup));
+  assert.equal(fs.readFileSync(snapshot, "utf8"), "备份时的导入原文");
   assert.equal(f.records.get(n.id).text, "备份时记录");
   assert.equal(f.records.draft("2026-10").entries.length, 1);
   assert.equal(f.tasks.get(task.id).state, "interrupted");
   f.store.close();
+});
+test("备份计数保留空桶，只排除正文中有非空删除时间的工作记录和提示词", () => {
+  const f = fixture();
+  try {
+    for (const kind of ["note", "prompt"] as const) {
+      for (const [i, deletedAt] of [undefined, null, "", false, 0, "2026-10-24"].entries())
+        f.store.set(kind, String(i), { deletedAt });
+    }
+    f.store.set("review", "old", { deletedAt: "2026-10-24" });
+    assert.deepEqual(f.store.counts(), {
+      note: 5, prompt: 5, config: 0, task: 0, review: 1,
+      monthly: 0, import: 0, run: 0, meta: 0,
+    });
+  } finally { f.store.close(); }
 });
 test("恢复被运行任务阻断；损坏、缺文件、越界备份均拒绝并保留原数据", async () => {
   const f = fixture();
   f.records.save({ kind: "work", text: "保留当前数据" });
   const file = path.join(f.dir, "backup.zip");
   await f.backup.create(file);
-  const p = f.backup.preview(file);
+  const p = await f.backup.preview(file);
   f.tasks.create("apk", "运行中", null, "test", {});
   await assert.rejects(() => f.backup.restore(p.token), /运行/);
   assert.equal(f.records.list("work")[0].text, "保留当前数据");
@@ -135,11 +210,11 @@ test("恢复被运行任务阻断；损坏、缺文件、越界备份均拒绝�
     entries = unzipSync(fs.readFileSync(file));
   entries["../escape.txt"] = strToU8("wrong");
   fs.writeFileSync(bad, zipSync(entries));
-  assert.throws(() => f.backup.preview(bad), /不允许/);
+  await assert.rejects(f.backup.preview(bad), /不允许/);
   delete entries["../escape.txt"];
   entries["database.sqlite"][0] ^= 0xff;
   fs.writeFileSync(bad, zipSync(entries));
-  assert.throws(() => f.backup.preview(bad), /校验/);
+  await assert.rejects(f.backup.preview(bad), /校验/);
   assert.equal(f.records.list("work").length, 1);
   f.store.close();
 });
@@ -348,7 +423,7 @@ test("恢复替换后打开失败，数据库与原文快照回到恢复前", as
   await f.backup.create(zip);
   const original = f.records.list("work")[0];
   f.records.save({ ...original, text: "恢复前的较新正文" });
-  const preview = f.backup.preview(zip);
+  const preview = await f.backup.preview(zip);
   const reopen = f.store.reopen.bind(f.store);
   let first = true;
   f.store.reopen = () => {
@@ -390,7 +465,7 @@ test("恢复保护备份期间出现新任务时停止替换，保留当前记�
     const file = path.join(f.dir, "backup.zip");
     await f.backup.create(file);
     f.records.save({ ...note, text: "current version" });
-    const preview = f.backup.preview(file);
+    const preview = await f.backup.preview(file);
     const create = f.backup.create.bind(f.backup);
     let taskId = "";
     f.backup.create = async (destination) => {
@@ -422,7 +497,7 @@ test("恢复前和保护备份后均核对自有服务；恢复期间拒绝重�
     const file = path.join(f.dir, "backup.zip");
     await f.backup.create(file);
     f.records.save({ ...note, text: "current version" });
-    const preview = f.backup.preview(file);
+    const preview = await f.backup.preview(file);
     owned = true;
     await assert.rejects(() => f.backup.restore(preview.token), /自有服务/);
     assert.equal(f.records.get(note.id).text, "current version");

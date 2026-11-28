@@ -21,3 +21,22 @@ test("日志尾部按偏移增量读取，截断后整段替换", () => {
   assert.equal(reset.text, "fresh\n");
   fs.rmSync(file);
 });
+
+test("任务日志按最后 2 MiB 的字节边界显示，并保留截断标记", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workbench-log-"));
+  const file = path.join(dir, "task.log"), capacity = 2 * 1024 * 1024;
+  try {
+    const text = "中".repeat(Math.ceil(capacity / 3) + 8);
+    const bytes = Buffer.from(text);
+    fs.writeFileSync(file, bytes);
+    const tail = readLogTail(file, 0, capacity);
+    assert.equal(tail.text, bytes.subarray(-capacity).toString("utf8"));
+    assert.equal(tail.reset, true);
+    assert.equal(tail.offset, bytes.length);
+    fs.truncateSync(file, capacity);
+    assert.equal(readLogTail(file, 0, capacity).reset, false);
+  } finally {
+    fs.unlinkSync(file);
+    fs.rmdirSync(dir);
+  }
+});

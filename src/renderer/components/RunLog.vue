@@ -7,6 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
+import { attempt, call, notify } from "../state";
 import Icon from "./Icon.vue";
 
 const props = withDefaults(
@@ -374,6 +375,19 @@ function toggleFollow() {
   stickToBottom();
 }
 
+function clearFind() {
+  findQuery.value = "";
+  findInput.value?.focus({ preventScroll: true });
+}
+
+async function copyLog() {
+  if (!props.text) return;
+  await attempt(async () => {
+    await call("clipboard.text", { text: props.text });
+    notify("已复制运行日志");
+  });
+}
+
 function onFindKeydown(event: KeyboardEvent) {
   if (event.isComposing || event.key === "Process") return;
   if (event.key !== "Enter" || event.ctrlKey || event.altKey || event.metaKey)
@@ -516,29 +530,51 @@ onBeforeUnmount(() => {
             spellcheck="false"
             @keydown="onFindKeydown"
           />
+          <button
+            v-if="findQuery"
+            type="button"
+            class="term-clear-btn"
+            title="清除查找"
+            aria-label="清除查找"
+            @click="clearFind"
+          >
+            <Icon name="close" :size="11" />
+          </button>
         </label>
         <span v-if="matchLabel" class="term-match-count" aria-live="polite">{{
           matchLabel
         }}</span>
+        <template v-if="findQuery">
+          <button
+            type="button"
+            class="term-nav-btn"
+            title="上一处匹配（Shift+Enter）"
+            aria-label="上一处匹配"
+            :disabled="!matches.length"
+            @click="step(-1)"
+          >
+            <Icon name="up" :size="13" />
+          </button>
+          <button
+            type="button"
+            class="term-nav-btn"
+            title="下一处匹配（Enter）"
+            aria-label="下一处匹配"
+            :disabled="!matches.length"
+            @click="step(1)"
+          >
+            <Icon name="down" :size="13" />
+          </button>
+        </template>
         <button
+          v-if="renderedLines.length"
           type="button"
           class="term-nav-btn"
-          title="上一处匹配（Shift+Enter）"
-          aria-label="上一处匹配"
-          :disabled="!matches.length"
-          @click="step(-1)"
+          title="复制当前日志"
+          aria-label="复制当前日志"
+          @click="copyLog"
         >
-          <Icon name="up" :size="13" />
-        </button>
-        <button
-          type="button"
-          class="term-nav-btn"
-          title="下一处匹配（Enter）"
-          aria-label="下一处匹配"
-          :disabled="!matches.length"
-          @click="step(1)"
-        >
-          <Icon name="down" :size="13" />
+          <Icon name="copy" :size="13" />
         </button>
         <button
           type="button"

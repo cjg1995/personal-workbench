@@ -1081,14 +1081,20 @@ export class GitClientService {
     const raw = await this.git.text(repo, [
       "stash",
       "list",
-      "--format=%gd%x00%H%x00%gs%x00%cI",
+      "--format=%gd%x00%H%x00%gs%x00%cI%x00%P",
     ]);
     return raw
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => {
-        const [ref, hash, subject, date] = line.split("\0");
-        return { ref, hash, subject, date };
+        const [ref, hash, subject, date, parents = ""] = line.split("\0");
+        return {
+          ref,
+          hash,
+          subject,
+          date,
+          hasUntracked: parents.trim().split(/\s+/).filter(Boolean).length >= 3,
+        };
       });
   }
   async conflict(repo: string, file: string): Promise<ConflictContent> {
@@ -1277,6 +1283,7 @@ export class GitClientService {
           throw new Error(
             `当前 ${gitOperationLabel(state.operation)} 尚未结束，请解决冲突后继续或中止`,
           );
+        const hasTrackedChanges = state.files.some((file) => !file.untracked);
         switch (operation) {
           case "stage": {
             const files = await this.selected(repo, p.files);
@@ -1374,7 +1381,7 @@ export class GitClientService {
           case "pull": {
             if (!state.branch || !state.upstream)
               throw new Error("当前分支需要配置上游分支后才能 Pull");
-            if (state.files.length)
+            if (hasTrackedChanges)
               throw new Error("请先提交或 Stash 本地修改，再执行 Pull");
             if (!["merge", "rebase"].includes(p.strategy))
               throw new Error("请明确选择 Pull Merge 或 Rebase 策略");
@@ -1405,7 +1412,7 @@ export class GitClientService {
             return run(["branch", name, ref]);
           }
           case "checkout": {
-            if (state.files.some((file) => !file.untracked))
+            if (hasTrackedChanges)
               throw new Error("切换分支前请先提交或 Stash 本地修改");
             const name = await this.branchName(repo, p.branch);
             const branches = await this.branches(repo),
@@ -1437,7 +1444,7 @@ export class GitClientService {
           }
           case "merge":
           case "rebase": {
-            if (state.files.length)
+            if (hasTrackedChanges)
               throw new Error("合并或变基前请先提交或 Stash 本地修改");
             if (!state.branch) throw new Error("请先切换到本地分支");
             const ref = await this.ref(repo, p.ref);
@@ -1447,7 +1454,7 @@ export class GitClientService {
           }
           case "revert":
           case "cherry-pick": {
-            if (state.files.length)
+            if (hasTrackedChanges)
               throw new Error("请先提交或 Stash 本地修改");
             const ref = await this.ref(repo, p.ref);
             const parents = (
@@ -1496,7 +1503,7 @@ export class GitClientService {
             return run(["stash", operation.slice(6), selected.ref]);
           }
           case "undo-last": {
-            if (!state.head || !state.branch || state.files.length)
+            if (!state.head || !state.branch || hasTrackedChanges)
               throw new Error("撤销最后一次提交仅支持无本地修改的本地分支");
             const refs = await this.git.text(repo, [
               "for-each-ref",

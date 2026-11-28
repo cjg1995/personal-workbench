@@ -18,6 +18,7 @@ import {
   route,
   runLabels,
 } from "../state";
+import { projectTypeLabels } from "../format";
 import CloseButton from "../components/CloseButton.vue";
 import RunLog from "../components/RunLog.vue";
 import Icon from "../components/Icon.vue";
@@ -25,6 +26,7 @@ import Icon from "../components/Icon.vue";
 const runs = ref<
     (RunInfo & {
       canStop?: boolean;
+      hasLog?: boolean;
       description?: string;
       deployment?: string;
       port?: number;
@@ -103,14 +105,20 @@ const groups = computed(() =>
 
 const run = (id: string) => runs.value.find((r) => r.projectId === id);
 
-const types: Record<string, string> = {
-  tomcat: "Java / Tomcat",
-  spring: "Spring Boot",
-  h5: "UniApp H5",
-  vue: "Vue 前端",
-  wechat: "微信原生小程序",
-  "uni-wechat": "UniApp 小程序",
-};
+const types = projectTypeLabels;
+
+function clearFilters() {
+  query.value = "";
+  group.value = "";
+}
+
+async function copyFact(value: string | undefined, label: string) {
+  if (!value) return;
+  await attempt(async () => {
+    await call("clipboard.text", { text: value });
+    notify(`已复制${label}`);
+  });
+}
 
 function techIcon(project: { type: string }) {
   if (project.type === "spring" || project.type === "tomcat")
@@ -507,7 +515,7 @@ onBeforeUnmount(() => {
               aria-label="搜索项目"
             />
           </label>
-          <select v-model="group" aria-label="项目分组">
+          <select v-if="groupNames.length > 1 || group" v-model="group" aria-label="项目分组">
             <option value="">全部分组</option>
             <option v-for="g in groupNames" :key="g" :value="g">{{ g }}</option>
           </select>
@@ -515,7 +523,15 @@ onBeforeUnmount(() => {
 
         <div class="project-groups">
           <div v-if="!groups.length" class="empty compact">
-            <span>没有匹配的工作目录</span>
+            <span>没有匹配的项目</span>
+            <button
+              v-if="query || group"
+              type="button"
+              class="link"
+              @click="clearFilters"
+            >
+              清除筛选
+            </button>
           </div>
           <template v-for="g in groups" :key="g.name">
             <button
@@ -598,13 +614,13 @@ onBeforeUnmount(() => {
                     <Icon name="play" :size="15" />
                   </button>
                   <button
-                    v-else-if="primaryAction(p.id)?.action === 'ide'"
+                    v-else-if="primaryAction(p.id)?.action === 'ide' || primaryAction(p.id)?.action === 'wechat'"
                     type="button"
                     class="run-action"
                     :disabled="busy === p.id"
-                    title="在原工具中管理"
-                    :aria-label="`在原工具中管理 ${p.name}`"
-                    @click="runAction('ide', p.id)"
+                    :title="primaryAction(p.id)?.label"
+                    :aria-label="`${primaryAction(p.id)?.label} ${p.name}`"
+                    @click="runAction(primaryAction(p.id)!.action, p.id)"
                   >
                     <Icon name="external" :size="12" />
                   </button>
@@ -664,7 +680,15 @@ onBeforeUnmount(() => {
                 @click="runAction(selectedAction.action, selectedProject.id)"
               >
                 <Icon :name="selectedAction.icon" :size="selectedAction.icon === 'external' ? 14 : 16" />
-                {{ selectedAction.label }}
+                {{
+                  busy === selectedProject.id
+                    ? selectedAction.action === "start"
+                      ? "启动中…"
+                      : selectedAction.action === "stop"
+                        ? "停止中…"
+                        : "处理中…"
+                    : selectedAction.label
+                }}
               </button>
               <button
                 type="button"
@@ -721,6 +745,15 @@ onBeforeUnmount(() => {
                 <span class="mono" :title="selectedProject.path">{{
                   selectedProject.path
                 }}</span>
+                <button
+                  type="button"
+                  class="icon-btn small blank"
+                  title="复制工作目录路径"
+                  aria-label="复制工作目录路径"
+                  @click="copyFact(selectedProject.path, '工作目录路径')"
+                >
+                  <Icon name="copy" :size="12" />
+                </button>
               </div>
             </div>
 
@@ -732,6 +765,16 @@ onBeforeUnmount(() => {
                 <span class="mono" :title="current?.branch">{{
                   current?.branch || "—"
                 }}</span>
+                <button
+                  v-if="current?.branch"
+                  type="button"
+                  class="icon-btn small blank"
+                  title="复制分支名"
+                  aria-label="复制分支名"
+                  @click="copyFact(current.branch, '分支名')"
+                >
+                  <Icon name="copy" :size="12" />
+                </button>
               </div>
             </div>
 
@@ -828,8 +871,15 @@ onBeforeUnmount(() => {
             <span v-if="hostLabel" class="term-host mono">{{ hostLabel }}</span>
           </div>
           <div class="term-empty">
-            <span>未加载日志</span>
+            <span>{{
+              current?.hasLog
+                ? "有上次运行日志"
+                : current?.state === "external"
+                  ? "外部实例运行中，日志请在原工具查看"
+                  : "尚未在工作台启动，暂无运行日志"
+            }}</span>
             <button
+              v-if="current?.hasLog"
               type="button"
               class="btn compact"
               @click="runAction('log', selectedProject.id)"
@@ -846,6 +896,7 @@ onBeforeUnmount(() => {
       class="rules-dialog"
       aria-labelledby="project-rules-title"
       @cancel.prevent="rulesDialog?.close()"
+      @click="$event.target === rulesDialog && rulesDialog?.close()"
     >
       <div class="dialog-head">
         <h2 id="project-rules-title">{{ rulesFor }} · 项目规则</h2>

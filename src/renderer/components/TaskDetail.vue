@@ -31,10 +31,29 @@ const log = ref<{ text: string; path: string; truncated?: boolean } | null>(
   recoveries = ref<any[]>([]);
 const stages = computed(() => props.task.stages);
 const clock = ref(Date.now());
-const timer = setInterval(() => {
-  clock.value = Date.now();
-}, 1000);
-onBeforeUnmount(() => clearInterval(timer));
+const isActive = computed(() =>
+  ["running", "awaiting", "cancelling"].includes(props.task.state),
+);
+let timer: ReturnType<typeof setInterval> | undefined;
+watch(
+  isActive,
+  (active) => {
+    if (timer) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+    if (active) {
+      clock.value = Date.now();
+      timer = setInterval(() => {
+        clock.value = Date.now();
+      }, 1000);
+    }
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer);
+});
 function elapsed(start?: string, end?: string | null) {
   if (!start) return "";
   const seconds = Math.max(
@@ -53,9 +72,12 @@ const conflicts = computed(
       ? props.task.result.conflicts
       : []) as { repo: string; file: string }[],
 );
-const isActive = computed(() =>
-  ["running", "awaiting", "cancelling"].includes(props.task.state),
-);
+const returnLabel = computed(() => {
+  if (props.task.state === "awaiting") return "返回核对并继续";
+  if (["run", "wechat"].includes(props.task.type)) return "前往项目管理";
+  if (props.task.type === "apk") return "前往 APK 打包";
+  return "前往 Git 管理";
+});
 const showActionBar = computed(
   () =>
     isActive.value ||
@@ -136,8 +158,7 @@ function openOperation() {
     <div v-if="!compact" class="progress-summary">
       开始 {{ dateLabel(task.startedAt)
       }}<span v-if="task.endedAt"> · 结束 {{ dateLabel(task.endedAt) }}</span> ·
-      耗时 {{ elapsed(task.startedAt, task.endedAt) }}<br />任务 ID
-      {{ task.id }}
+      耗时 {{ elapsed(task.startedAt, task.endedAt) }}
     </div>
     <div v-if="task.result.artifact" class="section-rule">
       <h2>产物信息</h2>
@@ -187,7 +208,24 @@ function openOperation() {
       <dt>
         {{ task.result.commitSkipped ? "跳过提交，当前 HEAD" : "本地提交" }}
       </dt>
-      <dd class="path">{{ task.result.localCommit || "—" }}</dd>
+      <dd class="path row" style="gap: 6px; align-items: center">
+        <span>{{ task.result.localCommit || "—" }}</span>
+        <button
+          v-if="task.result.localCommit"
+          type="button"
+          class="icon-btn small blank"
+          title="复制提交号"
+          aria-label="复制提交号"
+          @click="
+            attempt(
+              () => call('clipboard.text', { text: String(task.result.localCommit) }),
+              '已复制提交号',
+            )
+          "
+        >
+          <Icon name="copy" :size="12" />
+        </button>
+      </dd>
       <dt>
         {{ task.type === 'app' ? task.params.target + ' 推送' : '开发分支推送' }}
       </dt>
@@ -239,12 +277,14 @@ function openOperation() {
         ><button
           class="link"
           @click="
-            attempt(() =>
-              call('task.conflict-open', {
-                id: task.id,
-                repo: c.repo,
-                file: c.file,
-              }),
+            attempt(
+              () =>
+                call('task.conflict-open', {
+                  id: task.id,
+                  repo: c.repo,
+                  file: c.file,
+                }),
+              '已在外部编辑器中打开',
             )
           "
         >
@@ -269,9 +309,7 @@ function openOperation() {
         class="primary"
         @click="openOperation"
       >
-        {{
-          task.state === "awaiting" ? "返回核对并继续" : "返回功能页重新检查"
-        }}</button
+        {{ returnLabel }}</button
       ><button
         v-if="task.projectId && !hideProjectFolder"
         @click="
@@ -290,7 +328,12 @@ function openOperation() {
         <button class="link" @click="attempt(loadLog)">刷新日志</button
         ><button
           class="link"
-          @click="attempt(() => call('task.open-log', { id: task.id }))"
+          @click="
+            attempt(
+              () => call('task.open-log', { id: task.id }),
+              '已打开日志文件',
+            )
+          "
         >
           打开日志文件</button
         ><button

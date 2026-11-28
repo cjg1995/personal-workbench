@@ -71,6 +71,14 @@ export class JavaLanguageService {
     return this.ideaLayout?.modules.flatMap((module) => module.sources) ?? [];
   }
 
+  hasDocument(file: string) {
+    return this.documents.has(this.uri(file));
+  }
+
+  documentText(file: string) {
+    return this.documents.get(this.uri(file))?.text;
+  }
+
   private uri(file: string) { return pathToFileURL(file).href; }
 
   start() {

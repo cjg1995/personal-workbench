@@ -79,6 +79,7 @@ export interface GitStash {
   hash: string;
   subject: string;
   date: string;
+  hasUntracked?: boolean;
 }
 export interface ConflictContent {
   path: string;

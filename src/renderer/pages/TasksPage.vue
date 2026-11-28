@@ -25,6 +25,16 @@ const active = computed(() =>
   model.tasks.find((t) => t.id === selected.value),
 );
 
+watch(
+  tasks,
+  (list) => {
+    if (!list.some((t) => t.id === selected.value)) {
+      selected.value = list[0]?.id || "";
+    }
+  },
+  { immediate: true },
+);
+
 watch(context, (value) => {
   if (value.taskId) {
     selected.value = value.taskId;
@@ -63,7 +73,7 @@ watch(context, (value) => {
             <span class="empty-icon"><Icon name="search" :size="16" /></span>
             <p class="empty-title">没有匹配的任务</p>
             <button v-if="query" type="button" class="link" @click="query = ''">
-              清空搜索
+              清除搜索
             </button>
           </div>
 

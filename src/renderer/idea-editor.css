@@ -24,11 +24,211 @@
   text-underline-offset: 2px;
   cursor: pointer !important;
 }
+.editor-dark .idea-ctrl-link,
+.diff-window:not(.diff-light) .idea-ctrl-link,
+.submit-inline-diff:not(.diff-light) .idea-ctrl-link {
+  color: #6cb6ff !important;
+}
 .editor-window.ctrl-link-hover .monaco-editor .view-lines,
 .editor-window.ctrl-link-hover .monaco-editor .view-line,
 .editor-window.ctrl-link-hover .monaco-editor .view-line span,
-.editor-window.ctrl-link-hover .monaco-editor .cursors-layer {
+.editor-window.ctrl-link-hover .monaco-editor .cursors-layer,
+.diff-window.ctrl-link-hover .monaco-editor .view-lines,
+.diff-window.ctrl-link-hover .monaco-editor .view-line,
+.diff-window.ctrl-link-hover .monaco-editor .view-line span,
+.diff-window.ctrl-link-hover .monaco-editor .cursors-layer,
+.submit-inline-diff.ctrl-link-hover .monaco-editor .view-lines,
+.submit-inline-diff.ctrl-link-hover .monaco-editor .view-line,
+.submit-inline-diff.ctrl-link-hover .monaco-editor .view-line span,
+.submit-inline-diff.ctrl-link-hover .monaco-editor .cursors-layer {
   cursor: pointer !important;
+}
+
+/* 对比窗口本页跳转高亮、悬停预判提示条与返回浮条 */
+.diff-jump-highlight {
+  background: rgba(255, 224, 130, 0.48) !important;
+}
+.diff-window:not(.diff-light) .diff-jump-highlight,
+.submit-inline-diff:not(.diff-light) .diff-jump-highlight {
+  background: rgba(145, 118, 42, 0.45) !important;
+}
+
+.diff-nav-tooltip {
+  position: fixed;
+  z-index: 960;
+  pointer-events: none;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 6px 10px;
+  border: 1px solid #cdd5e0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #1f2329;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.06);
+  font-family: Inter, "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.diff-nav-tooltip.dark {
+  border-color: #464a54;
+  background: #25272d;
+  color: #d6dbe3;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.42);
+}
+.diff-nav-tooltip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-nav-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: #e6f0ff;
+  color: #17459e;
+}
+.diff-nav-badge.external {
+  background: #e3f5ec;
+  color: #146347;
+}
+.diff-nav-tooltip.dark .diff-nav-badge {
+  background: #27426b;
+  color: #b7d4ff;
+}
+.diff-nav-tooltip.dark .diff-nav-badge.external {
+  background: #1f4739;
+  color: #9be3c3;
+}
+.diff-nav-tooltip-loc {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-nav-tooltip-hint {
+  margin-left: auto;
+  padding-left: 8px;
+  color: #6b7687;
+  font-size: 10.5px;
+  flex: none;
+}
+.diff-nav-tooltip.dark .diff-nav-tooltip-hint {
+  color: #8f98a6;
+}
+.diff-nav-tooltip-code {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #eef1f6;
+  font: 11.5px/1.4 "Workbench JetBrains Mono", Consolas, monospace;
+  color: #3d4756;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-nav-tooltip.dark .diff-nav-tooltip-code {
+  border-top-color: #353841;
+  color: #b5bcc8;
+}
+
+.diff-nav-pill {
+  position: absolute;
+  z-index: 35;
+  top: 30px;
+  right: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(460px, calc(100% - 48px));
+  height: 30px;
+  padding: 0 4px 0 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #1f2329;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.06);
+  font-size: 11.5px;
+}
+.diff-window:not(.diff-light) .diff-nav-pill,
+.submit-inline-diff:not(.diff-light) .diff-nav-pill {
+  border-color: #494d57;
+  background: rgba(38, 40, 46, 0.96);
+  color: #d6dbe3;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.36);
+}
+.diff-nav-pill .diff-nav-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  min-height: 0;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.diff-nav-pill .diff-nav-pill-btn.primary {
+  background: #e8f1ff;
+  color: #17459e;
+}
+.diff-nav-pill .diff-nav-pill-btn.primary:hover:not(:disabled) {
+  background: #d7e7ff;
+}
+.diff-window:not(.diff-light) .diff-nav-pill .diff-nav-pill-btn.primary,
+.submit-inline-diff:not(.diff-light) .diff-nav-pill .diff-nav-pill-btn.primary {
+  background: #2a446d;
+  color: #cfe0ff;
+}
+.diff-window:not(.diff-light) .diff-nav-pill .diff-nav-pill-btn.primary:hover:not(:disabled),
+.submit-inline-diff:not(.diff-light) .diff-nav-pill .diff-nav-pill-btn.primary:hover:not(:disabled) {
+  background: #355485;
+}
+.diff-nav-pill .diff-nav-pill-btn:hover:not(:disabled) {
+  background: rgba(75, 141, 248, 0.12);
+}
+.diff-nav-pill .diff-nav-pill-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.diff-nav-pill-sep {
+  width: 1px;
+  height: 14px;
+  background: #dde3ec;
+  margin: 0 2px;
+  flex: none;
+}
+.diff-window:not(.diff-light) .diff-nav-pill-sep,
+.submit-inline-diff:not(.diff-light) .diff-nav-pill-sep {
+  background: #424650;
+}
+.diff-nav-pill-label {
+  padding: 0 4px;
+  color: #586576;
+  font-family: "Workbench JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-window:not(.diff-light) .diff-nav-pill-label,
+.submit-inline-diff:not(.diff-light) .diff-nav-pill-label {
+  color: #9ba3b0;
+}
+.diff-nav-pill .diff-nav-pill-close {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
 }
 
 /* 折叠箭头：使用 codicon 细箭头（IDEA 同款 V 形）。
@@ -39,7 +239,7 @@
   line-height: 1 !important;
   margin-left: 0 !important;
   width: 14px !important;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 .monaco-editor .margin-view-overlays:hover .cldr[class*="folding"],
 .monaco-editor .margin-view-overlays .cldr.codicon-folding-collapsed,

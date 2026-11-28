@@ -107,15 +107,20 @@ async function main() {
     await page.context().setOffline(true);
     page.on("pageerror", (e) => errors.push(e.message));
     await page.waitForSelector('[data-page="work"]');
-    await app.evaluate(({ dialog }) => {
-      globalThis.gitConfirmations = [];
-      dialog.showMessageBox = async (_window, options) => {
-        globalThis.gitConfirmations.push(options);
-        return { response: 1 };
-      };
-    });
+    async function confirmActions(target) {
+      await target.waitForLoadState();
+      await target.evaluate(() => {
+        const observer = new MutationObserver(() => {
+          const actions = document.querySelectorAll("dialog[open] [data-dialog-btn]");
+          if (actions.length) (actions[1] || actions[0]).click();
+        });
+        observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"], childList: true });
+      });
+    }
+    await confirmActions(page);
     const config = (await api(page, "bootstrap")).config;
-    config.projects.find((p) => p.id === "homeproject").path = repo;
+    const project = config.projects.find((p) => p.id === "homeproject");
+    Object.assign(project, { path: repo, gitUntrackedInclude: [], gitUntrackedExclude: [] });
     await api(page, "settings.save", config);
     assert.equal(await page.getByRole("navigation").getByRole("button", { name: "一键提测", exact: true }).count(), 0);
     checks.push("一键提测入口迁入 Git 管理");
@@ -139,6 +144,7 @@ async function main() {
     const opened = app.waitForEvent("window");
     await page.locator(".git-file-row").first().dblclick();
     diff = await opened;
+    await confirmActions(diff);
     diff.on("pageerror", (e) => errors.push(e.message));
     diff.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
@@ -287,7 +293,7 @@ async function main() {
     });
     await page.getByLabel("本地提交说明").fill("UI staged commit");
     await page
-      .getByRole("button", { name: "Commit", exact: true })
+      .getByRole("button", { name: "提交", exact: true })
       .last()
       .click();
     await until(
@@ -331,6 +337,7 @@ async function main() {
       conflict: true,
     });
     diff = await conflictOpen;
+    await confirmActions(diff);
     diff.on("pageerror", (e) => errors.push(e.message));
     await until(
       async () =>

@@ -27,12 +27,15 @@ import {
 } from "../monaco";
 import { DiffScrollbar } from "../diff-scrollbar";
 import { IdeaSplitEditor, type DiffAction, type Whitespace } from "../idea-split-editor";
+import { useDiffNavigation, type DiffPaneSide } from "../diff-navigation";
 import { useGitCommitDraft } from "../git-commit-draft";
 import { matchInclusions, type Inclusion } from "../diff-inclusion";
 import VirtualFiles from "../components/VirtualFiles.vue";
 import Icon from "../components/Icon.vue";
 import CloseButton from "../components/CloseButton.vue";
 import MessageDialog from "../components/MessageDialog.vue";
+import DiffJumpPicker from "../components/DiffJumpPicker.vue";
+import { activeDialog } from "../dialog";
 const request = ref<DiffWindowRequest>(),
   projectName = ref(""),
   projectPath = ref(""),
@@ -95,12 +98,14 @@ try {
 } catch {}
 let editor: monaco.editor.IStandaloneDiffEditor | IdeaSplitEditor | undefined,
   mergeEditors: monaco.editor.IStandaloneCodeEditor[] = [],
+  mergeNavListeners: monaco.IDisposable[] = [],
   models: monaco.editor.ITextModel[] = [],
   listeners: monaco.IDisposable[] = [],
   requestId = 0,
   disposed = false,
   unsubscribe: (() => void) | undefined,
   unsubscribeChanged: (() => void) | undefined,
+  unsubscribeDiffHistory: (() => void) | undefined,
   dragging = false;
 let originalHighlights: string[] = [],
   modifiedHighlights: string[] = [],
@@ -108,6 +113,18 @@ let originalHighlights: string[] = [],
   originalSelections: string[] = [],
   modifiedSelections: string[] = [];
 let savedText = "", saveRequested = false, saving: Promise<void> | undefined;
+let resultTimer: ReturnType<typeof setTimeout> | undefined;
+function setResult(text: string, autoClear = true) {
+  clearTimeout(resultTimer);
+  resultTimer = undefined;
+  result.value = text;
+  if (text && autoClear) {
+    resultTimer = setTimeout(() => {
+      if (result.value === text) result.value = "";
+      resultTimer = undefined;
+    }, 5000);
+  }
+}
 let outerScrollbars: DiffScrollbar[] = [];
 let inclusionSources: { file: FileComparison; included: boolean }[] = [];
 let inclusions = new Map<number, Inclusion>();
@@ -148,6 +165,51 @@ const api = <T = any,>(name: string, p: Record<string, any> = {}) =>
       if (!r.ok) throw new Error(r.error || "操作失败");
       return r.data as T;
     });
+const nav = useDiffNavigation({
+  getProjectId: () => request.value?.projectId,
+  getFile: () => file.value,
+  isAllowLsp: (side) =>
+    (side === "modified" || side === "result") &&
+    !dirty.value &&
+    request.value?.comparison.mode !== "versions",
+  getEditorBySide: (side: DiffPaneSide) => {
+    if (isConflict.value) {
+      if (side === "ours") return mergeEditors[0];
+      if (side === "theirs") return mergeEditors[2];
+      return mergeEditors[1];
+    }
+    if (!editor) return undefined;
+    return side === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+  },
+  revealInPane: (side, position, scrollTop) => {
+    if (isConflict.value) {
+      const code = side === "ours" ? mergeEditors[0] : side === "theirs" ? mergeEditors[2] : mergeEditors[1];
+      if (!code) return;
+      code.setPosition(position);
+      if (scrollTop !== undefined) code.setScrollTop(scrollTop);
+      else code.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
+      code.focus();
+      return;
+    }
+    if (!editor) return;
+    if (editor instanceof IdeaSplitEditor) {
+      const targetSide = side === "original" ? "original" : "modified";
+      editor.revealPosition(targetSide, position, true);
+      if (scrollTop !== undefined) {
+        (targetSide === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor()).setScrollTop(scrollTop);
+      }
+      return;
+    }
+    const code = side === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    code.setPosition(position);
+    if (scrollTop !== undefined) code.setScrollTop(scrollTop);
+    else code.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
+    code.focus();
+  },
+  resolveApi: (payload) => api("code.resolve-definition", payload),
+  openEditorApi: (payload) => api("code.open-in-editor", payload),
+  notify: (text) => setResult(text),
+});
 function detachEditors() {
   for (const listener of listeners) listener.dispose();
   listeners = [];
@@ -440,7 +502,7 @@ function persistEditor(): Promise<void> {
       await refreshFiles();
       if (id === requestId && !dirty.value && files.value.some((item) => item.path === file.value))
         data.value = await api<FileComparison>("git.content", { comparison: request.value!.comparison, file: file.value });
-      result.value = "已保存 · Ctrl+Z 撤销 / Ctrl+Y 重做";
+      setResult("已保存 · Ctrl+Z 撤销 / Ctrl+Y 重做");
     } catch (value) {
       error.value = value instanceof Error ? value.message : String(value);
       if (/外部修改|过期/.test(error.value)) stale.value = true;
@@ -456,6 +518,21 @@ function persistEditor(): Promise<void> {
 async function canLeave() {
   if (busy.value) return false;
   if (!dirty.value) return true;
+  if (canEdit.value && !stale.value) {
+    const choice = await api<"cancel" | "discard" | "save">("git.confirm-leave", {
+      canSave: true,
+      file: file.value,
+    });
+    if (choice === "save") {
+      await persistEditor();
+      return !dirty.value;
+    }
+    if (choice === "discard") {
+      dirty.value = false;
+      return true;
+    }
+    return false;
+  }
   const allowed = await api<boolean>("git.confirm-leave");
   if (allowed) dirty.value = false;
   return allowed;
@@ -501,6 +578,11 @@ async function mountData(id: number) {
         resultHost.value!,
         theirsHost.value!,
       ].map((h) => monaco.editor.create(h, commonOptions()));
+      mergeNavListeners.push(
+        ...nav.bindEditor(mergeEditors[0], "ours"),
+        ...nav.bindEditor(mergeEditors[1], "result"),
+        ...nav.bindEditor(mergeEditors[2], "theirs"),
+      );
     }
     const c = conflict.value;
     models = [
@@ -579,6 +661,7 @@ function attachComparison() {
   for (const side of ["original", "modified"] as const) {
     const code = side === "original" ? editor.getOriginalEditor() : editor.getModifiedEditor();
     listeners.push(code.onDidChangeCursorSelection(() => updateSelection(side)));
+    listeners.push(...nav.bindEditor(code, side));
   }
   listeners.push(editor.onDidUpdateDiff(updateDiffPresentation));
   listeners.push(
@@ -634,6 +717,8 @@ async function loadFile(
   diffCount.value = 0;
   currentRevert.value = 0;
   crossFileHint.value = "";
+  nav.resetForFile();
+  setResult("", false);
   file.value = next;
   const directory = next.split(/[\\/]/).slice(0, -1).join("\\");
   document.title = windowTitle.value = `${next.split(/[\\/]/).pop()} (${[projectPath.value || projectName.value, directory].filter(Boolean).join("\\")}) [Git 对比]`;
@@ -756,7 +841,7 @@ async function write(name: string, p: Record<string, any>) {
     const response = await api<any>(name, p);
     if (!response?.cancelled) {
       dirty.value = false;
-      result.value = response.output || "操作完成";
+      setResult(response.output || "操作完成");
       await refreshFiles();
       if (files.value.some((f) => f.path === file.value)) {
         if (["stage", "unstage"].includes(p.operation) && request.value?.comparison.mode === "local" && editor) {
@@ -842,13 +927,14 @@ async function navigateDiff(direction: "next" | "previous") {
         : index + step;
   if (next < 0 || next >= filtered.value.length) {
     crossFileHint.value = "";
-    result.value =
-      direction === "next" ? "已到最后一个对比文件" : "已到第一个对比文件";
+    setResult(
+      direction === "next" ? "已到最后一个对比文件" : "已到第一个对比文件",
+    );
     return;
   }
   if (crossFileHint.value !== direction) {
     crossFileHint.value = direction;
-    result.value = direction === "next" ? "再按一次跳到下一个文件" : "再按一次跳到上一个文件";
+    setResult(direction === "next" ? "再按一次跳到下一个文件" : "再按一次跳到上一个文件");
     return;
   }
   crossFileHint.value = "";
@@ -909,6 +995,8 @@ function resizeSidebar(event: PointerEvent) {
     sidebarWidth.value = Math.max(160, Math.min(600, event.clientX));
 }
 function key(event: KeyboardEvent) {
+  if (activeDialog.value || nav.picker.value.open) return;
+  if (nav.onKeyDown(event)) return;
   const element = event.target as HTMLElement;
   if ((event.ctrlKey || event.metaKey) && ["z", "y"].includes(event.key.toLowerCase()) &&
       !element.closest(".find-widget") &&
@@ -942,7 +1030,10 @@ function key(event: KeyboardEvent) {
         text: editor?.getModifiedEditor().getValue(),
       });
   }
-  if (event.key === "Escape") settingsOpen.value = false;
+  if (event.key === "Escape") {
+    if (settingsOpen.value) settingsOpen.value = false;
+    else if (showOperations.value) showOperations.value = false;
+  }
 }
 async function validate() {
   if (
@@ -965,12 +1056,18 @@ async function validate() {
 onMounted(async () => {
   window.__workbenchCanClose = canLeave;
   window.addEventListener("keydown", key, true);
+  window.addEventListener("keyup", nav.onKeyUp, true);
+  window.addEventListener("blur", nav.onBlur);
+  window.addEventListener("mouseup", nav.onMouseUp, true);
   window.addEventListener("focus", validate);
   window.addEventListener("beforeunload", disposeViewer);
   unsubscribe = window.workbench.onGitDiff(
     (value) => void acceptRequest(value),
   );
   unsubscribeChanged = window.workbench.onChanged(() => void validate());
+  unsubscribeDiffHistory = window.workbench.onDiffHistory((direction) =>
+    nav.stepHistory(direction < 0 ? -1 : 1),
+  );
   try {
     await Promise.all([document.fonts.load('13px "Workbench JetBrains Mono"'), document.fonts.load('italic 13px "Workbench JetBrains Mono"')]);
     const initial = await api<{
@@ -989,12 +1086,20 @@ function disposeViewer() {
   if (disposed) return;
   disposed = true;
   ++requestId;
+  clearTimeout(resultTimer);
   unsubscribe?.();
   unsubscribeChanged?.();
+  unsubscribeDiffHistory?.();
   window.removeEventListener("keydown", key, true);
+  window.removeEventListener("keyup", nav.onKeyUp, true);
+  window.removeEventListener("blur", nav.onBlur);
+  window.removeEventListener("mouseup", nav.onMouseUp, true);
   window.removeEventListener("focus", validate);
   window.removeEventListener("beforeunload", disposeViewer);
+  nav.dispose();
   disposeModels();
+  mergeNavListeners.forEach((l) => l.dispose());
+  mergeNavListeners = [];
   mergeEditors.forEach((e) => e.dispose());
   delete window.__workbenchCanClose;
 }
@@ -1002,7 +1107,8 @@ onBeforeUnmount(disposeViewer);
 </script>
 <template>
   <div class="diff-window" :class="{ 'diff-light': !settings.dark, 'diff-readonly': isConflict ? !conflict?.editable : !canEdit,
-    'diff-unified': !settings.split, 'diff-line-highlights': settings.highlight === 'lines', 'diff-no-highlights': settings.highlight === 'none' }">
+    'diff-unified': !settings.split, 'diff-line-highlights': settings.highlight === 'lines', 'diff-no-highlights': settings.highlight === 'none',
+    'ctrl-link-hover': nav.ctrlLink.value }">
     <div class="diff-titlebar"><img src="../../../assets/workbench-v2-64.png" alt="" /><span :title="windowTitle">{{ windowTitle }}</span></div>
     <header class="diff-toolbar">
       <span class="diff-current-path">{{ file }}</span>
@@ -1023,20 +1129,24 @@ onBeforeUnmount(disposeViewer);
       <button v-if="canEdit" data-action="revert-current" :disabled="busy || loading || !diffCount || stale"
         title="Revert 当前差异（Ctrl+Alt+Z）" @click="applyDifference(currentRevert)"><Icon name="history" :size="15" /></button>
       <span class="diff-toolbar-divider" />
-      <button data-action="undo" title="撤销（Ctrl+Z）" :disabled="!historyState.undo || stale" @click="undoRedo(false)"><Icon name="arrow-left" :size="16" /></button
-      ><button data-action="redo" title="重做（Ctrl+Y）" :disabled="!historyState.redo || stale" @click="undoRedo(true)"><Icon name="arrow-right" :size="16" /></button
-      ><button title="显示 / 隐藏文件列表" :aria-pressed="showFiles" @click="showFiles = !showFiles"><Icon name="list" :size="15" /></button>
-      <select v-if="!isConflict" v-model="settings.split" aria-label="对比布局">
-        <option :value="true">双栏对比</option><option :value="false">单栏对比</option>
-      </select>
-      <select :value="!settings.split && settings.whitespace === 'ignore' ? 'trim' : settings.whitespace" aria-label="空白处理"
-        @change="settings.whitespace = ($event.target as HTMLSelectElement).value as Whitespace">
-        <option value="all">显示空白差异</option><option value="trim">忽略首尾空白</option>
-        <option v-if="settings.split" value="ignore">忽略空白和空行</option>
-      </select>
-      <select v-model="settings.highlight" aria-label="差异高亮">
-        <option value="words">按单词高亮</option><option value="lines">按行高亮</option><option value="none">不高亮</option>
-      </select>
+      <template v-if="canEdit || conflict?.editable">
+        <button data-action="undo" title="撤销（Ctrl+Z）" :disabled="!historyState.undo || stale" @click="undoRedo(false)"><Icon name="arrow-left" :size="16" /></button
+        ><button data-action="redo" title="重做（Ctrl+Y）" :disabled="!historyState.redo || stale" @click="undoRedo(true)"><Icon name="arrow-right" :size="16" /></button>
+      </template>
+      <button title="显示 / 隐藏文件列表" :aria-pressed="showFiles" @click="showFiles = !showFiles"><Icon name="list" :size="15" /></button>
+      <template v-if="!isConflict">
+        <select v-model="settings.split" aria-label="对比布局">
+          <option :value="true">双栏对比</option><option :value="false">单栏对比</option>
+        </select>
+        <select :value="!settings.split && settings.whitespace === 'ignore' ? 'trim' : settings.whitespace" aria-label="空白处理"
+          @change="settings.whitespace = ($event.target as HTMLSelectElement).value as Whitespace">
+          <option value="all">显示空白差异</option><option value="trim">忽略首尾空白</option>
+          <option v-if="settings.split" value="ignore">忽略空白和空行</option>
+        </select>
+        <select v-model="settings.highlight" aria-label="差异高亮">
+          <option value="words">按单词高亮</option><option value="lines">按行高亮</option><option value="none">不高亮</option>
+        </select>
+      </template>
       <span class="diff-toolbar-divider" />
       <select v-if="isLocal" :value="request?.comparison.mode" aria-label="比较来源" :disabled="busy || loading" @change="changeMode">
         <option value="local">HEAD ↔ 工作区</option><option value="staged">HEAD ↔ 暂存区</option>
@@ -1053,8 +1163,15 @@ onBeforeUnmount(disposeViewer);
         "
       >
         <Icon name="search" :size="15" /></button
+      ><button
+        v-if="file && !data?.binary"
+        title="在代码编辑器中打开当前文件并定位到光标处"
+        aria-label="在代码编辑器中打开"
+        @click="nav.openCurrentInEditor(isConflict ? mergeEditors[1] : editor?.getModifiedEditor())"
+      >
+        <Icon name="code" :size="15" /></button
       ><button v-if="canEdit" title="保存（Ctrl+S）" :disabled="!dirty || busy || stale" @click="persistEditor"><Icon name="save" :size="15" /></button
-      ><button title="Git 操作" :aria-pressed="showOperations" @click="showOperations = !showOperations"><Icon name="branch2" :size="15" /></button
+      ><button v-if="isLocal && !isConflict && data" title="Git 操作" :aria-pressed="showOperations" @click="showOperations = !showOperations"><Icon name="branch2" :size="15" /></button
       ><button title="刷新（F5）" :disabled="busy" @click="refresh"><Icon name="refresh" :size="14" /></button
       ><button
         aria-label="设置 ⚙" title="对比设置"
@@ -1068,19 +1185,21 @@ onBeforeUnmount(disposeViewer);
           :disabled="busy || dirty || stale || loading" @change="includeFile" />纳入提交
       </label>
     </header>
-    <div v-if="settingsOpen" class="diff-settings">
-      <label><input v-model="settings.dark" type="checkbox" />深色主题</label
-      ><label
-        >字号<input
-          v-model.number="settings.fontSize"
-          type="number"
-          min="10"
-          max="28" /></label
-      ><label><input v-model="settings.wrap" type="checkbox" />自动换行</label
-      ><label
-        ><input v-model="settings.fold" type="checkbox" />折叠未修改区域</label
-      >
-    </div>
+    <Transition name="bar">
+      <div v-if="settingsOpen" class="diff-settings">
+        <label><input v-model="settings.dark" type="checkbox" />深色主题</label
+        ><label
+          >字号<input
+            v-model.number="settings.fontSize"
+            type="number"
+            min="10"
+            max="28" /></label
+        ><label><input v-model="settings.wrap" type="checkbox" />自动换行</label
+        ><label
+          ><input v-model="settings.fold" type="checkbox" />折叠未修改区域</label
+        >
+      </div>
+    </Transition>
     <div v-if="error" class="diff-alert" role="alert">
       <span>{{ error }}</span>
       <CloseButton label="关闭错误" @click="error = ''" />
@@ -1144,8 +1263,10 @@ onBeforeUnmount(disposeViewer);
         <VirtualFiles
           :files="filtered"
           :selected="file"
+          :filtered="!!query || !!statusFilter"
           @select="loadFile($event.path)"
           @show="loadFile($event.path)"
+          @clear-filter="query = ''; statusFilter = ''"
         />
       </aside>
       <div
@@ -1213,6 +1334,34 @@ onBeforeUnmount(disposeViewer);
           class="diff-editor"
           :class="{ unavailable: data?.binary || data?.limited || !data }"
         />
+        <Transition name="pop">
+          <div v-if="nav.showReturnPill.value" class="diff-nav-pill" role="region" aria-label="跳转导航">
+            <button
+              type="button"
+              class="diff-nav-pill-btn primary"
+              :disabled="!nav.canGoBack.value"
+              title="返回跳转前位置（Alt+← 或鼠标侧键）"
+              @click="nav.stepHistory(-1)"
+            >
+              <Icon name="arrow-left" :size="13" />
+              <span>{{ nav.backEntry.value ? `返回第 ${nav.backEntry.value.line} 行` : "后退" }}</span>
+            </button>
+            <button
+              v-if="nav.canGoForward.value"
+              type="button"
+              class="diff-nav-pill-btn"
+              title="前进到下一跳转位置（Alt+→ 或鼠标侧键）"
+              @click="nav.stepHistory(1)"
+            >
+              <Icon name="arrow-right" :size="13" />
+            </button>
+            <span v-if="nav.activeJumpLabel.value" class="diff-nav-pill-sep" />
+            <span v-if="nav.activeJumpLabel.value" class="diff-nav-pill-label" :title="nav.activeJumpLabel.value">
+              {{ nav.activeJumpLabel.value }}
+            </span>
+            <CloseButton class="diff-nav-pill-close" label="隐藏返回条" :size="11" @click="nav.dismissPill()" />
+          </div>
+        </Transition>
         <div v-if="crossFileHint" class="diff-cross-file-hint" role="status">
           {{ crossFileHint === "next" ? "再按一次跳到下一个文件" : "再按一次跳到上一个文件" }}
           <small>{{ crossFileHint === "next" ? "点击 ↓ 或按 F7" : "点击 ↑ 或按 Shift+F7" }}</small>
@@ -1251,11 +1400,13 @@ onBeforeUnmount(disposeViewer);
           class="diff-operation-toolbar"
         >
           <button
+            v-if="!currentFile || !currentFile.staged || currentFile.unstaged || currentFile.untracked"
             :disabled="busy || dirty"
             @click="write('git.execute', { operation: 'stage', files: [file] })"
           >
             Stage 文件</button
           ><button
+            v-if="currentFile?.staged"
             :disabled="busy || dirty"
             @click="
               write('git.execute', { operation: 'unstage', files: [file] })
@@ -1263,6 +1414,7 @@ onBeforeUnmount(disposeViewer);
           >
             Unstage 文件</button
           ><button
+            v-if="currentFile?.unstaged && !currentFile?.untracked"
             :disabled="busy || dirty"
             @click="
               write('git.execute', { operation: 'rollback', files: [file] })
@@ -1319,18 +1471,7 @@ onBeforeUnmount(disposeViewer);
             >
               回滚此块…
             </button></template
-          ><button
-            v-if="data.editable"
-            :disabled="!dirty || busy"
-            @click="
-              write('git.save', {
-                token: data!.token,
-                text: editor?.getModifiedEditor().getValue(),
-              })
-            "
           >
-            保存（Ctrl+S）
-          </button>
         </div>
       </main>
     </div>
@@ -1361,8 +1502,34 @@ onBeforeUnmount(disposeViewer);
       ><span v-if="isConflict"
         >以 Git 暂存区三个阶段为准 · 在 Git 管理中 Continue / Abort</span
       ><span class="diff-status-result">{{ result.slice(-200) }}</span
-      ><span>F7 / Shift+F7 跨文件 · F11 全屏</span>
+      ><span>Ctrl+点击 / F12 跳转定义 · Alt+← 返回 · F7 跨文件 · F11 全屏</span>
     </footer>
+    <div
+      v-if="nav.hoverTooltip.value"
+      class="diff-nav-tooltip"
+      :class="{ dark: settings.dark }"
+      :style="{ left: `${nav.hoverTooltip.value.x}px`, top: `${nav.hoverTooltip.value.y}px` }"
+      role="tooltip"
+    >
+      <div class="diff-nav-tooltip-head">
+        <span class="diff-nav-badge" :class="{ external: !nav.hoverTooltip.value.sameFile }">
+          {{ nav.hoverTooltip.value.badge }}
+        </span>
+        <span class="diff-nav-tooltip-loc">{{ nav.hoverTooltip.value.location }}</span>
+        <span class="diff-nav-tooltip-hint">{{ nav.hoverTooltip.value.hint }}</span>
+      </div>
+      <div v-if="nav.hoverTooltip.value.snippet" class="diff-nav-tooltip-code">
+        {{ nav.hoverTooltip.value.snippet }}
+      </div>
+    </div>
+    <DiffJumpPicker
+      :open="nav.picker.value.open"
+      :symbol="nav.picker.value.symbol"
+      :targets="nav.picker.value.targets"
+      :dark="settings.dark"
+      @pick="nav.pickTarget"
+      @close="nav.closePicker"
+    />
     <MessageDialog :dark="settings.dark" />
   </div>
 </template>

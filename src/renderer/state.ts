@@ -9,6 +9,7 @@ import type {
   WorkbenchApi,
 } from "../shared/types";
 import { openUiDialog, type OpenDialogOptions } from "./dialog";
+import { formatDateTime } from "./format";
 declare global {
   interface Window {
     workbench: WorkbenchApi;
@@ -38,19 +39,135 @@ export const model = reactive<{
   imports: [],
   formDrafts: {},
 });
+export interface ToastAction {
+  label: string;
+  run: () => Promise<void> | void;
+}
+export interface ToastState {
+  id: number;
+  text: string;
+  error: boolean;
+  action?: ToastAction;
+  onDismiss?: () => void;
+  duration: number;
+  countdown: boolean;
+  remainingSeconds: number;
+  paused: boolean;
+}
+export interface NotifyOptions {
+  error?: boolean;
+  action?: ToastAction;
+  duration?: number;
+  countdown?: boolean;
+  onDismiss?: () => void;
+}
 export const route = ref("work"),
   context = ref<Record<string, any>>({});
-export const toast = ref<{ text: string; error: boolean } | null>(null);
+export const toast = ref<ToastState | null>(null);
 type LeaveGuard = (reason?: "navigate" | "close") => Promise<boolean>;
 export let leaveGuard: LeaveGuard | null = null;
 export const setGuard = (guard: LeaveGuard | null) => {
   leaveGuard = guard;
 };
+let toastSeq = 0;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
-export function notify(text: string, error = false) {
-  toast.value = { text, error };
+let toastTick: ReturnType<typeof setInterval> | undefined;
+let toastRemainingMs = 0;
+let toastStartedAt = 0;
+let toastPaused = false;
+
+function clearToastTimers() {
   if (toastTimer) clearTimeout(toastTimer);
-  if (!error) toastTimer = setTimeout(() => (toast.value = null), 4500);
+  if (toastTick) clearInterval(toastTick);
+  toastTimer = undefined;
+  toastTick = undefined;
+}
+
+function updateCountdownSeconds() {
+  const current = toast.value;
+  if (!current || !current.countdown || toastPaused) return;
+  const remaining = Math.max(0, toastRemainingMs - (Date.now() - toastStartedAt));
+  current.remainingSeconds = Math.max(1, Math.ceil(remaining / 1000));
+}
+
+function scheduleToastDismiss(duration: number) {
+  clearToastTimers();
+  const current = toast.value;
+  if (!current || current.error || toastPaused) return;
+  toastRemainingMs = Math.max(0, duration);
+  toastStartedAt = Date.now();
+  if (current.countdown) {
+    current.remainingSeconds = Math.max(1, Math.ceil(toastRemainingMs / 1000));
+    toastTick = setInterval(updateCountdownSeconds, 100);
+  }
+  toastTimer = setTimeout(() => {
+    dismissToast(false);
+  }, toastRemainingMs);
+}
+
+export function pauseToast() {
+  if (toastPaused) return;
+  toastPaused = true;
+  if (toastTimer) {
+    toastRemainingMs = Math.max(0, toastRemainingMs - (Date.now() - toastStartedAt));
+  }
+  clearToastTimers();
+  if (toast.value) {
+    toast.value.paused = true;
+    if (toast.value.countdown) {
+      toast.value.remainingSeconds = Math.max(1, Math.ceil(toastRemainingMs / 1000));
+    }
+  }
+}
+
+export function resumeToast() {
+  if (!toastPaused) return;
+  toastPaused = false;
+  const current = toast.value;
+  if (!current) return;
+  current.paused = false;
+  if (!current.error) {
+    const nextMs = current.countdown
+      ? Math.max(200, toastRemainingMs)
+      : Math.min(toastRemainingMs || current.duration, 2500);
+    scheduleToastDismiss(nextMs);
+  }
+}
+
+export function dismissToast(skipOnDismiss = false) {
+  clearToastTimers();
+  toastPaused = false;
+  toastRemainingMs = 0;
+  const previous = toast.value;
+  toast.value = null;
+  if (!skipOnDismiss) previous?.onDismiss?.();
+}
+
+export function notify(text: string, errorOrOptions: boolean | NotifyOptions = false) {
+  const opts: NotifyOptions =
+    typeof errorOrOptions === "boolean"
+      ? { error: errorOrOptions }
+      : errorOrOptions;
+  dismissToast(false);
+  const error = !!opts.error;
+  const duration = opts.duration ?? (opts.action ? 6500 : 4500);
+  const countdown =
+    !error &&
+    (opts.countdown ??
+      (!!opts.action && (!!opts.onDismiss || opts.action.label === "撤销")));
+  toastPaused = false;
+  toast.value = {
+    id: ++toastSeq,
+    text,
+    error,
+    action: opts.action,
+    onDismiss: opts.onDismiss,
+    duration,
+    countdown,
+    remainingSeconds: Math.max(1, Math.ceil(duration / 1000)),
+    paused: false,
+  };
+  scheduleToastDismiss(duration);
 }
 export async function call<T = any>(
   action: string,
@@ -75,8 +192,18 @@ export async function attempt<T>(
     return undefined;
   }
 }
-export async function reload() {
-  const data = await call<any>("bootstrap");
+let loadedRevision = -1, loadedDatabaseVersion = -1, reloadRequest = 0;
+let lastAppliedRequest = 0;
+export async function reload(notifiedRevision?: number) {
+  if (notifiedRevision !== undefined && notifiedRevision <= loadedRevision) return;
+  const request = ++reloadRequest;
+  const { revision, databaseVersion, ...data } = await call("bootstrap", {
+    revision: loadedRevision, databaseVersion: loadedDatabaseVersion,
+  });
+  if (request < lastAppliedRequest) return;
+  lastAppliedRequest = request;
+  loadedRevision = revision;
+  loadedDatabaseVersion = databaseVersion;
   Object.assign(model, data);
 }
 export function saveForm(key: string, value: unknown) {
@@ -122,16 +249,7 @@ export const confirm = (
 };
 export const choose = (options: OpenDialogOptions) => openUiDialog(options);
 export function dateLabel(value: string | null | undefined) {
-  return value
-    ? new Date(value).toLocaleString("zh-CN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
-    : "未指定";
+  return formatDateTime(value);
 }
 export const taskLabels: Record<string, string> = {
   running: "执行中",

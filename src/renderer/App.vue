@@ -3,10 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   attempt,
   call,
+  dismissToast,
   model,
   navigate,
   notify,
+  pauseToast,
   reload,
+  resumeToast,
   route,
   taskLabels,
   toast,
@@ -22,7 +25,7 @@ import MonthlyPage from "./pages/MonthlyPage.vue";
 import PromptsPage from "./pages/PromptsPage.vue";
 import ApkPage from "./pages/ApkPage.vue";
 import ProjectsPage from "./pages/ProjectsPage.vue";
-import ReviewPage from "./pages/GitPage.vue";
+import GitPage from "./pages/GitPage.vue";
 import SettingsPage from "./pages/SettingsPage.vue";
 import TasksPage from "./pages/TasksPage.vue";
 
@@ -30,6 +33,11 @@ const ready = ref(false),
   initialError = ref(""),
   navOpen = ref(false),
   railCollapsed = ref(false),
+  tapdBusy = ref(false),
+  dismissedTaskId = ref(""),
+  toastActionBusy = ref(false),
+  toastRefreshing = ref(false),
+  pageEntering = ref(false),
   workspace = ref<HTMLElement>();
 
 const groups = [
@@ -77,11 +85,25 @@ const runningTasks = computed(() =>
   ),
 );
 const currentTask = computed(() => runningTasks.value[0]);
+const showTaskStrip = computed(
+  () =>
+    ready.value &&
+    !!currentTask.value &&
+    route.value !== "tasks" &&
+    currentTask.value.id !== dismissedTaskId.value,
+);
 const activeStage = computed(() => {
   const task = currentTask.value;
   if (!task) return "";
   return task.stages.find((s) => s.state === "running")?.name || "";
 });
+
+watch(
+  () => currentTask.value?.id,
+  (id) => {
+    if (!id || id !== dismissedTaskId.value) dismissedTaskId.value = "";
+  },
+);
 
 function toggleSidebar() {
   if (window.innerWidth <= 920) {
@@ -92,15 +114,36 @@ function toggleSidebar() {
 }
 
 async function openTapd() {
-  await attempt(async () => {
-    const task = await call<any>("tapd.open");
-    if (task?.state === "failed" || task?.state === "partial")
-      notify(
-        task.error ? "打开 TAPD 失败：" + task.error : "打开 TAPD 失败",
-        true,
-      );
-    else notify(task?.result?.message || "已请求打开 TAPD 客户端");
-  });
+  if (tapdBusy.value) return;
+  tapdBusy.value = true;
+  notify("正在打开 TAPD 客户端…", { duration: 6000 });
+  try {
+    await attempt(async () => {
+      const task = await call<any>("tapd.open");
+      if (task?.state === "failed" || task?.state === "partial")
+        notify(
+          task.error ? "打开 TAPD 失败：" + task.error : "打开 TAPD 失败",
+          true,
+        );
+      else notify(task?.result?.message || "已请求打开 TAPD 客户端");
+    });
+  } finally {
+    tapdBusy.value = false;
+  }
+}
+
+async function runToastAction() {
+  const action = toast.value?.action;
+  if (!action || toastActionBusy.value) return;
+  toastActionBusy.value = true;
+  dismissToast(true);
+  try {
+    await action.run();
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    toastActionBusy.value = false;
+  }
 }
 
 async function init() {
@@ -132,10 +175,39 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && navOpen.value) navOpen.value = false;
 }
 
+let toastRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let pageEnterTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch(
+  () => toast.value?.id,
+  (nextId, prevId) => {
+    if (nextId && prevId && nextId !== prevId) {
+      toastRefreshing.value = false;
+      requestAnimationFrame(() => {
+        toastRefreshing.value = true;
+        if (toastRefreshTimer) clearTimeout(toastRefreshTimer);
+        toastRefreshTimer = setTimeout(() => {
+          toastRefreshing.value = false;
+        }, 140);
+      });
+    } else if (!nextId) {
+      toastRefreshing.value = false;
+    }
+  },
+);
+
 watch(route, () => {
   navOpen.value = false;
   workspace.value?.scrollTo({ top: 0, left: 0 });
   void workspace.value?.focus({ preventScroll: true });
+  pageEntering.value = false;
+  requestAnimationFrame(() => {
+    pageEntering.value = true;
+    if (pageEnterTimer) clearTimeout(pageEnterTimer);
+    pageEnterTimer = setTimeout(() => {
+      pageEntering.value = false;
+    }, 150);
+  });
 });
 
 onMounted(() => {
@@ -147,16 +219,22 @@ onMounted(() => {
     void attempt(openNotification);
   });
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
-  window.workbench.onChanged(() => {
+  let latestRevision: number | undefined;
+  window.workbench.onChanged((revision) => {
+    latestRevision = revision;
     if (!reloadTimer)
       reloadTimer = setTimeout(() => {
         reloadTimer = undefined;
-        void attempt(reload);
+        void attempt(() => reload(latestRevision));
       }, 180);
   });
 });
 
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  if (toastRefreshTimer) clearTimeout(toastRefreshTimer);
+  if (pageEnterTimer) clearTimeout(pageEnterTimer);
+});
 </script>
 <template>
   <a class="skip-link" href="#main">跳到主要内容</a>
@@ -176,16 +254,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
             class="navitem"
             :class="{ active: route === item[0] }"
             :data-nav="item[0]"
+            :disabled="item[0] === 'tapd' && tapdBusy"
             :aria-current="route === item[0] ? 'page' : undefined"
             :title="
               item[0] === 'ideas' && openIdeasCount
                 ? `${item[2]}（${openIdeasCount} 项待完成）`
-                : item[2]
+                : item[0] === 'tapd' && tapdBusy
+                  ? '正在打开 TAPD 客户端…'
+                  : item[2]
             "
             @click="item[0] === 'tapd' ? openTapd() : navigate(item[0])"
           >
             <Icon :name="item[1]" :size="18" />
-            <span class="nav-label">{{ item[2] }}</span>
+            <span class="nav-label">{{ item[0] === 'tapd' && tapdBusy ? '正在打开 TAPD…' : item[2] }}</span>
             <span
               v-if="item[0] === 'ideas' && openIdeasCount"
               class="nav-count"
@@ -230,12 +311,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         </button>
       </div>
     </aside>
-    <div
-      v-if="navOpen"
-      class="scrim"
-      aria-hidden="true"
-      @click="navOpen = false"
-    />
+    <Transition name="fade">
+      <div
+        v-if="navOpen"
+        class="scrim"
+        aria-hidden="true"
+        @click="navOpen = false"
+      />
+    </Transition>
     <div class="frame">
       <header class="chrome">
         <div class="crumb">
@@ -290,7 +373,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         id="main"
         ref="workspace"
         class="workarea"
-        :class="'page-' + route"
+        :class="['page-' + route, { 'page-entering': pageEntering }]"
         :data-page="route"
         :aria-label="pageLabel"
         tabindex="-1"
@@ -306,7 +389,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <SettingsPage v-else-if="route === 'settings'" />
         <TasksPage v-else-if="route === 'tasks'" />
         <KeepAlive><ProjectsPage v-if="route === 'projects'" /></KeepAlive>
-        <KeepAlive><ReviewPage v-if="route === 'review'" /></KeepAlive>
+        <KeepAlive><GitPage v-if="route === 'review'" /></KeepAlive>
       </main>
       <main v-else class="startup">
         <span class="startup-mark"><Icon name="database" :size="22" /></span>
@@ -319,45 +402,83 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           </button>
         </div>
       </main>
-      <button
-        v-if="ready && currentTask && route !== 'tasks'"
-        type="button"
-        class="task-strip"
-        @click="navigate('tasks', { taskId: currentTask.id })"
-      >
-        <Icon
-          name="cycle"
-          :size="14"
-          :class="{ spinning: currentTask.state === 'running' }"
+      <div v-if="showTaskStrip && currentTask" class="task-strip-wrap">
+        <button
+          type="button"
+          class="task-strip"
+          @click="navigate('tasks', { taskId: currentTask.id })"
+        >
+          <Icon
+            name="cycle"
+            :size="14"
+            :class="{ spinning: currentTask.state === 'running' }"
+          />
+          <strong>{{ currentTask.title }}</strong>
+          <span class="live-task" :class="currentTask.state">
+            <i class="dot" />{{ taskLabels[currentTask.state] }}
+          </span>
+          <span v-if="activeStage" class="task-stage">{{ activeStage }}</span>
+          <span v-if="runningTasks.length > 1" class="count"
+            >另有 {{ runningTasks.length - 1 }} 个</span
+          >
+          <span class="push" />
+          <span class="text-action"
+            ><Icon name="arrow-right" :size="13" />查看任务</span
+          >
+        </button>
+        <CloseButton
+          class="task-strip-dismiss"
+          label="收起任务条"
+          :size="12"
+          @click="dismissedTaskId = currentTask.id"
         />
-        <strong>{{ currentTask.title }}</strong>
-        <span class="live-task" :class="currentTask.state">
-          <i class="dot" />{{ taskLabels[currentTask.state] }}
-        </span>
-        <span v-if="activeStage" class="task-stage">{{ activeStage }}</span>
-        <span v-if="runningTasks.length > 1" class="count"
-          >另有 {{ runningTasks.length - 1 }} 个</span
-        >
-        <span class="push" />
-        <span class="text-action"
-          ><Icon name="arrow-right" :size="13" />查看任务</span
-        >
-      </button>
+      </div>
     </div>
-    <div
-      v-if="toast"
-      class="toast"
-      :class="{ error: toast.error }"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <span class="toast-icon"
-        ><Icon :name="toast.error ? 'warning' : 'check'" :size="12"
-      /></span>
-      <span class="toast-text">{{ toast.text }}</span>
-      <CloseButton class="inverse" label="关闭提示" @click="toast = null" />
-    </div>
+    <Transition name="toast">
+      <div
+        v-if="toast"
+        key="toast"
+        class="toast"
+        :class="{
+          error: toast.error,
+          'has-countdown': toast.countdown,
+          paused: toast.paused,
+          'toast-refresh': toastRefreshing,
+        }"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        @mouseenter="pauseToast"
+        @mouseleave="resumeToast"
+      >
+        <span class="toast-icon"
+          ><Icon :name="toast.error ? 'warning' : 'check'" :size="12"
+        /></span>
+        <span class="toast-text">{{ toast.text }}</span>
+        <button
+          v-if="toast.action"
+          type="button"
+          class="toast-action"
+          :disabled="toastActionBusy"
+          :title="toast.countdown ? '悬停可暂停倒计时' : undefined"
+          @click="runToastAction"
+        >
+          <span>{{ toast.action.label }}</span>
+          <span v-if="toast.countdown" class="toast-countdown"
+            >{{ toast.remainingSeconds }}s</span
+          >
+        </button>
+        <CloseButton class="inverse" label="关闭提示" @click="dismissToast()" />
+        <span
+          v-if="toast.countdown"
+          :key="toast.id"
+          class="toast-progress"
+          :class="{ paused: toast.paused }"
+          :style="{ animationDuration: `${toast.duration}ms` }"
+          aria-hidden="true"
+        />
+      </div>
+    </Transition>
     <MessageDialog />
   </div>
 </template>

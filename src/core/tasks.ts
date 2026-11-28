@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Task } from "../shared/types.js";
 import { Store } from "./store.js";
+import { readLogTail } from "./log-tail.js";
 import { ensureDir, errorText, id, now, redact } from "./util.js";
 export class StopRequested extends Error {
   constructor() {
@@ -212,13 +213,7 @@ export class TaskManager {
   }
   log(taskId: string) {
     const t = this.get(taskId);
-    const data = fs.readFileSync(t.logPath);
-    return {
-      text: data
-        .subarray(Math.max(0, data.length - 2 * 1024 * 1024))
-        .toString("utf8"),
-      truncated: data.length > 2 * 1024 * 1024,
-      path: t.logPath,
-    };
+    const tail = readLogTail(t.logPath, 0, 2 * 1024 * 1024);
+    return { text: tail.text, truncated: tail.reset, path: t.logPath };
   }
 }

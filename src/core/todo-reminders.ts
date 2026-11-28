@@ -22,7 +22,7 @@ export class TodoReminders {
 
   private pending() {
     return this.store.list<Note>("note").filter((note): note is ScheduledTodo =>
-      note.kind === "idea" && !note.completedAt && !!note.dueAt &&
+      note.kind === "idea" && !note.completedAt && !note.deletedAt && !!note.dueAt &&
       Number.isFinite(Date.parse(note.dueAt)) &&
       !this.store.get("meta", this.key(note)),
     );
@@ -77,7 +77,7 @@ export class TodoReminders {
         continue;
       }
       const current = this.store.get<Note>("note", note.id);
-      if (!current || current.completedAt || current.dueAt !== note.dueAt) continue;
+      if (!current || current.deletedAt || current.completedAt || current.dueAt !== note.dueAt) continue;
       if (await this.show({ ...current, dueAt: note.dueAt }).catch(() => false)) {
         this.store.set("meta", key, { shownAt: this.clock() });
         this.retries.delete(key);

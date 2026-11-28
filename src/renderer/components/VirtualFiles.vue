@@ -12,6 +12,7 @@ const props = withDefaults(
     multiple?: boolean;
     variant?: "compact" | "rich" | "detail";
     busy?: boolean;
+    filtered?: boolean;
   }>(),
   {
     selected: "",
@@ -19,6 +20,7 @@ const props = withDefaults(
     multiple: false,
     variant: "compact",
     busy: false,
+    filtered: false,
   },
 );
 
@@ -29,6 +31,7 @@ const emit = defineEmits<{
   menu: [file: ChangeFile, event: MouseEvent];
   stage: [file: ChangeFile];
   unstage: [file: ChangeFile];
+  clearFilter: [];
 }>();
 
 const viewport = ref<HTMLElement>(),
@@ -361,6 +364,16 @@ onBeforeUnmount(() => observer?.disconnect());
         </div>
       </template>
     </div>
-    <div v-if="!files.length" class="git-empty">此范围没有变更文件</div>
+    <div v-if="!files.length" class="git-empty">
+      <p>{{ filtered ? "没有匹配的变更文件" : "此范围没有变更文件" }}</p>
+      <button
+        v-if="filtered"
+        type="button"
+        class="link"
+        @click="emit('clearFilter')"
+      >
+        清除筛选
+      </button>
+    </div>
   </div>
 </template>

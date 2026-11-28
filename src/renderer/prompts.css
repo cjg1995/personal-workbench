@@ -299,8 +299,8 @@
   border: 1px solid transparent;
   border-radius: 7px;
   padding: 7px 8px 7px 10px;
-  transition: background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
+  transition: background var(--motion-instant) var(--ease-out),
+    border-color var(--motion-instant) var(--ease-out);
 }
 
 .prompts-page .prompt-row + .prompt-row::before {
@@ -913,6 +913,7 @@
   max-width: calc(100vw - 36px);
   max-height: calc(100vh - 36px);
   padding: 0;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid #ccd8e6;
   background: var(--paper);
@@ -924,7 +925,6 @@
 
 .prompt-dialog[open] {
   display: flex;
-  flex-direction: column;
 }
 
 .prompt-dialog::backdrop {
@@ -1125,6 +1125,75 @@
   .prompts-page .prompt-summary strong {
     font-size: 13.5px;
   }
+}
+
+.prompts-page .prompt-row .list-delete-button {
+  opacity: 0.26;
+  transition:
+    opacity var(--motion-instant) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.prompts-page .prompt-row:hover .list-delete-button,
+.prompts-page .prompt-row:focus-within .list-delete-button,
+.prompts-page .prompt-row.selected .list-delete-button {
+  opacity: 1;
+}
+
+.prompts-page .tag-chip-btn {
+  border: 1px solid transparent;
+  cursor: pointer;
+  min-height: 24px;
+  height: auto;
+  box-shadow: none;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.prompts-page .tag-chip-btn:hover {
+  background: var(--tint);
+  border-color: var(--tint-line);
+  color: var(--brand-dark);
+}
+
+.prompts-page .tag-chip-btn.active {
+  background: var(--blue-fill);
+  border-color: var(--blue-fill-line);
+  color: var(--brand-dark);
+}
+
+.prompts-page .tag-suggestions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.prompts-page .tag-suggestions-label {
+  font-size: 11px;
+  color: var(--soft);
+  margin-right: 2px;
+}
+
+.prompts-page .tag-suggest-btn {
+  min-height: 22px;
+  height: auto;
+  padding: 2px 7px;
+  border: 1px dashed var(--control-line);
+  border-radius: 5px;
+  background: var(--back);
+  color: var(--soft);
+  font-size: 11px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.prompts-page .tag-suggest-btn:hover {
+  border-style: solid;
+  border-color: var(--tint-line);
+  background: var(--tint);
+  color: var(--brand-dark);
 }
 
 @media (max-width: 980px) {

@@ -10,12 +10,29 @@ import { ConfigService } from "../src/core/config.js";
 import { Git } from "../src/core/git.js";
 import { TaskManager } from "../src/core/tasks.js";
 import { ProjectService } from "../src/core/projects.js";
+import { readIdeaXml } from "../src/core/idea-options.js";
 import type { ProjectConfig } from "../src/shared/types.js";
 import {
   processEnvironments,
   processes,
   terminateTree,
 } from "../src/core/process.js";
+test("项目状态轮询可以复用同一份 XML，等长改写后立即读取新配置", () => {
+  const dir = fs.mkdtempSync(path.join(path.resolve(".local"), "idea-poll-"));
+  const file = path.join(dir, "workspace.xml");
+  try {
+    fs.writeFileSync(file, '<run port="8100"/>');
+    const previous = readIdeaXml(file, "workspace:test");
+    assert.equal(readIdeaXml(file, "workspace:test"), previous);
+    const stat = fs.statSync(file);
+    fs.writeFileSync(file, '<run port="8101"/>');
+    fs.utimesSync(file, stat.atime, stat.mtime);
+    assert.equal(readIdeaXml(file, "workspace:test").documentElement?.getAttribute("port"), "8101");
+  } finally {
+    fs.unlinkSync(file);
+    fs.rmdirSync(dir);
+  }
+});
 async function unusedPort() {
   const server = net.createServer();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

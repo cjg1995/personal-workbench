@@ -21,11 +21,16 @@ export class RecordsService {
     public dataDir: string,
   ) {}
   list(kind: RecordKind) {
-    return this.store.list<Note>("note").filter((n) => n.kind === kind);
+    return this.store
+      .list<Note>("note")
+      .filter((n) => n.kind === kind && !n.deletedAt);
+  }
+  listAll() {
+    return this.store.list<Note>("note").filter((n) => !n.deletedAt);
   }
   get(noteId: string) {
     const note = this.store.get<Note>("note", noteId);
-    if (!note) throw new Error("记录不存在");
+    if (!note || note.deletedAt) throw new Error("记录不存在");
     return note;
   }
   save(input: {
@@ -101,9 +106,28 @@ export class RecordsService {
     this.store.delete("note", n.id);
     return n;
   }
-  month(month: string, projectId?: string) {
+  softRemove(noteId: string) {
+    const n = this.get(noteId);
+    const deleted: Note = { ...n, deletedAt: now() };
+    this.store.set("note", n.id, deleted);
+    return deleted;
+  }
+  restore(noteId: string) {
+    const n = this.store.get<Note>("note", noteId);
+    if (!n || !n.deletedAt) throw new Error("记录已清理或无法恢复");
+    const restored: Note = { ...n, deletedAt: null };
+    this.store.set("note", n.id, restored);
+    return restored;
+  }
+  purge(noteId: string) {
+    const n = this.store.get<Note>("note", noteId);
+    if (!n || !n.deletedAt) return false;
+    this.store.delete("note", n.id);
+    return true;
+  }
+  month(month: string, projectId?: string, work?: Note[]) {
     this.checkMonth(month);
-    return this.list("work")
+    return (work ?? this.list("work"))
       .filter(
         (n) =>
           n.happenedOn?.slice(0, 7) === month &&
@@ -208,7 +232,8 @@ export class RecordsService {
     return draft.entries.map((e) => ({
       entryId: e.id,
       sources: e.sourceIds.map((sourceId) => {
-        const n = this.store.get<Note>("note", sourceId);
+        const raw = this.store.get<Note>("note", sourceId);
+        const n = raw && !raw.deletedAt ? raw : undefined;
         return {
           id: sourceId,
           note: n,

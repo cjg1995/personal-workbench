@@ -13,6 +13,11 @@ import {
 } from "../monaco";
 import { DiffScrollbar } from "../diff-scrollbar";
 import { revertLines } from "../../shared/diff-edit";
+import { useDiffNavigation } from "../diff-navigation";
+import Icon from "./Icon.vue";
+import CloseButton from "./CloseButton.vue";
+import DiffJumpPicker from "./DiffJumpPicker.vue";
+import "../idea-editor.css";
 
 const props = defineProps<{
   projectId: string;
@@ -40,7 +45,25 @@ let originalHighlights: string[] = [], modifiedHighlights: string[] = [];
 let revertGlyphs: string[] = [];
 let savedText = "", request = 0, disposed = false;
 let saving: Promise<boolean> | undefined, leaving: Promise<boolean> | undefined;
-let blurTimer: ReturnType<typeof setTimeout> | undefined;
+
+const nav = useDiffNavigation({
+  getProjectId: () => props.projectId,
+  getFile: () => props.file,
+  isAllowLsp: (side) => side === "modified" && !dirty.value,
+  getEditorBySide: (side) =>
+    side === "original" ? editor?.getOriginalEditor() : editor?.getModifiedEditor(),
+  revealInPane: (side, position, scrollTop) => {
+    const code = side === "original" ? editor?.getOriginalEditor() : editor?.getModifiedEditor();
+    if (!code) return;
+    code.setPosition(position);
+    if (scrollTop !== undefined) code.setScrollTop(scrollTop);
+    else code.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
+    code.focus();
+  },
+  resolveApi: (payload) => call("code.resolve-definition", payload),
+  openEditorApi: (payload) => call("code.open-in-editor", payload),
+  notify: (text) => { status.value = text; },
+});
 
 function applyOptions() {
   monaco.editor.setTheme(dark.value ? "workbench-dark" : "workbench-light");
@@ -69,6 +92,7 @@ async function load() {
   dirty.value = false;
   error.value = status.value = "";
   differences.value = 0;
+  nav.resetForFile();
   disposeModels();
   if (!props.file) return;
   loading.value = true;
@@ -146,17 +170,15 @@ function canLeave(): Promise<boolean> {
   }).finally(() => { leaving = undefined; });
   return leaving;
 }
-function blur() {
-  clearTimeout(blurTimer);
-  blurTimer = setTimeout(() => {
-    const active = document.activeElement;
-    if (!disposed && dirty.value && !active?.closest('.monaco-menu-container, .context-view') &&
-        (!document.hasFocus() || !root.value?.contains(active)))
-      void canLeave();
-  }, 0);
-}
 function key(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && root.value?.contains(document.activeElement)) {
+  if (nav.picker.value.open) return;
+  if (event.key === "Control" && !event.repeat) {
+    nav.onKeyDown(event);
+    return;
+  }
+  const focusedInside = !!root.value?.contains(document.activeElement);
+  if (focusedInside && nav.onKeyDown(event)) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && focusedInside) {
     event.preventDefault();
     event.stopPropagation();
     void save();
@@ -208,20 +230,24 @@ watch(() => [props.projectId, props.file, props.taskId], () => void load());
 onMounted(() => {
   editor = monaco.editor.createDiffEditor(host.value!, { ...diffCodeOptions(fontSize.value, wrap.value), renderSideBySide: false });
   scrollbar = new DiffScrollbar(editor.getModifiedEditor(), "modified");
-  listeners.push(editor.onDidUpdateDiff(decorate), editor.getModifiedEditor().onDidBlurEditorWidget(blur),
+  listeners.push(editor.onDidUpdateDiff(decorate),
+    ...nav.bindEditor(editor.getModifiedEditor(), "modified"),
+    ...nav.bindEditor(editor.getOriginalEditor(), "original"),
     editor.getModifiedEditor().onMouseDown((event) => {
       if ((event.target.element?.closest('.git-revert-glyph')) && event.target.position) revert(event.target.position.lineNumber);
     }));
   window.addEventListener("keydown", key, true);
-  window.addEventListener("blur", blur);
+  window.addEventListener("keyup", nav.onKeyUp, true);
+  window.addEventListener("blur", nav.onBlur);
   void load();
 });
 onBeforeUnmount(() => {
   disposed = true;
   request++;
-  clearTimeout(blurTimer);
   window.removeEventListener("keydown", key, true);
-  window.removeEventListener("blur", blur);
+  window.removeEventListener("keyup", nav.onKeyUp, true);
+  window.removeEventListener("blur", nav.onBlur);
+  nav.dispose();
   listeners.forEach((listener) => listener.dispose());
   scrollbar?.dispose();
   disposeModels();
@@ -231,7 +257,7 @@ defineExpose({ canLeave });
 </script>
 
 <template>
-  <div ref="root" class="submit-inline-diff diff-unified" :class="{ 'diff-light': !dark, 'diff-readonly': !editable }" @focusout="blur">
+  <div ref="root" class="submit-inline-diff diff-unified" :class="{ 'diff-light': !dark, 'diff-readonly': !editable, 'ctrl-link-hover': nav.ctrlLink.value }">
     <div class="submit-diff-toolbar">
       <strong>单页对比</strong>
       <button title="上一个差异" aria-label="上一个差异" :disabled="!differences" @click="nextDifference(false)">↑</button>
@@ -239,6 +265,12 @@ defineExpose({ canLeave });
       <button :aria-pressed="wrap" title="自动换行" @click="wrap = !wrap">换行</button>
       <button title="缩小代码字号" aria-label="缩小代码字号" :disabled="fontSize <= 10" @click="fontSize--">A−</button>
       <button title="放大代码字号" aria-label="放大代码字号" :disabled="fontSize >= 24" @click="fontSize++">A+</button>
+      <button
+        v-if="file && !data?.binary"
+        title="在代码编辑器中打开当前文件并定位到光标处"
+        aria-label="在代码编辑器中打开"
+        @click="nav.openCurrentInEditor(editor?.getModifiedEditor())"
+      >编辑器</button>
       <button class="push-right" title="保存（Ctrl+S）" :disabled="!dirty || busy" @click="save">{{ busy ? '保存中…' : '保存' }}</button>
     </div>
     <div class="submit-diff-path" :title="file">{{ file || '选择文件查看差异' }}<span v-if="dirty"> · 未保存</span></div>
@@ -248,9 +280,65 @@ defineExpose({ canLeave });
     </div>
     <p v-if="error" class="error small submit-diff-notice" role="alert">{{ error }}</p>
     <p v-if="data?.notice" class="small submit-diff-notice">{{ data.notice }}</p>
-    <div ref="host" class="submit-diff-host" :aria-busy="loading" />
-    <div class="submit-diff-status small muted">
-      {{ loading ? '读取中…' : status || (data?.binary ? '二进制文件无法编辑' : data && !editable ? '只读' : '') }}
+    <div class="submit-diff-stage">
+      <div ref="host" class="submit-diff-host" :aria-busy="loading" />
+      <Transition name="pop">
+        <div v-if="nav.showReturnPill.value" class="diff-nav-pill" role="region" aria-label="跳转导航">
+          <button
+            type="button"
+            class="diff-nav-pill-btn primary"
+            :disabled="!nav.canGoBack.value"
+            title="返回跳转前位置（Alt+←）"
+            @click="nav.stepHistory(-1)"
+          >
+            <Icon name="arrow-left" :size="13" />
+            <span>{{ nav.backEntry.value ? `返回第 ${nav.backEntry.value.line} 行` : "后退" }}</span>
+          </button>
+          <button
+            v-if="nav.canGoForward.value"
+            type="button"
+            class="diff-nav-pill-btn"
+            title="前进到下一跳转位置（Alt+→）"
+            @click="nav.stepHistory(1)"
+          >
+            <Icon name="arrow-right" :size="13" />
+          </button>
+          <span v-if="nav.activeJumpLabel.value" class="diff-nav-pill-sep" />
+          <span v-if="nav.activeJumpLabel.value" class="diff-nav-pill-label" :title="nav.activeJumpLabel.value">
+            {{ nav.activeJumpLabel.value }}
+          </span>
+          <CloseButton class="diff-nav-pill-close" label="隐藏返回条" :size="11" @click="nav.dismissPill()" />
+        </div>
+      </Transition>
     </div>
+    <div class="submit-diff-status small muted">
+      {{ loading ? '读取中…' : status || (data?.binary ? '二进制文件无法编辑' : data && !editable ? '只读 · Ctrl+点击 / F12 跳转定义' : 'Ctrl+点击 / F12 跳转定义 · Alt+← 返回') }}
+    </div>
+    <div
+      v-if="nav.hoverTooltip.value"
+      class="diff-nav-tooltip"
+      :class="{ dark }"
+      :style="{ left: `${nav.hoverTooltip.value.x}px`, top: `${nav.hoverTooltip.value.y}px` }"
+      role="tooltip"
+    >
+      <div class="diff-nav-tooltip-head">
+        <span class="diff-nav-badge" :class="{ external: !nav.hoverTooltip.value.sameFile }">
+          {{ nav.hoverTooltip.value.badge }}
+        </span>
+        <span class="diff-nav-tooltip-loc">{{ nav.hoverTooltip.value.location }}</span>
+        <span class="diff-nav-tooltip-hint">{{ nav.hoverTooltip.value.hint }}</span>
+      </div>
+      <div v-if="nav.hoverTooltip.value.snippet" class="diff-nav-tooltip-code">
+        {{ nav.hoverTooltip.value.snippet }}
+      </div>
+    </div>
+    <DiffJumpPicker
+      :open="nav.picker.value.open"
+      :symbol="nav.picker.value.symbol"
+      :targets="nav.picker.value.targets"
+      :dark="dark"
+      @pick="nav.pickTarget"
+      @close="nav.closePicker"
+    />
   </div>
 </template>

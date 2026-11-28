@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { Store } from "../core/store.js";
 import { ConfigService } from "../core/config.js";
 import { RecordsService } from "../core/records.js";
@@ -35,12 +36,13 @@ import {
 } from "../shared/submit-policy.js";
 import { ApkService } from "../core/apk.js";
 import { BackupService } from "../core/backup.js";
-import { ReviewService } from "../core/review.js";
+import { readProjectRules } from "../core/project-rules.js";
 import { ProjectService } from "../core/projects.js";
 import { readLogTail } from "../core/log-tail.js";
 import { ProjectBrowser } from "../core/project-browser.js";
 import { EditorFiles, encodeEditorText, projectFile } from "../core/editor-files.js";
 import { JavaLanguageService } from "../core/java-language-service.js";
+import { resolveCodeNavigation, type LspResolver } from "../core/code-navigation.js";
 import {
   activateClientWindow,
   clientProcesses,
@@ -68,6 +70,7 @@ import {
 } from "../core/util.js";
 import type {
   Configuration,
+  EditorOpenTarget,
   MonthlyDraft,
   Note,
   RecordKind,
@@ -145,6 +148,8 @@ if (!app.requestSingleInstanceLock()) {
   interface EditorWindowEntry {
     window: BrowserWindow;
     projectId: string;
+    ready: boolean;
+    pendingOpen?: EditorOpenTarget;
     language?: JavaLanguageService;
     watchers: Map<string, fs.FSWatcher>;
     projectWatcher?: fs.FSWatcher;
@@ -157,37 +162,60 @@ if (!app.requestSingleInstanceLock()) {
     ? path.join(process.resourcesPath, "editor-runtime", "rg.exe")
     : path.resolve(here, "../../node_modules/@vscode/ripgrep-win32-x64/bin/rg.exe"));
   let lastActivation: { id: string; at: number } | undefined;
+  let lastMonthlyExport = "";
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
+  let revision = 0, fullRevision = 0, gitChanged = false;
+  const fieldRevisions = { notes: 0, prompts: 0, tasks: 0, runs: 0, formDrafts: 0 };
   const store = new Store(path.join(dataDir, "workbench.sqlite"));
   const config = new ConfigService(store, dataDir);
-  const changed = () => {
+  let queuedDrafts: Record<string, unknown> = {};
+  let draftWrite: Promise<void> | undefined;
+  function persistDraft(key: string, value: unknown) {
+    queuedDrafts[key] = value;
+    // IPC inputs already waiting in the same turn share one durable commit.
+    draftWrite ??= nextTurn().then(() => {
+      try {
+        const drafts = store.get<Record<string, unknown>>("meta", "form-drafts") || {};
+        store.set("meta", "form-drafts", { ...drafts, ...queuedDrafts });
+        fieldRevisions.formDrafts = ++revision;
+      } finally {
+        queuedDrafts = {};
+        draftWrite = undefined;
+      }
+    });
+    return draftWrite;
+  }
+  const changed = (field?: keyof typeof fieldRevisions | "other") => {
+    ++revision;
+    if (!field) fullRevision = revision;
+    else if (field !== "other") fieldRevisions[field] = revision;
+    gitChanged ||= !field || field === "tasks" || field === "runs";
     if (!changedTimer)
       changedTimer = setTimeout(() => {
         changedTimer = undefined;
         if (win && !win.isDestroyed())
-          win.webContents.send("workbench:changed");
-        for (const item of diffWindows.values())
-          if (!item.window.isDestroyed())
-            item.window.webContents.send("workbench:changed");
+          win.webContents.send("workbench:changed", revision, gitChanged);
+        if (gitChanged) {
+          for (const item of diffWindows.values())
+            if (!item.window.isDestroyed())
+              item.window.webContents.send("workbench:changed");
+        }
+        gitChanged = false;
       }, 120);
   };
   const projectBrowser = new ProjectBrowser(dataDir, (url) => shell.openExternal(url));
-  const tasks = new TaskManager(store, dataDir, changed),
+  const tasks = new TaskManager(store, dataDir, () => changed("tasks")),
     records = new RecordsService(store, dataDir),
     prompts = new PromptsService(store),
     git = new Git(config.get().tools.git),
     submit = new SubmitService(git, tasks, dataDir),
     apk = new ApkService(config, tasks, dataDir),
-    review = new ReviewService(git, store, records, (message) => {
-      if (win && !win.isDestroyed())
-        win.webContents.send("workbench:review-progress", message);
-    }),
     projects = new ProjectService(
       config,
       git,
       tasks,
       dataDir,
-      changed,
+      () => changed("runs"),
       undefined,
       undefined,
       (url, project) => projectBrowser.open(project, url),
@@ -302,6 +330,28 @@ if (!app.requestSingleInstanceLock()) {
         child.setFullScreen(!child.isFullScreen());
       }
     });
+    // 鼠标侧键后退/前进：与代码编辑器一致，便于跳转定义后返回原处
+    let diffHistoryAt = 0, diffHistoryDir = 0;
+    const sendDiffHistory = (direction: number) => {
+      const at = Date.now();
+      if (direction === diffHistoryDir && at - diffHistoryAt < 120) return;
+      diffHistoryDir = direction;
+      diffHistoryAt = at;
+      if (!child.isDestroyed()) child.webContents.send("workbench:diff-history", direction);
+    };
+    child.on("app-command", (_event, command) => {
+      if (command === "browser-backward") sendDiffHistory(-1);
+      else if (command === "browser-forward") sendDiffHistory(1);
+    });
+    if (process.platform === "win32") {
+      try {
+        child.hookWindowMessage(0x020b, (wParam) => {
+          const button = (wParam.readUInt32LE(0) >>> 16) & 0xffff;
+          if (button === 1) sendDiffHistory(-1);
+          else if (button === 2) sendDiffHistory(1);
+        });
+      } catch { /* 不支持窗口消息钩子时仅依赖 app-command */ }
+    }
     child.once("ready-to-show", () => {
       child.maximize();
       child.show();
@@ -372,18 +422,34 @@ if (!app.requestSingleInstanceLock()) {
     void item.language?.stop();
     item.language = undefined;
   }
-  async function openEditor(projectId: string, forceNew = false) {
+  function normalizeEditorTarget(root: string, target?: EditorOpenTarget): EditorOpenTarget | undefined {
+    if (!target) return undefined;
+    const line = Math.max(1, Math.floor(Number(target.line) || 1));
+    const column = Math.max(1, Math.floor(Number(target.column) || 1));
+    if (typeof target.uri === "string" && target.uri.startsWith("jdt://") && target.uri.length <= 4000) {
+      return { file: `jdt:${target.uri}`, uri: target.uri, line, column };
+    }
+    const full = projectFile(root, String(target.file || ""));
+    const relative = path.relative(root, full).split(path.sep).join("/");
+    return { file: relative, line, column };
+  }
+  async function openEditor(projectId: string, forceNew = false, target?: EditorOpenTarget) {
     const project = knownProject(projectId);
     if (!fs.existsSync(project.path) || !fs.statSync(project.path).isDirectory())
       throw new Error("项目目录不存在");
+    const safeTarget = normalizeEditorTarget(project.path, target);
     const existing = forceNew ? undefined : [...editorWindows.values()].find(
       (item) => item.projectId === project.id && !item.window.isDestroyed(),
     );
     if (existing) {
+      if (safeTarget) {
+        if (existing.ready) existing.window.webContents.send("workbench:editor-open", safeTarget);
+        else existing.pendingOpen = safeTarget;
+      }
       if (existing.window.isMinimized()) existing.window.restore();
       existing.window.show();
       existing.window.focus();
-      return { reused: true };
+      return { reused: true, target: safeTarget };
     }
     const child = new BrowserWindow({
       width: 1540,
@@ -404,7 +470,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     const item: EditorWindowEntry = {
-      window: child, projectId, watchers: new Map(),
+      window: child, projectId, ready: false, pendingOpen: safeTarget, watchers: new Map(),
     };
     const key = String(child.id);
     editorWindows.set(key, item);
@@ -579,8 +645,10 @@ if (!app.requestSingleInstanceLock()) {
     config.project(requireText(v, "项目 ID", 100));
   const safeRun = (r: any) => {
     const { configuration, ...rest } = r;
+    const hasLog = typeof r?.logPath === "string" && !!r.logPath && fs.existsSync(r.logPath);
     return {
       ...rest,
+      hasLog,
       description: configuration?.description,
       port: configuration?.port,
       deployment: configuration?.deployment,
@@ -724,14 +792,70 @@ if (!app.requestSingleInstanceLock()) {
     return { opened: true, path: file };
   };
   async function action(name: string, p: any = {}, source?: BrowserWindow) {
+    if (draftWrite && name !== "form.save") await draftWrite.catch(() => {});
     switch (name) {
       case "editor.context": {
         const item = [...editorWindows.values()].find((value) => value.window === source);
         if (!item) throw new Error("代码编辑器窗口不存在");
         const project = knownProject(item.projectId);
+        item.ready = true;
+        const initialOpen = item.pendingOpen;
+        item.pendingOpen = undefined;
         return { projectId: project.id, projectName: project.name, root: project.path,
           java: !!item.language, status: item.language?.status || "unavailable",
-          error: item.language?.error || "" };
+          error: item.language?.error || "", initialOpen };
+      }
+      case "code.resolve-definition": {
+        const project = knownProject(p.projectId);
+        const full = projectFile(project.path, String(p.file || ""));
+        const relative = path.relative(project.path, full).split(path.sep).join("/");
+        const text = typeof p.text === "string" ? p.text : "";
+        if (text.length > 8 * 1024 * 1024) throw new Error("代码内容过大");
+        const line = Math.max(1, Math.floor(Number(p.line) || 1));
+        const column = Math.max(1, Math.floor(Number(p.column) || 1));
+        const kind = p.kind === "implementation" ? "implementation" : "definition";
+        const allowLsp = p.allowLsp !== false;
+        const runningLang = [...editorWindows.values()].find(
+          (entry) => entry.projectId === project.id && !entry.window.isDestroyed() &&
+            entry.language?.ready && entry.language.status === "ready",
+        )?.language;
+        const lspResolver: LspResolver | undefined = runningLang && full.toLowerCase().endsWith(".java")
+          ? async (reqKind, reqFile, reqText, reqLine, reqCol) => {
+              const targetFull = projectFile(project.path, reqFile);
+              const alreadyOpen = runningLang.hasDocument(targetFull);
+              if (alreadyOpen && runningLang.documentText(targetFull) !== reqText) return null;
+              if (!alreadyOpen) runningLang.open(targetFull, reqText);
+              try {
+                const method = reqKind === "implementation" ? "textDocument/implementation" : "textDocument/definition";
+                const raw = await Promise.race([
+                  runningLang.request(method, {
+                    textDocument: { uri: pathToFileURL(targetFull).href },
+                    position: { line: reqLine - 1, character: reqCol - 1 },
+                  }),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+                ]);
+                return Array.isArray(raw) ? raw : raw ? [raw] : null;
+              } catch {
+                return null;
+              } finally {
+                if (!alreadyOpen) runningLang.close(targetFull);
+              }
+            }
+          : undefined;
+        return resolveCodeNavigation(
+          { root: project.path, file: relative, text, line, column, kind, allowLsp },
+          editorFiles,
+          lspResolver,
+        );
+      }
+      case "code.open-in-editor": {
+        const project = knownProject(p.projectId);
+        return openEditor(project.id, false, {
+          file: String(p.file || ""),
+          uri: typeof p.uri === "string" ? p.uri : undefined,
+          line: Math.max(1, Math.floor(Number(p.line) || 1)),
+          column: Math.max(1, Math.floor(Number(p.column) || 1)),
+        });
       }
       case "editor.projects":
       case "editor.switch-project":
@@ -775,6 +899,8 @@ if (!app.requestSingleInstanceLock()) {
           editorFiles.invalidate(root);
           editorFiles.invalidate(target.path);
           item.projectId = target.id;
+          item.ready = false;
+          item.pendingOpen = undefined;
           item.window.setTitle(`${target.name} · 代码编辑器`);
           attachEditorLanguage(item, target);
           return { switched: true, projectId: target.id, projectName: target.name };
@@ -970,7 +1096,23 @@ if (!app.requestSingleInstanceLock()) {
         });
         return ["save", "discard", "cancel"][result.response] || "cancel";
       }
-      case "git.confirm-leave":
+      case "git.confirm-leave": {
+        if (p?.canSave) {
+          const result = await showUiDialog(source || win, {
+            tone: "warning",
+            title: "有未保存编辑",
+            message: "编辑结果尚未保存，是否先保存再继续？",
+            detail: p.file ? String(p.file) : undefined,
+            buttons: [
+              { label: "保留编辑", variant: "default" },
+              { label: "丢弃编辑", variant: "danger" },
+              { label: "保存并继续", variant: "primary" },
+            ],
+            defaultId: 2,
+            cancelId: 0,
+          });
+          return ["cancel", "discard", "save"][result.response] || "cancel";
+        }
         return (
           (
             await showUiDialog(source || win, {
@@ -986,6 +1128,7 @@ if (!app.requestSingleInstanceLock()) {
             })
           ).response === 1
         );
+      }
       case "git.fullscreen":
         if (source && source !== win) {
           source.setFullScreen(!source.isFullScreen());
@@ -1160,7 +1303,9 @@ if (!app.requestSingleInstanceLock()) {
           );
           if (preview.head !== p.head)
             throw new Error("待推送提交已变化，请重新预览");
-          detail = `${preview.branch} → ${preview.remote}/${preview.target}\n${preview.newBranch ? "创建远程分支\n" : ""}待推送提交（最多显示 100 条）\n${preview.commits || "无新增提交"}`;
+          if (!p.confirmed) {
+            detail = `${preview.branch} → ${preview.remote}/${preview.target}\n${preview.newBranch ? "创建远程分支\n" : ""}待推送提交（最多显示 100 条）\n${preview.commits || "无新增提交"}`;
+          }
         }
         if (
           detail &&
@@ -1203,19 +1348,25 @@ if (!app.requestSingleInstanceLock()) {
           return { cancelled: true };
         return gitClient.execute(project.path, operation, { ...p, expected });
       }
-      case "bootstrap":
+      case "bootstrap": {
+        // SQLite's counter also detects commits made by another connection.
+        const { data_version: databaseVersion } = store.db.prepare("pragma data_version").get()!;
+        const since = p?.revision;
+        const full = !Number.isSafeInteger(since) || since < fullRevision || since > revision ||
+          p?.databaseVersion !== databaseVersion;
+        const needs = (field: keyof typeof fieldRevisions) => full || fieldRevisions[field] > since;
         return {
-          config: config.get(),
-          notes: store.list("note"),
-          prompts: prompts.list(),
-          tasks: tasks.list(),
-          dataDir,
+          ...(full && { config: config.get(), imports: store.list("import"), dataDir, version: app.getVersion() }),
+          ...(needs("notes") && { notes: records.listAll() }),
+          ...(needs("prompts") && { prompts: prompts.list() }),
+          ...(needs("tasks") && { tasks: tasks.list() }),
+          ...(needs("runs") && { runs: store.list("run") }),
+          ...(needs("formDrafts") && { formDrafts: store.get("meta", "form-drafts") || {} }),
           today: localDate(),
-          version: app.getVersion(),
-          imports: store.list("import"),
-          runs: store.list("run"),
-          formDrafts: store.get("meta", "form-drafts") || {},
+          revision,
+          databaseVersion,
         };
+      }
       case "notification.take": {
         const destination = pendingNotification;
         pendingNotification = null;
@@ -1235,92 +1386,78 @@ if (!app.requestSingleInstanceLock()) {
           JSON.stringify(p.value).length > 2 * 1024 * 1024
         )
           throw new Error("表单草稿无效或过大");
-        const drafts =
-          store.get<Record<string, unknown>>("meta", "form-drafts") || {};
-        drafts[p.key] = p.value;
-        store.set("meta", "form-drafts", drafts);
+        await persistDraft(p.key, p.value);
         return { saved: true };
       }
       case "record.save": {
         if (p.projectId) knownProject(p.projectId);
         const n = records.save(p);
         if (n.kind === "idea") reminders.refresh();
-        changed();
+        changed("notes");
         return n;
       }
       case "record.complete": {
         const n = records.complete(p.id, !!p.done, p.edit);
         reminders.refresh();
-        changed();
+        changed("notes");
         return n;
       }
       case "record.delete": {
-        const note = records.get(p.id);
-        const label = note.kind === "idea" ? "待办" : "记录";
-        if (
-          !(await ask(
-            `删除${label}`,
-            `删除后该${label}将永久移除，无法恢复。`,
-            `删除这条${label}`,
-            {
-              detail: note.text.slice(0, 300),
-              tone: "danger",
-              danger: true,
-            },
-          ))
-        )
-          return null;
-        const n = records.remove(p.id);
+        const n = records.softRemove(p.id);
         if (n.kind === "idea") reminders.refresh();
-        changed();
+        changed("notes");
         return n;
+      }
+      case "record.restore": {
+        const n = records.restore(p.id);
+        if (n.kind === "idea") reminders.refresh();
+        changed("notes");
+        return n;
+      }
+      case "record.purge": {
+        return { purged: records.purge(p.id) };
       }
       case "prompt.save": {
         const saved = prompts.save(p);
-        changed();
+        changed("prompts");
         return saved;
       }
       case "prompt.star": {
         const updated = prompts.star(p.id, !!p.starred);
-        changed();
+        changed("prompts");
         return updated;
       }
       case "prompt.delete": {
-        const prompt = prompts.get(p.id);
-        if (
-          !(await ask(
-            "删除提示词",
-            "删除后该提示词将永久移除，无法恢复。",
-            "删除这条提示词",
-            {
-              detail: prompt.title,
-              tone: "danger",
-              danger: true,
-            },
-          ))
-        )
-          return null;
-        const removed = prompts.remove(prompt.id);
-        changed();
+        const removed = prompts.softRemove(p.id);
+        changed("prompts");
         return removed;
+      }
+      case "prompt.restore": {
+        const restored = prompts.restore(p.id);
+        changed("prompts");
+        return restored;
+      }
+      case "prompt.purge": {
+        return { purged: prompts.purge(p.id) };
       }
       case "monthly.get": {
         const draft = records.draft(p.month, config.get().name);
+        const work = records.list("work");
         return {
           draft,
-          materials: records.month(p.month, p.projectId),
+          materials: records.month(p.month, p.projectId, work),
           sources: records.sources(draft),
-          undated: records.list("work").filter((n) => !n.happenedOn).length,
+          undated: work.filter((n) => !n.happenedOn).length,
         };
       }
       case "monthly.save": {
         const draft = records.saveDraft(p);
-        changed();
+        changed("other");
         return draft;
       }
       case "monthly.add": {
         const draft = records.addSources(p.month, p.name, p.section, p.ids);
-        changed();
+        changed("other");
         return draft;
       }
       case "monthly.export": {
@@ -1337,11 +1474,19 @@ if (!app.requestSingleInstanceLock()) {
           ["docx"],
         );
         if (!destination) return null;
-        return exportWord(
+        const exported = exportWord(
           config.get().tools.template || bundledTemplate,
           draft,
           destination,
         );
+        lastMonthlyExport = exported.path;
+        return exported;
+      }
+      case "monthly.open-exported": {
+        if (!lastMonthlyExport || !fs.existsSync(lastMonthlyExport))
+          throw new Error("导出的月报文件已不存在");
+        shell.showItemInFolder(lastMonthlyExport);
+        return { opened: true };
       }
       case "git.check": {
         const project = knownProject(p.projectId);
@@ -1556,85 +1701,14 @@ if (!app.requestSingleInstanceLock()) {
         const tail = readLogTail(run.logPath, Number(p.offset) || 0);
         return { ...tail, text: redact(tail.text), path: run.logPath, active };
       }
-      case "review.open": {
-        const project = knownProject(p.projectId);
-        return review.open(
-          project.id,
-          {
-            repo: project.path,
-            scope: p.scope,
-            base: p.base,
-            target: p.target,
-            context: p.context,
-          },
-          p.previousId,
-        );
-      }
-      case "review.cancel":
-        review.cancel();
-        return { cancelling: true };
-      case "review.validate": {
-        const result = await review.validate(p.id);
-        return { changed: result.changed };
-      }
-      case "review.seen":
-        return review.seen(p.id, p.file, !!p.viewed);
-      case "review.issue":
-        return review.issue(p.id, p.issue);
-      case "review.issue-state":
-        return review.updateIssue(p.id, p.issueId, p.state, p.reason || "");
-      case "review.todo": {
-        const result = review.todo(p.id, p.issueId);
-        changed();
-        return result;
-      }
-      case "review.conclude":
-        return review.conclude(p.id, p.conclusion, p.summary || "");
-      case "review.copy":
-        clipboard.writeText(review.copy(p.id));
-        return { copied: true };
-      case "review.history":
-        return review.history(p.projectId || null, p.offset || 0);
-      case "review.get":
-        return review.get(p.id);
-      case "review.file-content":
-        return review.fileContent(p.id, p.file);
-      case "review.fetch":
-        return review.fetch(knownProject(p.projectId).path);
       case "review.rules": {
         const project = knownProject(p.projectId);
-        return review.rules(
+        return readProjectRules(
           project.path,
           project.group === "HomeProject" && project.type === "h5"
             ? "D:/git-project/employeeapp-uniapp-bak/.cursor/rules/employeeapp.mdc"
             : undefined,
         );
-      }
-      case "review.file": {
-        const s = review.get(p.id),
-          file = s.files.find((f) => f.path === p.file);
-        if (!file) throw new Error("文件不在审查快照中");
-        const target = path.resolve(s.repo, file.path);
-        if (!inside(s.repo, target)) throw new Error("文件路径越界");
-        if (!fs.existsSync(target))
-          throw new Error("当前工作区已不存在此文件，可在历史差异中阅读");
-        const exe = config.get().tools.idea;
-        if (!exe || !fs.existsSync(exe))
-          throw new Error("请先配置编辑器 / IDEA 路径");
-        await new Promise<void>((resolve, reject) => {
-          const child = spawn(exe, [target], {
-            cwd: s.repo,
-            detached: true,
-            stdio: "ignore",
-            windowsHide: false,
-          });
-          child.once("error", reject);
-          child.once("spawn", () => {
-            child.unref();
-            resolve();
-          });
-        });
-        return { opened: true };
       }
       case "tapd.open": {
         const tools = config.get().tools;
@@ -1778,12 +1852,21 @@ if (!app.requestSingleInstanceLock()) {
           at: now(),
           bytes: result.bytes,
         });
-        changed();
+        changed("other");
         return result;
       }
       case "backup.list":
         return store.list<any>("meta").filter((v) => v.path && v.at && v.bytes);
       case "backup.preview": {
+        if (typeof p?.file === "string" && p.file) {
+          const known = store
+            .list<any>("meta")
+            .find((v) => v.path === p.file && v.at && v.bytes);
+          if (!known) throw new Error("未在备份记录中找到该文件，请手动选择备份包");
+          if (!fs.existsSync(known.path))
+            throw new Error("备份文件已不存在：" + known.path);
+          return backup.preview(known.path);
+        }
         const picked = await dialog.showOpenDialog(win, {
           properties: ["openFile"],
           defaultPath: config.get().tools.backupDir,
@@ -1797,10 +1880,10 @@ if (!app.requestSingleInstanceLock()) {
         if (
           !(await ask(
             "恢复工作台数据",
-            "将替换记录、提示词、配置、月报、审查及任务历史，并先保存当前完整备份。源码、远端、APK 和原 TXT 不受影响。",
+            "将替换记录、提示词、配置、月报及任务历史，并先保存当前完整备份。源码、远端、APK 和原 TXT 不受影响。",
             "备份当前数据并恢复",
             {
-              detail: `备份：${preview.file}\n日期：${preview.manifest.createdAt}`,
+              detail: `备份：${preview.file}\n日期：${preview.createdAt}`,
               tone: "warning",
             },
           ))
@@ -1985,6 +2068,8 @@ if (!app.requestSingleInstanceLock()) {
         "git.save",
         "git.resolve",
         "git.execute",
+        "code.resolve-definition",
+        "code.open-in-editor",
       ]);
       const validDiff =
         !!diff &&
@@ -2105,14 +2190,26 @@ if (!app.requestSingleInstanceLock()) {
             win.close();
             return;
           }
+          const exitTaskLabels: Record<string, string> = {
+            running: "执行中",
+            awaiting: "待确认",
+            cancelling: "正在安全停止",
+          };
+          const exitRunLabels: Record<string, string> = {
+            starting: "启动中",
+            running: "运行中",
+            stopping: "停止中",
+            watching: "编译监听中",
+            "tool-open": "开发者工具已打开",
+          };
           const result = await showUiDialog(win, {
             tone: "warning",
             title: "退出个人工作台",
             message: `仍有 ${active.length} 个运行或待确认任务，${owned.length} 个工作台拥有的项目进程。`,
             detail: [
-              ...active.map((t) => t.title + "：" + t.state),
+              ...active.map((t) => `${t.title}：${exitTaskLabels[t.state] || t.state}`),
               ...owned.map(
-                (r) => config.project(r.projectId).name + "：" + r.state,
+                (r) => `${config.project(r.projectId).name}：${exitRunLabels[r.state] || r.state}`,
               ),
               "Git 写命令将完成当前命令后停止后续步骤。外部实例不由工作台停止。",
             ].join("\n"),
@@ -2130,6 +2227,7 @@ if (!app.requestSingleInstanceLock()) {
           if (result.response === 1)
             for (const r of owned) await projects.stop(r.projectId);
           await Promise.all([...editorWindows.values()].map((item) => item.language?.stop()));
+          if (draftWrite) await draftWrite;
           exiting = true;
           win.close();
         } catch (e) {
@@ -2172,8 +2270,8 @@ if (!app.requestSingleInstanceLock()) {
         if (exiting) throw new Error("工作台正在退出，请稍后重试");
         const result = workbenchTools.call(name, args);
         if (name !== "find_entries") {
-          reminders.refresh();
-          changed();
+          if (result.module === "idea") reminders.refresh();
+          changed(result.module === "prompt" ? "prompts" : "notes");
         }
         return result;
       }, (error) => {
@@ -2184,6 +2282,9 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("window-all-closed", () => {
     void reminders.stop().finally(() => {
+      try {
+        store.purgeDeleted();
+      } catch {}
       store.close();
       app.quit();
     });
