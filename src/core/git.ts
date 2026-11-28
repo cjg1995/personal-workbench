@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { GitBlameLine, GitFile, SubmitCheck } from "../shared/types.js";
 import {
   appSubmitPolicy,
@@ -9,6 +10,13 @@ import {
 import { command, type CommandOptions } from "./process.js";
 import { hash } from "./util.js";
 export const protectedFile = "store/index.js";
+
+async function hashFile(file: string) {
+  const digest = createHash("sha256");
+  for await (const chunk of fs.createReadStream(file)) digest.update(chunk);
+  return digest.digest("hex");
+}
+
 /** 按作者时区显示提交归属日期。 */
 function blameDate(stamp: number, zone: string) {
   const match = /^([+-])(\d{2})(\d{2})$/.exec(zone || "");
@@ -133,14 +141,14 @@ export class Git {
       active.push("未解决的冲突");
     return active;
   }
-  async status(repo: string): Promise<GitFile[]> {
+  async status(repo: string, includeUntracked = true): Promise<GitFile[]> {
     const tokens = (
       await this.run(repo, [
         "status",
         "--porcelain=v1",
         "--no-renames",
         "-z",
-        "--untracked-files=all",
+        includeUntracked ? "--untracked-files=all" : "--untracked-files=no",
       ])
     ).stdout.split("\0");
     const files: GitFile[] = [];
@@ -235,23 +243,30 @@ export class Git {
         ? this.paths(repo, ["ls-files", "--others", "--exclude-standard", "-z", ...scope])
         : Promise.resolve<string[]>([]),
     ]);
-    const content = untracked.map((p) => {
-      const file = path.resolve(repo, p);
-      try {
-        const st = fs.lstatSync(file);
-        return [
-          p,
-          st.isSymbolicLink()
-            ? fs.readlinkSync(file)
-            : hash(fs.readFileSync(file)),
-        ];
-      } catch {
-        return [p, "missing"];
+    const content = new Array<[string, string]>(untracked.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(8, untracked.length) }, async () => {
+      while (next < untracked.length) {
+        const i = next++;
+        const relative = untracked[i];
+        const file = path.resolve(repo, relative);
+        let value = "missing";
+        try {
+          const st = await fs.promises.lstat(file);
+          if (st.isSymbolicLink()) value = await fs.promises.readlink(file);
+          else if (st.isFile()) value = await hashFile(file);
+        } catch {
+          // Preserve the missing-file marker if a path disappears during the scan.
+        }
+        content[i] = [relative, value];
       }
-    });
+    }));
     const store = path.join(repo, protectedPath);
-    const localConfig =
-      protectedPath && fs.existsSync(store) ? hash(fs.readFileSync(store)) : "";
+    const hasLocalConfig = protectedPath && await fs.promises.access(store).then(
+      () => true,
+      () => false,
+    );
+    const localConfig = hasLocalConfig ? await hashFile(store) : "";
     return hash(
       JSON.stringify({
         head,
@@ -344,7 +359,7 @@ export class Git {
         path.resolve(testPath).toLowerCase() !==
           path.resolve(repo).toLowerCase()
       ) {
-        const dirty = (await this.status(testPath)).filter((f) => f.tracked);
+        const dirty = await this.status(testPath, false);
         check(
           "test 工作树可用",
           dirty.length === 0,

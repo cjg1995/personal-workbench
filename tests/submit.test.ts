@@ -584,6 +584,8 @@ test("Git 管理 ERP 提测提交暂存与已跟踪修改，在原目录切换 t
     assert.equal(check.valid, true, JSON.stringify(check.checks));
     assert.deepEqual(check.files.filter((file) => file.included).map((file) => file.path).sort(),
       ["api/remove.js", "mixin.js", "new-folder/中文 [暂存].txt", "pages/index.vue"]);
+    assert.equal(check.files.find((file) => file.path === "AGENTS.md")?.included, false);
+    write(f.client, "AGENTS.md", "updated after the preview\n");
     const task = await f.service.startErp("refsys", f.client, "提测暂存与本次修改", check.fingerprint, true);
     const result = await f.tasks.wait(task.id);
     assert.equal(result.state, "success", result.error || "");
@@ -594,7 +596,7 @@ test("Git 管理 ERP 提测提交暂存与已跟踪修改，在原目录切换 t
     assert.doesNotMatch(git(f.remote, "ls-tree", "-r", "--name-only", "test"), /AGENTS\.md/);
     assert.equal(fs.readFileSync(path.join(f.client, "pages/index.vue"), "utf8"), "staged page\nunstaged line\n");
     assert.equal(fs.readFileSync(path.join(f.client, "api/remove.js"), "utf8"), "unstaged other file\n");
-    assert.equal(fs.readFileSync(path.join(f.client, "AGENTS.md"), "utf8"), "hidden untracked\n");
+    assert.equal(fs.readFileSync(path.join(f.client, "AGENTS.md"), "utf8"), "updated after the preview\n");
     assert.equal(git(f.client, "branch", "--show-current"), "test");
     assert.equal(path.resolve(String(result.result.testPath)), path.resolve(f.client));
     assert.equal((git(f.client, "worktree", "list", "--porcelain").match(/^worktree /gm) || []).length, 1);
@@ -626,6 +628,12 @@ test("Git 管理固定分支提测纳入暂存与已跟踪修改，保留远程�
     git(f.seed, "commit", "-m", "remote update");
     git(f.seed, "push");
     const policy = submitPolicyForProject("employee");
+    const before = await f.service.check(f.client, policy, true);
+    write(f.client, "AGENTS.md", "updated before stash\n");
+    await assert.rejects(
+      () => f.service.prepareApp("employee", f.client, before.fingerprint, true),
+      /变化/,
+    );
     const check = await f.service.check(f.client, policy, true);
     assert.equal(check.files.find((f) => f.path === "store/index.js")?.included, false);
     const task = await f.service.prepareApp("employee", f.client, check.fingerprint, true);
@@ -646,7 +654,7 @@ test("Git 管理固定分支提测纳入暂存与已跟踪修改，保留远程�
     assert.equal(git(f.remote, "show", "dev:store/index.js"), "base store/index.js");
     assert.equal(fs.readFileSync(path.join(f.client, "pages/index.vue"), "utf8"), "staged page\nunstaged line\n");
     assert.equal(fs.readFileSync(path.join(f.client, "store/index.js"), "utf8"), "protected local city\r\n");
-    assert.equal(fs.readFileSync(path.join(f.client, "AGENTS.md"), "utf8"), "hidden untracked\n");
+    assert.equal(fs.readFileSync(path.join(f.client, "AGENTS.md"), "utf8"), "updated before stash\n");
     assert.equal(git(f.client, "diff", "--cached", "--name-only"), "");
   } finally { f.db.close(); }
 });

@@ -127,9 +127,10 @@ function commit(push: boolean) {
 }
 
 async function openSubmit(taskId = "") {
-  if (!canSubmit.value) return;
-  await readStatus();
-  if (statusError.value) return;
+  // Let the project watcher reset the previous dialog when navigating from a task.
+  const project = projectId.value;
+  await nextTick();
+  if (disposed || project !== projectId.value || !canSubmit.value) return;
   submitTaskId.value = taskId;
   submitOpen.value = true;
 }

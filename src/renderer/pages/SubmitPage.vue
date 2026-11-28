@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import type { SubmitCheck, Task } from "../../shared/types";
 import {
   submitPolicyForProject,
@@ -42,7 +42,7 @@ function draftMessage(id: string | null) {
     model.tasks.find((item) => item.projectId === id && item.type === "app" && item.state === "awaiting")?.params.message ?? "";
 }
 const diffEditor = ref<InstanceType<typeof SubmitDiffEditor>>();
-const check = ref<SubmitCheck | null>(null),
+const check = shallowRef<SubmitCheck | null>(null),
   message = ref<string>(String(draftMessage(projectId.value))),
   busy = ref(false),
   taskId = ref<string>(
@@ -79,14 +79,16 @@ const effective = computed(() =>
     ? (task.value.result.check as unknown as SubmitCheck)
     : check.value,
 );
-const files = computed(
-  () =>
-    effective.value?.files.filter(
-      (f) =>
-        (filter.value === "included" ? f.included : !f.included) &&
-        (!query.value || f.path.includes(query.value)),
-    ) || [],
+const includedCount = computed(
+  () => effective.value?.files.reduce((count, file) => count + Number(file.included), 0) ?? 0,
 );
+const files = computed(() => {
+  const included = filter.value === "included";
+  const search = query.value;
+  return effective.value?.files.filter(
+    (f) => f.included === included && (!search || f.path.includes(search)),
+  ) ?? [];
+});
 const active = computed(
   () =>
     task.value &&
@@ -95,7 +97,7 @@ const active = computed(
 const needsMessage = computed(
   () =>
     (isBackend.value || task.value?.state === "awaiting") &&
-    !!effective.value?.files.some((f) => f.included) &&
+    includedCount.value > 0 &&
     !message.value.trim(),
 );
 const failedChecks = computed(
@@ -118,22 +120,32 @@ watch(projectId, () => {
 });
 async function canLeave() { return await diffEditor.value?.canLeave() ?? true; }
 defineExpose({ canLeave });
+let disposed = false;
+onBeforeUnmount(() => { disposed = true; });
+
 async function inspect() {
-  if (!await canLeave()) return;
+  if (!await canLeave() || disposed || busy.value) return;
+  const project = projectId.value;
   busy.value = true;
-  await attempt(async () => {
-    check.value = await call("git.check", {
-      projectId: projectId.value,
+  try {
+    const result = await call<SubmitCheck>("git.check", {
+      projectId: project,
       kind: tab.value,
       fromGit: !!props.projectId,
     });
+    if (disposed || project !== projectId.value) return;
+    check.value = result;
     taskId.value = "";
     file.value = "";
-    if (!message.value) message.value = check.value!.defaultMessage;
-    const first = check.value!.files.find((item) => item.included);
+    if (!message.value) message.value = result.defaultMessage;
+    const first = result.files.find((item) => item.included);
     if (first) await diff(first.path);
-  });
-  busy.value = false;
+  } catch (e) {
+    if (!disposed && project === projectId.value)
+      notify(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    busy.value = false;
+  }
 }
 async function run() {
   if (!await canLeave() || !effective.value) return;
@@ -172,7 +184,7 @@ watch(() => task.value?.state, (state) => {
   if (state === "awaiting") file.value = effective.value?.files.find((item) => item.included)?.path || "";
 });
 async function diff(path: string) {
-  if (path === file.value || !await canLeave()) return;
+  if (path === file.value || !await canLeave() || disposed) return;
   file.value = path;
 }
 async function cancel() {
@@ -270,9 +282,7 @@ async function cancel() {
             :aria-pressed="filter === 'included'"
             @click="filter = 'included'"
           >
-            将提交<span class="tab-count">{{
-              effective.files.filter((f) => f.included).length
-            }}</span></button
+            将提交<span class="tab-count">{{ includedCount }}</span></button
           ><button
             :class="{ active: filter === 'excluded' }"
             :aria-pressed="filter === 'excluded'"
@@ -280,7 +290,7 @@ async function cancel() {
           >
             {{ props.projectId ? "未跟踪 / 排除" : isBackend ? "未跟踪 / 跳过" : "已排除" }}<span
               class="tab-count"
-              >{{ effective.files.filter((f) => !f.included).length }}</span
+              >{{ effective.files.length - includedCount }}</span
             >
           </button>
         </div>
@@ -344,7 +354,7 @@ async function cancel() {
   >
   <div v-else class="empty">
     <span class="empty-icon"><Icon name="branch" :size="16" /></span>
-    <p class="empty-title">尚未检查仓库</p>
+    <p class="empty-title" role="status">{{ busy ? "正在检查仓库…" : "尚未检查仓库" }}</p>
   </div>
   </div>
   <footer v-if="effective && (!task || task.state === 'awaiting')" class="submit-footer">
@@ -352,7 +362,7 @@ async function cancel() {
       提交说明<textarea v-model="message" rows="2" />
     </label>
     <div class="submit-footer-controls">
-      <p class="small muted">将提交 {{ effective.files.filter((f) => f.included).length }} 个文件 · 已有未推送提交 {{ effective.ahead }} 个</p>
+      <p class="small muted">将提交 {{ includedCount }} 个文件 · 已有未推送提交 {{ effective.ahead }} 个</p>
       <p v-if="needsMessage" class="small warn">填写提交说明后可继续。</p>
       <p v-if="!effective.valid" class="error small">检查未通过。请处理后重新检查。</p>
         <div class="actions wrap">
@@ -363,7 +373,7 @@ async function cancel() {
           >
             {{
               isBackend
-                ? effective.files.some((f) => f.included)
+                ? includedCount > 0
                   ? "确认提交并合并"
                   : "继续推送并合并"
                 : task?.state === "awaiting"

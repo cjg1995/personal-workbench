@@ -51,8 +51,6 @@ export class SubmitService {
             ? "本地测试配置，始终保护" : "未跟踪的新文件，暂存后才纳入提测";
       }
       check.fromGit = true;
-      check.fingerprint = await this.git.fingerprint(repo, true,
-        typeof kind === "object" && kind.kind === "app" ? kind.protectedFile : protectedFile);
     }
     return check;
   }
@@ -104,7 +102,7 @@ export class SubmitService {
         const dir = ensureDir(path.join(this.dataDir, "git-inputs", task.id));
         let target = repo;
         await ctx.step("本地提交", async () => {
-          await this.requireUnchanged(repo, check.fingerprint, fromGit);
+          await this.requireUnchanged(repo, check.fingerprint, false);
           const selected = check.files
             .filter((f) => f.tracked && !f.staged)
             .map((f) => f.path);
@@ -142,7 +140,7 @@ export class SubmitService {
           ctx.result({
             localCommit: await this.git.text(repo, ["rev-parse", "HEAD"]),
           });
-          const dirty = (await this.git.status(repo)).filter((f) => f.tracked);
+          const dirty = await this.git.status(repo, false);
           if (dirty.length)
             throw new Error("开发工作树仍有已跟踪变更，停止后续步骤");
         });
@@ -159,9 +157,7 @@ export class SubmitService {
               logPath: task.logPath,
             });
           await this.requireBranch(target, "test");
-          const dirty = (await this.git.status(target)).filter(
-            (f) => f.tracked,
-          );
+          const dirty = await this.git.status(target, false);
           if (dirty.length)
             throw new Error(`test 工作树存在已跟踪修改：${target}`);
           ctx.result({
